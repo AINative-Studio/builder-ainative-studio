@@ -58,16 +58,71 @@
  * utility (imported below) — this file was one of over a dozen independent,
  * near-identical reimplementations of the same string/comment-aware
  * bracket-matching technique.
+ *
+ * STRING-BLIND TOP-LEVEL SCAN BUG: `attrOpenRe` below used to scan the raw
+ * `code` for its `className={` + backtick trigger text directly. A generated
+ * app that shows example/tutorial markup as a plain string (e.g. a code
+ * "cheat sheet" component, extremely plausible given this is a landing-page
+ * generator), such as `"Try: className={\`bg-${color}-500\`}"`, contains
+ * that exact trigger text as DATA, not real JSX. The old scan matched it
+ * anyway, and `findBacktickEnd`/the content extraction below happily "fixed"
+ * it as if it were real, splicing a raw `"` into the middle of the
+ * surrounding string literal — corrupting otherwise-correct code into an
+ * unescaped-quote SyntaxError that fails the whole Babel compile and blanks
+ * the preview. Fixed by scanning a same-length, comment-and-quoted-string-
+ * masked twin of `code` for match POSITIONS only; every actual read/slice
+ * below still operates on the real, unmasked `code`.
  */
 import { findMatchingBrace, findBacktickEnd, findStringEnd } from './bracket-scanner'
 
+/**
+ * Blanks out `"..."`/`'...'` string bodies and `//`/`/* *\/` comments
+ * (preserving length/offsets) so the top-level `attrOpenRe` scan below can't
+ * mistake literal `className={\`...\`}` TEXT sitting inside an unrelated
+ * string or comment for a real JSX attribute. Backtick template literals are
+ * left untouched — that's exactly what the scan needs to see.
+ */
+function maskQuotedStringsAndCommentsForAttrScan(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += ' '.repeat(realEnd - i + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 export function convertTemplateLiteralAttrsToConcat(code: string): string {
+  const masked = maskQuotedStringsAndCommentsForAttrScan(code)
   const attrOpenRe = /(className|style)=\{`/g
   let result = ''
   let cursor = 0
   let m: RegExpExecArray | null
 
-  while ((m = attrOpenRe.exec(code)) !== null) {
+  while ((m = attrOpenRe.exec(masked)) !== null) {
     const attr = m[1]
     const backtickIdx = m.index + m[0].length - 1
     const closeBacktickIdx = findBacktickEnd(code, backtickIdx)
