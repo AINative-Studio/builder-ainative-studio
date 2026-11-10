@@ -117,6 +117,65 @@ function findMatchingParen(code: string, openIdx: number, open = '(', close = ')
 }
 
 /**
+ * True if `idx` falls strictly inside a string or template-literal literal
+ * in `code` (scanning from the start).
+ *
+ * Real bug found live (overnight loop): dedupeProvidedComponents' leading
+ * `code.replace(/\/\/\s*Available\s+Shadcn\s+components[\s\S]*\/gi, '')`
+ * strips a trailing artifact the LLM sometimes echoes back after being
+ * prompted with "Available Shadcn components: ..." (see
+ * component-verifier.ts's enhancePromptWithVerification) — but it matches
+ * that literal substring ANYWHERE in the raw code, including inside a
+ * template-literal string value. A generated dev-tool/docs-style landing
+ * page showing an example code snippet in a `<pre>`/syntax-highlighter
+ * (`` const demoSnippet = `// Available Shadcn components: Button, Card` ``)
+ * has that exact phrase inside its own backtick string — the greedy
+ * `[\s\S]*` then deletes everything in the file from that point to EOF
+ * (including the real closing backtick, the real JSX return, and every
+ * component below it), corrupting valid generated code into an unterminated
+ * template literal — the same "Element type is invalid" / blank-page crash
+ * class every other scanner in this module already guards against. This
+ * checks whether the match's start position is inside an open string so the
+ * caller can skip a decoy match without needing to blank comments too (the
+ * legitimate match IS itself inside a `//` comment, which a comment-masking
+ * pass would erase, making the real case unfindable).
+ */
+function isInsideStringLiteral(code: string, idx: number): boolean {
+  let i = 0
+  while (i < idx && i < code.length) {
+    const ch = code[i]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end === -1 || end >= idx) return true
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1 || end >= idx) return true
+      i = end + 1
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      if (end >= idx) return false
+      i = end
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      if (end >= idx) return false
+      i = Math.min(end, code.length)
+      continue
+    }
+    i++
+  }
+  return false
+}
+
+/**
  * Remove every occurrence of `headRe` (a global regex that must end in the
  * literal `(` opening a parameter list) from `code`, where the text
  * immediately following the param list's TRUE closing paren matches
@@ -234,7 +293,11 @@ export function dedupeProvidedComponents(
   code: string,
   names: readonly string[] = SCAFFOLD_PROVIDED_COMPONENTS,
 ): string {
-  let out = code.replace(/\/\/\s*Available\s+Shadcn\s+components[\s\S]*/gi, '')
+  const hintMatch = code.match(/\/\/\s*Available\s+Shadcn\s+components[\s\S]*/i)
+  let out =
+    hintMatch && hintMatch.index !== undefined && !isInsideStringLiteral(code, hintMatch.index)
+      ? code.slice(0, hintMatch.index)
+      : code
 
   for (const comp of names) {
     // Remove const declarations like: const Button = ({ children }) => ...

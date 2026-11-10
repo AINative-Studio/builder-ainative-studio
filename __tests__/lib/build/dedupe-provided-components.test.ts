@@ -415,5 +415,22 @@ describe('dedupeProvidedComponents', () => {
       expect(out).not.toMatch(/function Button\(/)
       expect(out).toMatch(/function App\(/)
     })
+
+    it('a demo code string merely containing "// Available Shadcn components" does not truncate the real file', () => {
+      const code = [
+        'export default function App() {',
+        '  const demoSnippet = `// Available Shadcn components: Button, Card, Dialog`;',
+        '  return (',
+        '    <div>',
+        '      <pre>{demoSnippet}</pre>',
+        '      <h1>Real Headline</h1>',
+        '    </div>',
+        '  );',
+        '}',
+      ].join('\n')
+      const out = dedupeProvidedComponents(code)
+      expect(out).toContain('Real Headline')
+      expect(out).toContain('export default function App')
+    })
   })
 })
