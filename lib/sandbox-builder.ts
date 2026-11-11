@@ -23,6 +23,7 @@
 
 import { isE2BEnabled, runSequenceInE2BSandbox } from './build/e2b-sandbox'
 import { detectRootComponent, applyComponentRewrite, hasDefaultExport as hasRealDefaultExport } from './component-detector'
+import { findStringEnd, findBacktickEnd } from './build/bracket-scanner'
 
 export interface BuildResult {
   success: boolean
@@ -45,6 +46,137 @@ function stripMarkdownFence(componentCode: string): string {
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
 
 /**
+ * Line indices (0-based) of `code` that sit INSIDE a still-open backtick
+ * template literal or block comment (`/* ... *\/`) carried over from an
+ * earlier line, rather than at top level. A single/double-quoted string or
+ * a `//` line comment can never contain a literal newline in valid JS, so
+ * they can't hide an embedded line this way — only these two multi-line
+ * constructs can (same helper shape as flatten-multifile.ts's and
+ * multi-file-parser.ts's `linesInsideMultilineConstruct`, #1933/#1939
+ * class — this is that same bug class, found in this file's own
+ * FILE_MARKER scan and import-strip scan, which neither of those fixes
+ * covers).
+ */
+function linesInsideMultilineConstruct(code: string): Set<number> {
+  const inside = new Set<number>()
+  const markSpan = (from: number, to: number, line: number): number => {
+    for (let j = from; j < to; j++) if (code[j] === '\n') { line++; inside.add(line) }
+    return line
+  }
+  let line = 0
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1
+      while (j < code.length && code[j] !== ch) { if (code[j] === '\\') j++; j++ }
+      i = j + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < code.length && code[j] !== '`') { if (code[j] === '\\') j++; j++ }
+      const stop = j >= code.length ? code.length : j + 1
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const stop = closeIdx === -1 ? code.length : closeIdx + 2
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '\n') { line++; i++; continue }
+    i++
+  }
+  return inside
+}
+
+/**
+ * Same-length mask of `code` with every string literal, template literal,
+ * and comment span blanked to spaces (newlines preserved) — just enough
+ * opacity to tell a decoy `export default` sitting inside a demo/example
+ * string, template literal, or comment apart from a real one, using
+ * bracket-scanner.ts's shared, already-proven string/backtick-end finders
+ * rather than a fresh hand-rolled scanner.
+ */
+function maskStringsAndComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += code.slice(i, Math.min(end, code.length)).replace(/[^\n]/g, ' ')
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
+ * Applies `pattern` only to matches whose exact span is unchanged in
+ * `masked` (i.e. real code, not a decoy sitting inside a string/comment
+ * `masked` blanked out). `pattern` need not carry the `g` flag.
+ */
+function replaceOutsideMask(
+  code: string,
+  masked: string,
+  pattern: RegExp,
+  replacer: (match: RegExpExecArray) => string,
+): string {
+  const re = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : pattern.flags + 'g')
+  let result = ''
+  let lastIndex = 0
+  let m: RegExpExecArray | null
+  while ((m = re.exec(code))) {
+    const index = m.index
+    const matchText = m[0]
+    const isReal = masked.slice(index, index + matchText.length) === matchText
+    result += code.slice(lastIndex, index)
+    result += isReal ? replacer(m) : matchText
+    lastIndex = index + matchText.length
+  }
+  result += code.slice(lastIndex)
+  return result
+}
+
+/**
  * `finalContent` reaching buildInSandbox() can be the RAW multi-file
  * generator output (`// --- FILE: path --- ` markers, same format
  * lib/multi-file-parser.ts splits) — confirmed live: chat-ws/route.ts's
@@ -62,11 +194,13 @@ const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
  */
 function extractMainFileContent(rawOutput: string): string {
   const lines = rawOutput.split('\n')
+  const hiddenLines = linesInsideMultilineConstruct(rawOutput)
   const files: Record<string, string> = {}
   let currentFile: string | null = null
   let currentContent: string[] = []
-  for (const line of lines) {
-    const match = line.match(FILE_MARKER)
+  for (let idx = 0; idx < lines.length; idx++) {
+    const line = lines[idx]
+    const match = hiddenLines.has(idx) ? null : line.match(FILE_MARKER)
     if (match) {
       if (currentFile) files[currentFile] = currentContent.join('\n').trim()
       currentFile = match[1].trim()
@@ -127,7 +261,19 @@ function detectComponentName(code: string): { name: string; code: string } {
  */
 function buildRenderScript(rawCode: string, compName: string): string {
   // Strip import statements (we provide everything via require/globals).
-  let code = rawCode.replace(/^import\s+.*from\s+['"].*['"];?\s*$/gm, '')
+  //
+  // Real bug found live (same sweep as #1933/#1939): this was a plain
+  // `rawCode.replace(/^import\s+.*from\s+['"].*['"];?\s*$/gm, '')` with no
+  // notion of a line sitting inside an earlier line's own open backtick
+  // template literal or block comment. A demo/example snippet shown on the
+  // page (e.g. `const demo = \`\nimport Foo from 'foo-sdk'\n\``, an ordinary
+  // docs/SDK-landing-page pattern) had that display-only line silently
+  // deleted, corrupting the literal's own content with no error.
+  const hiddenImportLines = linesInsideMultilineConstruct(rawCode)
+  let code = rawCode
+    .split('\n')
+    .map((line, idx) => (hiddenImportLines.has(idx) ? line : line.replace(/^import\s+.*from\s+['"].*['"];?\s*$/, '')))
+    .join('\n')
 
   // Handle export default — convert to a globalThis assignment so the
   // render script below can find it without a module system.
@@ -142,8 +288,23 @@ function buildRenderScript(rawCode: string, compName: string): string {
   // `null` and the SSR preview silently shows the "Component not found"
   // placeholder in place of the founder's real app.
   const hasDefaultExport = hasRealDefaultExport(code)
-  code = code.replace(/export\s+default\s+function\s+(\w+)/g, 'globalThis.$1 = function $1')
-  code = code.replace(/export\s+default\s+/g, 'globalThis.__Default__ = ')
+
+  // Same comment/string-blindness bug class as the import strip above, but
+  // these two regexes are unanchored (not `^...$`), so a decoy can also sit
+  // mid-line inside a same-line string, not just inside a multi-line
+  // construct — e.g. `const label = "export default demo"` — hence the
+  // full char-level mask rather than the per-line check used above.
+  // `masked` is recomputed before each pass: the first pass changes
+  // `code`'s length/content (`export default function Foo` is a different
+  // length than `globalThis.Foo = function Foo`), so a mask computed once
+  // up front would be misaligned with `code`'s offsets by the second pass.
+  code = replaceOutsideMask(
+    code,
+    maskStringsAndComments(code),
+    /export\s+default\s+function\s+(\w+)/g,
+    (m) => `globalThis.${m[1]} = function ${m[1]}`,
+  )
+  code = replaceOutsideMask(code, maskStringsAndComments(code), /export\s+default\s+/g, () => 'globalThis.__Default__ = ')
 
   // #1541-class gap: a component declared plainly and exported only via a
   // trailing bare `export { Name }` list (no `export default` anywhere) has
