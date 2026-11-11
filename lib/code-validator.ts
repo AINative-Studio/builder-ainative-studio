@@ -915,6 +915,69 @@ export function sanitizeForSandpack(code: string): string {
 }
 
 /**
+ * Line indices (0-based) of `code` that sit INSIDE a still-open backtick
+ * template literal or block comment (`/* ... *\/`) carried over from an
+ * earlier line, rather than at real top-level module scope. A
+ * single/double-quoted string or a `//` line comment can never contain a
+ * literal newline in valid JS, so they can't hide an embedded line this way
+ * — only these two multi-line constructs can (same helper shape as
+ * multi-file-parser.ts's `linesInsideMultilineConstruct`, #1939/PR #1942).
+ *
+ * Real bug this guards against: `findDuplicateTopLevelDeclaration` below
+ * matched its decl/import regexes against every RAW line of the file, with
+ * no awareness of a line sitting inside another declaration's own block
+ * comment or backtick template literal. A column-0 line showing a discarded
+ * earlier attempt inside a `/* ... *\/` comment — an ordinary thing for an
+ * LLM to leave behind after an incremental edit — had that embedded
+ * `const Foo = ...` mistaken for a second, real top-level declaration of a
+ * name declared exactly once, forcing an unnecessary (and non-deterministic)
+ * regeneration of an otherwise-valid app (builder#64's retry path).
+ */
+function linesInsideMultilineConstructForDuplicateDeclScan(code: string): Set<number> {
+  const inside = new Set<number>()
+  const markSpan = (from: number, to: number, line: number): number => {
+    for (let j = from; j < to; j++) if (code[j] === '\n') { line++; inside.add(line) }
+    return line
+  }
+  let line = 0
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1
+      while (j < code.length && code[j] !== ch) { if (code[j] === '\\') j++; j++ }
+      i = j + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < code.length && code[j] !== '`') { if (code[j] === '\\') j++; j++ }
+      const stop = j >= code.length ? code.length : j + 1
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const stop = closeIdx === -1 ? code.length : closeIdx + 2
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '\n') { line++; i++; continue }
+    i++
+  }
+  return inside
+}
+
+/**
  * Detect duplicate top-level identifier declarations that Babel's
  * error-recovery parser silently accepts but the browser/Sandpack transform
  * rejects (e.g. "Identifier 'Card' has already been declared").
@@ -933,7 +996,11 @@ export function findDuplicateTopLevelDeclaration(code: string): string | null {
     return null
   }
 
-  for (const raw of code.split('\n')) {
+  const hiddenLines = linesInsideMultilineConstructForDuplicateDeclScan(code)
+  const codeLines = code.split('\n')
+  for (let idx = 0; idx < codeLines.length; idx++) {
+    if (hiddenLines.has(idx)) continue
+    const raw = codeLines[idx]
     const line = raw.trim()
 
     // Reset scope at each file boundary — multi-file output repeats top-level
