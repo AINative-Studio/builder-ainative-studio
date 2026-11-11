@@ -72,6 +72,12 @@ export async function GET(request: NextRequest) {
       committed: result.committed, skipped: result.skipped,
       truncated: result.truncated, remaining: result.remaining,
       byDisposition: result.byDisposition,
+      // #1956: registered companies with no generated content ever, surfaced
+      // distinctly rather than buried in byDisposition — see
+      // ReconcileSweepResult.deadRegistrations' doc comment for why these are
+      // left alone (nothing to gate/commit) but must not stay invisible.
+      deadRegistrations: result.deadRegistrations,
+      deadRegistrationSlugs: result.deadRegistrationSlugs,
     })
     return NextResponse.json(result)
   } catch (error) {

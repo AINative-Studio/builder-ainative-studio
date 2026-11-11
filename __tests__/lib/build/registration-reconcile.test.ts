@@ -385,6 +385,57 @@ describe('runRegistrationReconcileSweep', () => {
     expect(res.byDisposition).toMatchObject({ stuck: 1, complete: 1, never_generated: 1 })
   })
 
+  it('#1956: surfaces registered-but-never-generated companies as a distinct, named list, not just a buried byDisposition count', async () => {
+    listAllAppsWithStatus.mockResolvedValue({
+      apps: [app('healthy'), app('younova'), app('pathly')],
+      ok: true,
+    })
+    resolveApp.mockImplementation(async (slug: string) => app(slug))
+    classifyRegistrationHealth.mockImplementation((read: { stages: { stage: string }[] }) => {
+      const names = read.stages.map((s) => s.stage)
+      if (names.includes('ready_check')) return 'complete'
+      return 'never_generated'
+    })
+    fetchDeploymentHealthStages.mockImplementation(async (_t: string, slug: string) => {
+      if (slug === 'healthy') return { ok: true, stages: [{ stage: 'generate' }, { stage: 'ready_check' }] }
+      return { ok: true, stages: [] }
+    })
+
+    const res = await runRegistrationReconcileSweep({ dryRun: false })
+
+    expect(res.deadRegistrations).toBe(2)
+    expect(res.deadRegistrationSlugs.sort()).toEqual(['pathly', 'younova'])
+    expect(res.deadRegistrationsTruncated).toBe(false)
+    // Still correctly left alone — this field is visibility, not a new re-drive path.
+    expect(runGitCommit).not.toHaveBeenCalled()
+  })
+
+  it('#1956: never counts a `stuck` or `complete` company as a dead registration', async () => {
+    listAllAppsWithStatus.mockResolvedValue({ apps: [app('healthy')], ok: true })
+    resolveApp.mockImplementation(async (slug: string) => app(slug, { gitRepoId: '1' }))
+    classifyRegistrationHealth.mockReturnValue('complete')
+    fetchDeploymentHealthStages.mockResolvedValue({ ok: true, stages: [{ stage: 'ready_check' }] })
+
+    const res = await runRegistrationReconcileSweep({ dryRun: false })
+
+    expect(res.deadRegistrations).toBe(0)
+    expect(res.deadRegistrationSlugs).toEqual([])
+  })
+
+  it('#1956: caps the reported slug list and flags truncation past the cap', async () => {
+    const many = Array.from({ length: 55 }, (_, i) => app(`dead${i}`))
+    listAllAppsWithStatus.mockResolvedValue({ apps: many, ok: true })
+    resolveApp.mockImplementation(async (slug: string) => app(slug))
+    classifyRegistrationHealth.mockReturnValue('never_generated')
+    fetchDeploymentHealthStages.mockResolvedValue({ ok: true, stages: [] })
+
+    const res = await runRegistrationReconcileSweep({ dryRun: false })
+
+    expect(res.deadRegistrations).toBe(55)
+    expect(res.deadRegistrationSlugs).toHaveLength(50)
+    expect(res.deadRegistrationsTruncated).toBe(true)
+  })
+
   it('reports registryOk:false and does nothing when the registry read fails — an outage is not an empty platform', async () => {
     listAllAppsWithStatus.mockResolvedValue({ apps: [], ok: false })
 
@@ -417,6 +468,16 @@ describe('runRegistrationReconcileSweep', () => {
     expect(res.reconciled).toBe(MAX_RECONCILES_PER_RUN)
     expect(runGitCommit).toHaveBeenCalledTimes(MAX_RECONCILES_PER_RUN)
     expect(res.results.filter((r) => r.reason === 'run_cap_reached')).toHaveLength(3)
+  })
+
+  it('#1956: reports a dead registration in single-slug mode too, not just the full sweep', async () => {
+    classifyRegistrationHealth.mockReturnValue('never_generated')
+
+    const res = await runRegistrationReconcileSweep({ dryRun: false, slug: 'flo' })
+
+    expect(res.deadRegistrations).toBe(1)
+    expect(res.deadRegistrationSlugs).toEqual(['flo'])
+    expect(res.deadRegistrationsTruncated).toBe(false)
   })
 
   it('can target a single slug, so a dashboard load can reconcile just that company', async () => {

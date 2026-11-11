@@ -162,8 +162,44 @@ export interface ReconcileSweepResult {
   /** Live companies never reached on this run. 0 on a complete sweep. */
   remaining: number
   byDisposition: Record<string, number>
+  /**
+   * Registry rows classified `never_generated` or `generation_failed` (#1956).
+   *
+   * Every company this sweep examines already has a registry `chatId` — that's
+   * what `listAllAppsWithStatus()` enumerates. So for THIS candidate set, those
+   * two dispositions don't mean "not registered yet, nothing to do" (the
+   * reasoning that correctly excludes them from `stuck`/re-drive, above): they
+   * mean a chatId was registered — the public `/build/{slug}` page will render
+   * it and poll it as real — and core recorded no successful `generate` stage
+   * for it, ever. `resolveStoredApp`/`repair-app` have nothing to repair for
+   * these (there is no stored code to find), and re-driving the gate/commit
+   * would burn a cycle on every single sweep forever for no possible outcome —
+   * so `reconcileRegistration` correctly leaves them alone. But "correctly left
+   * alone" and "invisible" are different things: before this field existed,
+   * the only trace was one `byDisposition` count buried in a cron log line,
+   * with no list of which companies. Confirmed live (2026-11-11, issue #1956):
+   * 7 real companies (younova, pathly, wallkind, flipsight, taplo, castlo,
+   * aerosol) found this way, by hand, by sampling — this field is the "cheap,
+   * read-only win" that issue asked for, so the next sweep run surfaces the
+   * full list instead of needing another manual sampling pass.
+   *
+   * Capped at 50 entries (`deadRegistrationsTruncated` says whether more
+   * exist) — a response-size safety net, not a claim these are rare.
+   */
+  deadRegistrations: number
+  deadRegistrationSlugs: string[]
+  deadRegistrationsTruncated: boolean
   results: ReconcileCompanyResult[]
 }
+
+/** Dispositions that mean "registered, but no generated content ever landed." */
+const DEAD_REGISTRATION_DISPOSITIONS: ReadonlySet<RegistrationHealthDisposition> = new Set([
+  'never_generated',
+  'generation_failed',
+])
+
+/** Response-size cap for `deadRegistrationSlugs` — see its field doc above. */
+const MAX_DEAD_REGISTRATION_SLUGS = 50
 
 /** A company the sweep must never touch (soft-deleted in the registry). */
 function isDeleted(app: Pick<AppEntry, 'slug'> & { lifecycleStatus?: string }): boolean {
@@ -360,6 +396,11 @@ export async function runRegistrationReconcileSweep(
       truncated: false,
       remaining: 0,
       byDisposition: { [result.disposition]: 1 },
+      deadRegistrations: DEAD_REGISTRATION_DISPOSITIONS.has(result.disposition as RegistrationHealthDisposition) ? 1 : 0,
+      deadRegistrationSlugs: DEAD_REGISTRATION_DISPOSITIONS.has(result.disposition as RegistrationHealthDisposition)
+        ? [result.slug]
+        : [],
+      deadRegistrationsTruncated: false,
       results: [result],
     }
   }
@@ -375,7 +416,8 @@ export async function runRegistrationReconcileSweep(
     return {
       ok: true, dryRun, registryOk: false, total: 0, candidates: 0,
       reconciled: 0, committed: 0, skipped: 0, truncated: false, remaining: 0,
-      byDisposition: {}, results: [],
+      byDisposition: {}, deadRegistrations: 0, deadRegistrationSlugs: [],
+      deadRegistrationsTruncated: false, results: [],
     }
   }
 
@@ -416,6 +458,14 @@ export async function runRegistrationReconcileSweep(
   const remaining = live.length - results.length
   const truncated = remaining > 0
 
+  // #1956: the "registered, chatId real, zero content, forever" cohort — see
+  // this field's doc comment on ReconcileSweepResult for the full reasoning.
+  const deadRegistrationResults = results.filter((r) =>
+    DEAD_REGISTRATION_DISPOSITIONS.has(r.disposition as RegistrationHealthDisposition),
+  )
+  const deadRegistrationSlugs = deadRegistrationResults.slice(0, MAX_DEAD_REGISTRATION_SLUGS).map((r) => r.slug)
+  const deadRegistrationsTruncated = deadRegistrationResults.length > MAX_DEAD_REGISTRATION_SLUGS
+
   if (truncated) {
     // Surfaced as a warning, not swallowed: a sweep that cannot finish the
     // platform inside its budget is an operational signal (the read pass needs
@@ -425,6 +475,17 @@ export async function runRegistrationReconcileSweep(
       remaining,
       budgetMs,
       total: live.length,
+    })
+  }
+
+  if (deadRegistrationResults.length > 0) {
+    // #1956: distinct from `truncated` above — this is "found real, permanently
+    // dead public pages," not "ran out of time." Its own warning line so it's
+    // greppable in ops logs without reading byDisposition on every run.
+    logger.warn('Registration reconciliation sweep found registered companies with no generated content', {
+      count: deadRegistrationResults.length,
+      slugs: deadRegistrationSlugs,
+      truncatedList: deadRegistrationsTruncated,
     })
   }
 
@@ -443,6 +504,9 @@ export async function runRegistrationReconcileSweep(
     truncated,
     remaining,
     byDisposition,
+    deadRegistrations: deadRegistrationResults.length,
+    deadRegistrationSlugs,
+    deadRegistrationsTruncated,
     results,
   }
 }
