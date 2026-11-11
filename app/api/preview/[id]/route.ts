@@ -7,6 +7,7 @@ import { detectRootComponent, applyComponentRewrite } from '@/lib/component-dete
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 import { convertTemplateLiteralAttrsToConcat } from '@/lib/build/template-literal-to-concat'
 import { dedupeProvidedComponents } from '@/lib/build/dedupe-provided-components'
+import { stripExportsAndBasicTypes } from '@/lib/build/strip-exports-and-types'
 import type { FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 // #1561 — mintPreviewDbToken/mintPreviewPrimitiveTokens/FOUNDER_SCOPED_PRIMITIVES
 // extracted to lib/build/preview-tokens.ts so app/build/[slug]/page.tsx can
@@ -395,16 +396,15 @@ export async function GET(
     .replace(/=>\s*;/g, '=>')
     // Fix stray semicolons before ? in ternary (x === 'a' ; ? ...)
     .replace(/\s*;\s*\?\s/g, ' ? ')
-    // Remove export statements
-    .replace(/export\s+default\s+/g, '')
-    .replace(/export\s+/g, '')
-    // Remove TypeScript types (basic)
-    .replace(/:\s*React\.FC<.*?>/g, '')
-    .replace(/:\s*React\.FC/g, '')
-    .replace(/:\s*any/g, '')
-    .replace(/:\s*string/g, '')
-    .replace(/:\s*number/g, '')
-    .replace(/:\s*boolean/g, '')
+  // Remove export statements and basic TypeScript type annotations. Comment/
+  // string/template-literal-safe (see lib/build/strip-exports-and-types.ts's
+  // doc comment) — these used to be plain unmasked `.replace(/export\s+/g,
+  // '')` / `.replace(/:\s*any/g, '')` etc. calls, which also mangled any
+  // displayed page copy or demo code snippet that happened to contain that
+  // same text in a quoted string or template literal (e.g. a pricing/FAQ
+  // string like "Note: any discount code", or an API-product page's own
+  // `export default function Example() {...}` demo snippet).
+  componentCode = stripExportsAndBasicTypes(componentCode)
   componentCode = stripTypeScriptInterfaces(componentCode)
 
   // SERVER-SIDE JSX TRUNCATION FIXER
