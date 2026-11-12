@@ -108,4 +108,29 @@ describe('fixWrongShadcnSubpaths', () => {
     // The real, uncommented import must still pass through untouched.
     expect(out).toMatch(/^import \{ Button \} from '\.\/components\/ui\/button'$/m)
   })
+
+  // rewriteBarrelImports() (fix 0b, runs BEFORE fixWrongShadcnSubpaths) has its
+  // own separate, local shadcn-name set for routing a bare `from './components'`
+  // barrel import. That set only has the components fixWrongShadcnSubpaths's
+  // SHADCN_COMPONENT_FILE map had when it was first written — it was never
+  // updated when Switch/Textarea/Slider/Tooltip*/DropdownMenu*/ScrollArea*/
+  // Skeleton/Toast*/Popover* were added to SHADCN_COMPONENT_FILE (and to the
+  // real shadcn-bundle.ts export surface). A barrel import mixing one of these
+  // with a recognized name falls into this function's "unknown" bucket, which
+  // is hardcoded to './components/aikit' — a real path, but one that doesn't
+  // export any of them. fixWrongShadcnSubpaths can't rescue it afterward
+  // either: its regex only matches imports already rooted at
+  // './components/ui/<file>', not './components/aikit'. Net result: Switch
+  // (or Toast, DropdownMenu, ScrollArea, Skeleton, Tooltip, Popover, Textarea,
+  // Slider) resolves to `undefined` at runtime — "Element type is invalid",
+  // full render crash — for any generated app that barrel-imports one of
+  // these alongside an older shadcn name.
+  it('re-routes Switch and Toast out of a barrel import mixed with other shadcn names (not to aikit)', () => {
+    const code = "import { Button, Switch, Toast } from './components'"
+    const out = fixJsxErrors(code)
+    expect(out).toMatch(/\{ Switch \} from '\.\/components\/ui\/switch'/)
+    expect(out).toMatch(/\{ Toast \} from '\.\/components\/ui\/toast'/)
+    expect(out).not.toMatch(/Switch[^']*from '\.\/components\/aikit'/)
+    expect(out).not.toMatch(/Toast[^']*from '\.\/components\/aikit'/)
+  })
 })
