@@ -3,6 +3,8 @@
  * Removes Tailwind gradient classes from generated code
  */
 
+import { findStringEnd, findBacktickEnd, findMatchingBrace } from './build/bracket-scanner'
+
 /**
  * Tailwind gradient patterns to block
  */
@@ -14,35 +16,142 @@ const GRADIENT_PATTERNS = [
 ]
 
 /**
- * Remove all Tailwind gradient classes from code
+ * Visits every string/template-literal content span in `code[start, end)`,
+ * treating `//` and `/* ... *‍/` comments as opaque so a bracket-shaped or
+ * gradient-shaped character inside one is never mistaken for literal
+ * content. Each visit gets the span's content bounds (excluding the
+ * quotes/backticks themselves).
+ */
+function forEachLiteralContent(
+  code: string,
+  start: number,
+  end: number,
+  visit: (contentStart: number, contentEnd: number) => void,
+): void {
+  let i = start
+  while (i < end) {
+    const ch = code[i]
+    if (ch === '\\') {
+      i += 2
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '/') {
+      const nl = code.indexOf('\n', i)
+      i = nl === -1 || nl > end ? end : nl + 1
+      continue
+    }
+    if (ch === '/' && code[i + 1] === '*') {
+      const close = code.indexOf('*/', i + 2)
+      i = close === -1 || close > end ? end : close + 2
+      continue
+    }
+    if (ch === '"' || ch === "'") {
+      const closeIdx = findStringEnd(code, i, ch)
+      if (closeIdx === -1 || closeIdx > end) {
+        i++
+        continue
+      }
+      visit(i + 1, closeIdx)
+      i = closeIdx + 1
+      continue
+    }
+    if (ch === '`') {
+      const closeIdx = findBacktickEnd(code, i)
+      if (closeIdx === -1 || closeIdx > end) {
+        i++
+        continue
+      }
+      visit(i + 1, closeIdx)
+      i = closeIdx + 1
+      continue
+    }
+    i++
+  }
+}
+
+/**
+ * Finds every `className=...` attribute's actual class-list text in `code`
+ * and returns each as a [start, end) span into `code` — covering
+ * `className="..."`, `className='...'`, and every string/template literal
+ * living inside a `className={...}` expression (a plain template literal,
+ * `cn()`/`clsx()` call arguments, a ternary's branches, etc).
+ *
+ * Real bug this exists to fix: `stripGradients()` used to run its
+ * gradient-class regexes against the ENTIRE file with no scoping at all, so
+ * a `from-\w+-\d+`/`to-\w+-\d+`-shaped substring anywhere else in a
+ * generated file — a real `href`, a button/body string, a comment — was
+ * silently deleted too. Confirmed live: `href="/guides/add-to-cart-2"`
+ * became `href="/guides/add-"` (a broken link) and the literal text
+ * `"Upgrade path: from-basic-2"` became `"Upgrade path: "` (silently
+ * truncated page copy) — neither string has anything to do with a Tailwind
+ * gradient class. Scoping every removal to a real className attribute's own
+ * class-list text (via the shared bracket-scanner utilities, same technique
+ * used throughout lib/build/*) closes that off without weakening gradient
+ * detection for any real Tailwind usage shape.
+ */
+function classNameValueSpans(code: string): Array<[number, number]> {
+  const spans: Array<[number, number]> = []
+  const attrRe = /className=/g
+  let m: RegExpExecArray | null
+  while ((m = attrRe.exec(code)) !== null) {
+    const i = m.index + m[0].length
+    const ch = code[i]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      if (end !== -1) spans.push([i + 1, end])
+      attrRe.lastIndex = end === -1 ? i + 1 : end + 1
+      continue
+    }
+    if (ch === '{') {
+      const end = findMatchingBrace(code, i)
+      if (end !== -1) {
+        forEachLiteralContent(code, i + 1, end, (s, e) => spans.push([s, e]))
+        attrRe.lastIndex = end + 1
+      } else {
+        attrRe.lastIndex = i + 1
+      }
+      continue
+    }
+    // Unrecognized attribute-value shape (bare identifier, etc.) — leave
+    // untouched rather than guess at its extent.
+  }
+  return spans
+}
+
+/**
+ * Remove all Tailwind gradient classes from code, scoped to real
+ * `className` attribute values only (see `classNameValueSpans`).
  */
 export function stripGradients(code: string): string {
-  let cleanedCode = code
+  const spans = classNameValueSpans(code)
+  if (spans.length === 0) return code
 
-  // Remove gradient classes
-  GRADIENT_PATTERNS.forEach((pattern) => {
-    cleanedCode = cleanedCode.replace(pattern, '')
-  })
+  let result = ''
+  let cursor = 0
+  for (const [start, end] of spans) {
+    result += code.slice(cursor, start)
+    const original = code.slice(start, end)
+    let segment = original
+    GRADIENT_PATTERNS.forEach((pattern) => {
+      pattern.lastIndex = 0
+      segment = segment.replace(pattern, '')
+    })
+    if (segment !== original) {
+      segment = segment.replace(/\s+/g, ' ').trim()
+    }
+    result += segment
+    cursor = end
+  }
+  result += code.slice(cursor)
 
-  // Clean up multiple spaces left after removal in DOUBLE-QUOTED className
-  cleanedCode = cleanedCode.replace(/className="([^"]*\s{2,}[^"]*)"/g, (match, classes) => {
-    return `className="${classes.replace(/\s+/g, ' ').trim()}"`
-  })
+  // Clean up className attributes left empty by the removal above.
+  result = result.replace(/className=""\s*/g, '')
+  result = result.replace(/className='\s*'\s*/g, '')
+  result = result.replace(/className="\s+"/g, '')
+  result = result.replace(/className=\{`\s*`\}\s*/g, '')
+  result = result.replace(/className=\{`\s+`\}/g, '')
 
-  // Clean up multiple spaces left after removal in TEMPLATE LITERAL className
-  cleanedCode = cleanedCode.replace(/className=\{`([^`]*\s{2,}[^`]*)`\}/g, (_match, classes) => {
-    return `className={\`${classes.replace(/\s+/g, ' ').trim()}\`}`
-  })
-
-  // Clean up empty className attributes (double quotes)
-  cleanedCode = cleanedCode.replace(/className=""\s*/g, '')
-  cleanedCode = cleanedCode.replace(/className="\s+"/g, '')
-
-  // Clean up empty className attributes (template literals)
-  cleanedCode = cleanedCode.replace(/className=\{`\s*`\}\s*/g, '')
-  cleanedCode = cleanedCode.replace(/className=\{`\s+`\}/g, '')
-
-  return cleanedCode
+  return result
 }
 
 /**
