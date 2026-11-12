@@ -975,10 +975,20 @@ function fixMissingExports(sandpackFiles: Record<string, string>): void {
 
       for (const name of wanted) {
         const targetCode = sandpackFiles[targetPath]
-        if (alreadyExportedRe(name).test(targetCode)) continue
-        const declMatch = targetCode.match(declRe(name))
-        if (!declMatch) continue
-        sandpackFiles[targetPath] = targetCode.replace(declRe(name), `${declMatch[1]}export ${declMatch[2]} ${name}`)
+        // #1919: both checks below run against a comment/string-masked view
+        // of the target file — a comment merely MENTIONING an export shape
+        // (an old draft's `export { Name}` kept "for reference") must never
+        // read as a real export, and the declaration this rewrites must
+        // never be a decoy sitting inside a comment, or the genuinely
+        // unexported declaration elsewhere in the file stays unexported.
+        const maskedTarget = maskCommentsAndStrings(targetCode)
+        if (alreadyExportedRe(name).test(maskedTarget)) continue
+        const declMatch = maskedTarget.match(declRe(name))
+        if (!declMatch || declMatch.index === undefined) continue
+        const start = declMatch.index
+        const end = start + declMatch[0].length
+        sandpackFiles[targetPath] =
+          targetCode.slice(0, start) + `${declMatch[1]}export ${declMatch[2]} ${name}` + targetCode.slice(end)
       }
     }
   }
@@ -1016,12 +1026,18 @@ function fixExportShapeMismatches(sandpackFiles: Record<string, string>): void {
     if (shapeCache.has(resolved)) return shapeCache.get(resolved)!
     const candidates = [resolved, `${resolved}.tsx`, `${resolved}.ts`, `${resolved}/index.tsx`, `${resolved}/index.ts`]
     const real = candidates.find((c) => c in sandpackFiles)
-    const defaultRhsMatch = real ? sandpackFiles[real].match(/export\s+default\s+([^\n;]*)/) : null
+    // #1919: hasDefault/named/defaultRhs all read a comment/string-masked
+    // view — a comment merely MENTIONING "export default Name" or "export
+    // const Name" (an old approach kept "for reference") must never read as
+    // a real export shape, or this misjudges whether a sibling import needs
+    // rewriting and can turn a working import into an `undefined` binding.
+    const maskedReal = real ? maskCommentsAndStrings(sandpackFiles[real]) : null
+    const defaultRhsMatch = maskedReal ? maskedReal.match(/export\s+default\s+([^\n;]*)/) : null
     const shape = real
       ? {
-          hasDefault: /export\s+default\b/.test(sandpackFiles[real]),
+          hasDefault: /export\s+default\b/.test(maskedReal!),
           named: new Set([
-            ...[...sandpackFiles[real].matchAll(/export\s+(?:const|function|class)\s+([A-Za-z_$][\w$]*)/g)].map(
+            ...[...maskedReal!.matchAll(/export\s+(?:const|function|class)\s+([A-Za-z_$][\w$]*)/g)].map(
               (m) => m[1],
             ),
             ...extractBareExportListNames(sandpackFiles[real]),

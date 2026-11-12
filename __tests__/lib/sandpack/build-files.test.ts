@@ -570,6 +570,48 @@ describe('buildSandpackFiles — buildLocalExportMap is comment-blind to a merel
   })
 })
 
+/**
+ * Real bug found this run (#1919): fixMissingExports' alreadyExportedRe and
+ * declRe both scanned the target file's RAW, unmasked text — same bug class
+ * as #1900 (buildLocalExportMap), just in this sibling function. A comment
+ * merely MENTIONING an export (an old draft's `export const Name` kept "for
+ * reference") makes alreadyExportedRe wrongly think the real declaration is
+ * already exported, so the fix is skipped entirely; and even when it isn't
+ * skipped, declRe's un-masked `.match()` can bind to a decoy declaration
+ * sitting inside an earlier comment instead of the real one.
+ */
+describe('buildSandpackFiles — fixMissingExports is comment-blind to a merely-mentioned export (#1919)', () => {
+  it('still exports a genuinely unexported declaration when a comment falsely claims it is already exported', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { Footer } from './components/Footer'\nexport default function App(){ return <Footer/> }",
+      '/components/Footer.tsx': [
+        '// An older draft of this file additionally did:',
+        '// export const Footer = () => <footer>old</footer>',
+        'function Footer() { return <footer>hi</footer> }',
+      ].join('\n'),
+    })
+    expect(built['/components/Footer.tsx']).toMatch(/^export function Footer\b/m)
+  })
+
+  it('exports the real declaration, not a decoy with the same shape sitting inside an earlier block comment', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { Footer } from './components/Footer'\nexport default function App(){ return <Footer/> }",
+      '/components/Footer.tsx': [
+        '/* removed, kept for reference:',
+        '   function Footer() { return <footer>old</footer> }',
+        '*/',
+        'function Footer() { return <footer>hi</footer> }',
+      ].join('\n'),
+    })
+    // The export keyword must land on the REAL (second) declaration, not
+    // get spliced into dead comment text on the decoy (first) one.
+    expect(built['/components/Footer.tsx']).toMatch(/^export function Footer\b/m)
+    expect(built['/components/Footer.tsx']).not.toContain('export function Footer() { return <footer>old</footer> }')
+  })
+})
+
 describe('buildSandpackFiles — main-file default-export synthesis handles more than `export default function Name` (#1523-class)', () => {
   it('synthesizes a default export for a root component declared as an arrow const with only a bare `export { Name }` list (real crash: /index.tsx does `import App from \'./App\'`, which resolved to undefined pre-fix)', () => {
     const built = buildSandpackFiles({
