@@ -711,48 +711,11 @@ function rewriteHallucinatedPackages(code: string): string {
  * a length-preserving comment/string mask (same technique as #1879/#1880,
  * #1872/#1873 etc. elsewhere in this pipeline): a match whose span is
  * entirely inside a comment or string is left untouched, and the search
- * continues (now global) to the next, real occurrence.
+ * continues (now global) to the next, real occurrence. Guarded with the
+ * same length-preserving comment/string mask defined above
+ * (maskPreservingLength) that stubLegacyPagesRouterImports' next/app branch
+ * also uses.
  */
-function maskPreservingLength(code: string): string {
-  let out = ''
-  let i = 0
-  while (i < code.length) {
-    const ch = code[i]
-    const next = code[i + 1]
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      const stop = end === -1 ? code.length : end + 1
-      out += ' '.repeat(stop - i)
-      i = stop
-      continue
-    }
-    if (ch === '`') {
-      const end = findBacktickEnd(code, i)
-      const stop = end === -1 ? code.length : end + 1
-      out += ' '.repeat(stop - i)
-      i = stop
-      continue
-    }
-    if (ch === '/' && next === '/') {
-      let end = code.indexOf('\n', i)
-      if (end === -1) end = code.length
-      out += ' '.repeat(end - i)
-      i = end
-      continue
-    }
-    if (ch === '/' && next === '*') {
-      let end = code.indexOf('*/', i + 2)
-      end = end === -1 ? code.length : end + 2
-      out += ' '.repeat(end - i)
-      i = end
-      continue
-    }
-    out += ch
-    i++
-  }
-  return out
-}
-
 function stubNextOnlyImports(code: string): string {
   let fixed = code
 
