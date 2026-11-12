@@ -135,6 +135,29 @@ describe('convertTemplateLiteralAttrsToConcat', () => {
     expect(evalClassName(false)).toBe('base b end')
   })
 
+  it('leaves the className={`...`} trigger text alone when it sits inside an unrelated string literal (not real JSX)', () => {
+    // Real bug: the top-level attrOpenRe scan used to run against raw,
+    // unmasked code, so this exact trigger text appearing as DATA inside a
+    // plain string (e.g. a code "cheat sheet" component showing example
+    // markup) was mistaken for a real JSX attribute and "fixed" — splicing
+    // an unescaped `"` into the middle of the surrounding string literal and
+    // producing a hard SyntaxError that blanks the whole preview.
+    const code = 'const example = "Try: className={`bg-${color}-500`}"'
+    expect(convertTemplateLiteralAttrsToConcat(code)).toBe(code)
+  })
+
+  it('still converts a real className template literal that appears right after an unrelated string containing the trigger text', () => {
+    const code =
+      'const example = "Try: className={`bg-${color}-500`}"\n' +
+      'className={`w-10 h-10 ${color} rounded`}'
+    const out = convertTemplateLiteralAttrsToConcat(code)
+    expect(out).toContain('const example = "Try: className={`bg-${color}-500`}"')
+    const match = out.match(/className=\{([^\n]+)\}$/)
+    // eslint-disable-next-line no-new-func
+    const result = new Function('color', `return ${match![1]}`)('bg-red-500')
+    expect(result).toBe('w-10 h-10 bg-red-500 rounded')
+  })
+
   it('a line comment containing a stray } inside the interpolation does not truncate it', () => {
     const code = "className={`base ${\n  // note: }\n  isActive ? 'a' : 'b'\n} end`}"
     const out = convertTemplateLiteralAttrsToConcat(code)
