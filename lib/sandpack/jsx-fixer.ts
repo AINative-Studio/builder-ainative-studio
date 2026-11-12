@@ -586,10 +586,97 @@ function fixCommonSyntax(code: string): string {
  * which assumes a barrel file (index.ts) that doesn't exist in Sandpack.
  * We rewrite these to import from the known AIKit/shadcn/lucide sources.
  */
+/**
+ * Length-preserving mask used by rewriteBarrelImports/rewriteHallucinatedPackages:
+ * template-literal CONTENT and comment CONTENT are blanked (delimiters kept),
+ * everything else — including ordinary '/" quoted strings — stays exactly
+ * as-is. A real import specifier is always single/double-quoted, so leaving
+ * those untouched keeps the real-import regexes below matching correctly;
+ * a template literal or comment is the only place import-shaped TEXT can
+ * appear that isn't a real import (e.g. a landing page rendering a
+ * "Quickstart" code sample via a backtick string). Same technique as
+ * lib/build/flatten-multifile.ts's maskStringsAndComments/safeReplace.
+ */
+function maskTemplatesAndComments(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const stop = end === -1 ? code.length : end + 1
+      out += code.slice(i, stop)
+      i = stop
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      if (end === -1) {
+        out += ch + code.slice(i + 1).replace(/[^\n]/g, ' ')
+        i = code.length
+        continue
+      }
+      out += ch + code.slice(i + 1, end).replace(/[^\n]/g, ' ') + ch
+      i = end + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += '//' + code.slice(i + 2, end).replace(/[^\n]/g, ' ')
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      if (closeIdx === -1) {
+        out += '/*' + code.slice(i + 2).replace(/[^\n]/g, ' ')
+        i = code.length
+        continue
+      }
+      out += '/*' + code.slice(i + 2, closeIdx).replace(/[^\n]/g, ' ') + '*/'
+      i = closeIdx + 2
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
+ * Like `code.replace(regex, replacer)`, but a match whose span differs
+ * between `code` and `maskTemplatesAndComments(code)` — i.e. falls inside a
+ * template literal or comment — is left completely untouched instead of
+ * rewritten. Prevents rewriteBarrelImports/rewriteHallucinatedPackages from
+ * corrupting a displayed code sample that merely contains import-shaped text
+ * (confirmed live repro, #1943).
+ */
+function safeReplaceImportShape(code: string, regex: RegExp, replacer: (...args: any[]) => string): string {
+  const masked = maskTemplatesAndComments(code)
+  let result = ''
+  let lastIndex = 0
+  let match: RegExpExecArray | null
+  regex.lastIndex = 0
+  while ((match = regex.exec(code))) {
+    const span = code.slice(match.index, match.index + match[0].length)
+    if (masked.slice(match.index, match.index + match[0].length) !== span) {
+      if (regex.lastIndex === match.index) regex.lastIndex++
+      continue
+    }
+    result += code.slice(lastIndex, match.index) + replacer(...match, match.index, code)
+    lastIndex = match.index + match[0].length
+  }
+  result += code.slice(lastIndex)
+  return result
+}
+
 function rewriteBarrelImports(code: string): string {
   const masked = maskPreservingOffsets(code)
   // Match imports from bare './components' or '../components' (no subpath)
-  return code.replace(
+  return safeReplaceImportShape(
+    code,
     /import\s+\{([^}]+)\}\s+from\s+['"]\.\.?\/components['"]\s*;?/g,
     (match: string, names: string, offset: number) => {
       // A match that only exists inside a `//`/`/* */` comment (or a string)
@@ -666,7 +753,8 @@ function rewriteHallucinatedPackages(code: string): string {
   // Rule: bare (unscoped, no slashes) package names that start with AINative or AIKit
   // are fake — real packages are either scoped (@ainative/*) or lowercase ('aikit').
   // Real packages PRESERVED: '@ainative/react-sdk', '@ainative/next-sdk', 'aikit', etc.
-  return code.replace(
+  return safeReplaceImportShape(
+    code,
     /import\s+\{([^}]+)\}\s+from\s+['"]([A-Za-z][\w]*)['"](\s*;?)/g,
     (match, names: string, pkg: string, semi: string) => {
       // Bare CamelCase names starting with AINative or AIKit = hallucinated
