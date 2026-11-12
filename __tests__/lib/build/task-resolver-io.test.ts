@@ -57,7 +57,7 @@ vi.mock('@/lib/agent/zeromemory', () => ({
 }))
 vi.mock('@/lib/build/deployment-health', () => ({ reportDeploymentHealthStage: h.reportDeploymentHealthStage }))
 
-import { resolveTask } from '@/lib/build/task-resolver'
+import { resolveTask, openIssueForNewTask } from '@/lib/build/task-resolver'
 import type { BuildTask } from '@/lib/build/task-store'
 
 const TASK: BuildTask = {
@@ -818,5 +818,44 @@ describe('resolveTask — unverified registry lookup is retried, never failed (#
     const result = await resolveTask('owner::slug', TASK, 'slug')
     expect(result.ok).toBe(true)
     expect(result.stage).toBe('completed')
+  })
+})
+
+describe('openIssueForNewTask (#1928)', () => {
+  const freshTask: BuildTask = { ...TASK, id: 't_fresh', giteaIssueNumber: null }
+
+  it('opens a real Gitea issue and persists it on the task', async () => {
+    h.createIssue.mockResolvedValue({ ok: true, issueNumber: 202, url: 'https://git.ainative.studio/ws-1/slug/issues/202' })
+    const result = await openIssueForNewTask('owner::slug', 'ws-1', 'slug', freshTask)
+
+    expect(h.createIssue).toHaveBeenCalledWith('ws-1', 'slug', freshTask.title, expect.any(String))
+    expect(h.updateTask).toHaveBeenCalledWith('owner::slug', 't_fresh', { giteaIssueNumber: 202 })
+    expect(result.giteaIssueNumber).toBe(202)
+  })
+
+  it('never calls createIssue when the company has no gitOrg yet (not git-provisioned)', async () => {
+    const result = await openIssueForNewTask('owner::slug', null, 'slug', freshTask)
+    expect(h.createIssue).not.toHaveBeenCalled()
+    expect(result).toBe(freshTask)
+  })
+
+  it('never opens a duplicate issue for a task that already has one', async () => {
+    const taskWithIssue: BuildTask = { ...TASK, id: 't_has_one', giteaIssueNumber: 55 }
+    const result = await openIssueForNewTask('owner::slug', 'ws-1', 'slug', taskWithIssue)
+    expect(h.createIssue).not.toHaveBeenCalled()
+    expect(result).toBe(taskWithIssue)
+  })
+
+  it('degrades gracefully (never throws) when createIssue fails', async () => {
+    h.createIssue.mockResolvedValue({ ok: false, reason: 'gitea unreachable' })
+    const result = await openIssueForNewTask('owner::slug', 'ws-1', 'slug', freshTask)
+    expect(h.updateTask).not.toHaveBeenCalled()
+    expect(result).toBe(freshTask)
+  })
+
+  it('degrades gracefully (never throws) when createIssue itself throws', async () => {
+    h.createIssue.mockRejectedValue(new Error('network blip'))
+    const result = await openIssueForNewTask('owner::slug', 'ws-1', 'slug', freshTask)
+    expect(result).toBe(freshTask)
   })
 })

@@ -29,6 +29,7 @@
 import { listTasks, updateTask, needsSplit, type BuildTask } from '@/lib/build/task-store'
 import { resolveTask } from '@/lib/build/task-resolver'
 import { splitTask } from '@/lib/build/task-splitter'
+import { resolveApp } from '@/lib/build/app-registry'
 
 /**
  * Found during an overnight founder-dashboard-integrity sweep: resolveTask()
@@ -238,13 +239,20 @@ export async function runTaskResolutions(
     // from its smaller, resolvable due tasks — matching #903's existing
     // invariant.
     const oversized = todo.filter((t) => needsSplit(t.storyPoints))
-    for (const task of oversized) {
-      try {
-        await splitTask(scopeKey, task)
-      } catch {
-        /* best-effort — a splitter failure (even an unexpected throw) must
-         * never break the loop or lose the parent task; splitTask itself
-         * already leaves the parent untouched on any internal failure. */
+    if (oversized.length > 0) {
+      // #1928 — resolved once per run (not per task) so every split child
+      // this run creates gets its own Gitea issue immediately, the same as
+      // resolveTask()'s own tasks below, instead of sitting invisible until
+      // a future resolveTask() pass happens to reach it.
+      const splitApp = await resolveApp(slug).catch(() => null)
+      for (const task of oversized) {
+        try {
+          await splitTask(scopeKey, task, { gitOrg: splitApp?.gitOrg, slug })
+        } catch {
+          /* best-effort — a splitter failure (even an unexpected throw) must
+           * never break the loop or lose the parent task; splitTask itself
+           * already leaves the parent untouched on any internal failure. */
+        }
       }
     }
 

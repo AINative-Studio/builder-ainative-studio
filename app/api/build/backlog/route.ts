@@ -23,6 +23,7 @@ import { resolveAppVerified } from '@/lib/build/app-registry'
 import { auth } from '@/app/(auth)/auth'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
 import { createTask, listTasks } from '@/lib/build/task-store'
+import { openIssueForNewTask } from '@/lib/build/task-resolver'
 
 export const runtime = 'nodejs'
 
@@ -63,6 +64,7 @@ export async function GET(request: NextRequest) {
   let isProvisioned = false
   let hasDomain = false
   let hasPlan = false
+  let gitOrg: string | null | undefined = null
   // #832-class bug (#1327): resolveApp()'s plain `null` return collapsed "no
   // registry entry yet" with "the registry read itself failed" — on a
   // transient ZeroDB hiccup, hasPlan/hasDomain silently became `false`,
@@ -78,6 +80,7 @@ export async function GET(request: NextRequest) {
     isProvisioned = Boolean(entry?.zerodbProjectId)
     hasDomain = Boolean(entry?.domain)
     hasPlan = Boolean(entry?.plan)
+    gitOrg = entry?.gitOrg
   }
 
   const { foundational, selected, names } = selectPrimitives(idea, track, 6)
@@ -141,11 +144,16 @@ export async function GET(request: NextRequest) {
       const existingTitles = new Set(existing.map((t) => t.title))
       for (const item of queued) {
         if (existingTitles.has(item.title)) continue
+        // #1928 — open this task's real Gitea issue right away rather than
+        // leaving it invisible on the founder's own repo until (if ever) a
+        // future nightly resolveTask() pass reaches it.
         void createTask(scopeKey, {
           title: item.title,
           detail: item.primitive ? `Primitive: ${item.primitive}` : undefined,
           stage: 'todo',
           source: 'cody',
+        }).then((created) => {
+          if (created) void openIssueForNewTask(scopeKey, gitOrg, companyId, created)
         })
       }
     }

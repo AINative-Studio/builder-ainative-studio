@@ -55,6 +55,7 @@ import { buildDailyReport, dailyReportTitle } from '@/lib/build/document-prompts
 import { runMediaRoutines } from '@/lib/build/media-routine'
 import { createTask, listTasks, updateTask, stageFromSwarmStatus } from '@/lib/build/task-store'
 import { runTaskResolutions } from '@/lib/build/task-resolution-loop'
+import { openIssueForNewTask } from '@/lib/build/task-resolver'
 import { resolveApp } from '@/lib/build/app-registry'
 import { runNightlyCommsOutreach } from '@/lib/build/comms-policy'
 import { fetchPlanByEmail, type AdminPlanLookup } from '@/lib/ainative/admin-plan-lookup'
@@ -524,12 +525,20 @@ async function runForCompany(
             { companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal },
             r.briefing,
           )
-          await createTask(scopeKey, {
+          const created = await createTask(scopeKey, {
             title: `Nightly backlog: ${e.companyName}`,
             detail,
             stage: 'todo',
             source: 'recurring',
           })
+          // #1928 — open this task's Gitea issue now, not only if/when a
+          // future nightly run's resolveTask() happens to reach it (a
+          // hobbyist/pro-tier company's nightly task cap means most
+          // recurring seed tasks never get there at all).
+          if (created) {
+            const seedApp = await resolveApp(e.companyId).catch(() => null)
+            await openIssueForNewTask(scopeKey, seedApp?.gitOrg, e.companyId, created)
+          }
         }
       } catch (err) {
         logger.warn('Nightly backlog task seed failed', { companyId: e.companyId, err: (err as Error)?.message })
@@ -590,13 +599,20 @@ async function runForCompany(
             { companyId: e.companyId, companyName: e.companyName, track: e.track, goal: e.goal },
             r.briefing,
           )
-          await createTask(scopeKey, {
+          const created = await createTask(scopeKey, {
             title: `Nightly backlog: ${e.companyName}`,
             detail,
             stage: 'in_progress',
             source: 'recurring',
             taskId: r.taskId,
           })
+          // #1928 — same as the app-track branch above: this track has no
+          // separate resolver pass to open the issue later, so without this
+          // call a company-track recurring task never gets one at all.
+          if (created) {
+            const seedApp = await resolveApp(e.companyId).catch(() => null)
+            await openIssueForNewTask(scopeKey, seedApp?.gitOrg, e.companyId, created)
+          }
         }
       } catch (err) {
         logger.warn('Company-track nightly backlog seed/update failed', { companyId: e.companyId, err: (err as Error)?.message })

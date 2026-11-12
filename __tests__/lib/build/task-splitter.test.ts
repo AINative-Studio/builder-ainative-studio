@@ -20,6 +20,7 @@ const h = vi.hoisted(() => ({
   createTask: vi.fn(),
   updateTask: vi.fn(),
   estimateStoryPoints: vi.fn(),
+  openIssueForNewTask: vi.fn(),
 }))
 
 vi.mock('@/lib/build/task-store', async () => {
@@ -30,6 +31,8 @@ vi.mock('@/lib/build/task-store', async () => {
     updateTask: h.updateTask,
   }
 })
+
+vi.mock('@/lib/build/task-resolver', () => ({ openIssueForNewTask: h.openIssueForNewTask }))
 
 vi.mock('@/lib/build/story-estimator', async () => {
   const actual = await vi.importActual<typeof import('@/lib/build/story-estimator')>('@/lib/build/story-estimator')
@@ -162,7 +165,9 @@ describe('splitTask (#904)', () => {
     h.createTask.mockReset()
     h.updateTask.mockReset()
     h.estimateStoryPoints.mockReset()
+    h.openIssueForNewTask.mockReset()
     h.updateTask.mockResolvedValue(true)
+    h.openIssueForNewTask.mockImplementation(async (_scopeKey: string, _gitOrg: unknown, _slug: string, t: unknown) => t)
   })
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -198,6 +203,50 @@ describe('splitTask (#904)', () => {
       expect(call[1].parentTaskId).toBe('parent-1')
       expect(call[1].stage).toBe('todo')
     }
+  })
+
+  it('#1928 — opens a real Gitea issue for each split child when gitOrg/slug are passed', async () => {
+    mockFetch(() => ({ ok: true, json: () => ({ choices: [{ message: { content: SPLIT_REPLY_3 } }] }) }))
+    h.estimateStoryPoints.mockResolvedValue({ storyPoints: 2, estimateRationale: 'Small slice.' })
+    let n = 0
+    h.createTask.mockImplementation(async (_scope: string, input: any) => ({
+      id: `child-${++n}`,
+      scopeKey: 'a::b',
+      title: input.title,
+      detail: input.detail,
+      stage: 'todo',
+      source: 'cody',
+      taskId: null,
+      storyPoints: 2,
+      estimateRationale: 'Small slice.',
+      parentTaskId: input.parentTaskId,
+      createdAt: '2026-01-02T00:00:00.000Z',
+      updatedAt: '2026-01-02T00:00:00.000Z',
+    }))
+
+    const result = await splitTask('a::b', task(), { gitOrg: 'ws-1', slug: 'acme' })
+
+    expect(result.ok).toBe(true)
+    expect(h.openIssueForNewTask).toHaveBeenCalledTimes(3)
+    for (const call of h.openIssueForNewTask.mock.calls) {
+      expect(call[0]).toBe('a::b')
+      expect(call[1]).toBe('ws-1')
+      expect(call[2]).toBe('acme')
+    }
+  })
+
+  it('#1928 — never opens an issue when no slug is given (callers that do not need this, e.g. unit tests above)', async () => {
+    mockFetch(() => ({ ok: true, json: () => ({ choices: [{ message: { content: SPLIT_REPLY_3 } }] }) }))
+    h.estimateStoryPoints.mockResolvedValue({ storyPoints: 2, estimateRationale: 'Small slice.' })
+    let n = 0
+    h.createTask.mockImplementation(async (_scope: string, input: any) => ({
+      id: `child-${++n}`, scopeKey: 'a::b', title: input.title, stage: 'todo', source: 'cody',
+      taskId: null, storyPoints: 2, estimateRationale: 'Small slice.', parentTaskId: input.parentTaskId,
+      createdAt: '2026-01-02T00:00:00.000Z', updatedAt: '2026-01-02T00:00:00.000Z',
+    }))
+
+    await splitTask('a::b', task())
+    expect(h.openIssueForNewTask).not.toHaveBeenCalled()
   })
 
   it('marks the parent completed with an honest output note referencing the real child ids', async () => {

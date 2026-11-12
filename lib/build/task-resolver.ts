@@ -188,6 +188,48 @@ export function buildTaskIssueBody(task: { title: string; detail?: string; story
   ].join('\n')
 }
 
+/**
+ * Opens a real Gitea issue for a just-created `build_tasks` row, best-effort
+ * (#1928). Before this, `createIssue()` was only ever called from inside
+ * `resolveTask()`'s own pipeline below — so a task created anywhere else
+ * (nightly-loop's recurring-task seeding, `task-splitter.ts`'s decomposed
+ * children, `backlog/route.ts`'s queued-primitive promotion) had
+ * `giteaIssueNumber: null` from the moment it was created, and stayed that
+ * way — invisible on the founder's own Gitea issue list — until (if ever) a
+ * future nightly run's `resolveTask()` call happened to reach it. A plan
+ * tier's nightly cap (`maxTasksForTier()`) means most hobbyist/pro-tier
+ * backlog items never get picked up at all, so for them this was permanent,
+ * not just delayed.
+ *
+ * Mirrors `resolveTask()`'s own createIssue step exactly (same
+ * `buildTaskIssueBody()` shape, same best-effort/never-throws contract) so a
+ * task opened this way and one opened by `resolveTask()` are indistinguishable
+ * on the company's Gitea repo. `gitOrg` absent (company not git-provisioned
+ * yet) or a Gitea failure leaves `giteaIssueNumber` null — exactly today's
+ * behavior — and `resolveTask()`'s own createIssue call (gated on
+ * `issueNumber == null`) still covers it later, so this never risks a
+ * duplicate issue for the same task.
+ */
+export async function openIssueForNewTask(
+  scopeKey: string,
+  gitOrg: string | null | undefined,
+  slug: string,
+  task: BuildTask,
+): Promise<BuildTask> {
+  if (!gitOrg || !task || task.giteaIssueNumber != null) return task
+  try {
+    const result = await createIssue(gitOrg, slug, task.title, buildTaskIssueBody(task))
+    if (result.ok && result.issueNumber) {
+      await updateTask(scopeKey, task.id, { giteaIssueNumber: result.issueNumber })
+      return { ...task, giteaIssueNumber: result.issueNumber }
+    }
+    console.warn('[task-resolver] openIssueForNewTask: createIssue did not succeed:', result.reason)
+  } catch (e) {
+    console.warn('[task-resolver] openIssueForNewTask threw:', (e as Error)?.message || e)
+  }
+  return task
+}
+
 // ---------------------------------------------------------------------------
 // I/O — the real end-to-end pipeline
 // ---------------------------------------------------------------------------
