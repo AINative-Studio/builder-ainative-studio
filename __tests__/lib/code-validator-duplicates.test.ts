@@ -216,6 +216,60 @@ describe('code-validator: findDuplicateTopLevelDeclaration is comment/template-l
  * "Unexpected token, expected ':'"). Must be auto-fixed to strict-valid, or
  * rejected so the retry path re-generates — never a false 'success' that breaks.
  */
+describe('code-validator: Fix 11 (duplicate imports) is comment/string-blind (#1913)', () => {
+  // Exercised via sanitizeForSandpack (autoFixCode only) rather than
+  // validateJavaScriptCode: a decoy import left inside a comment can ALSO
+  // trip the separate, already-tracked findDuplicateTopLevelDeclaration
+  // comment-blindness (#1885, fix pending unmerged in #1886) when run
+  // through the full validation pipeline — unrelated to Fix 11 and would
+  // make these cases fail for a reason this fix doesn't own. Isolating to
+  // autoFixCode keeps this test honest about exactly what #1913 fixes.
+  it('does not treat a decoy import inside a block comment as the "first occurrence" — keeps the real import', () => {
+    const code = [
+      '/*',
+      "import { Card } from './legacy/card'",
+      '*/',
+      "import { Card } from './components/ui/card'",
+      '',
+      'export default function App() { return <Card>Hello</Card> }',
+    ].join('\n')
+
+    const fixed = sanitizeForSandpack(code)
+
+    // The real import survives untouched; the decoy stays exactly where it
+    // was — still inside its comment, never deleted or mistaken for real code.
+    expect(fixed).toContain("import { Card } from './components/ui/card'")
+    expect(fixed).toContain("import { Card } from './legacy/card'")
+  })
+
+  it('does not treat a decoy import inside a line comment as the "first occurrence" — keeps the real import', () => {
+    const code = [
+      "// import { Card } from './legacy/card'",
+      "import { Card } from './components/ui/card'",
+      '',
+      'export default function App() { return <Card>Hello</Card> }',
+    ].join('\n')
+
+    const fixed = sanitizeForSandpack(code)
+
+    expect(fixed).toContain("import { Card } from './components/ui/card'")
+  })
+
+  it('still de-dupes a REAL duplicate import that is not inside a comment', () => {
+    const code = [
+      "import { Card } from './components/ui/card'",
+      "import { Card } from './components/ui/card'",
+      '',
+      'export default function App() { return <Card>Hello</Card> }',
+    ].join('\n')
+
+    const fixed = sanitizeForSandpack(code)
+
+    const cardImportLines = fixed.split('\n').filter(l => /^\s*import\s.*Card.*from/.test(l))
+    expect(cardImportLines.length).toBe(1)
+  })
+})
+
 describe('code-validator: malformed ternary handling (#64 follow-up)', () => {
   const strictParses = (code: string) => {
     try {

@@ -535,11 +535,22 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     const importLineRegex = /^\s*import\s+(type\s+)?(?:([A-Za-z_$][\w$]*)\s*,?\s*)?(?:\{([^}]*)\})?\s*(?:from\s+)?['"][^'"]+['"];?\s*$/
     const outLines: string[] = []
     let removedDupNames: string[] = []
-    for (const rawLine of fixedCode.split('\n')) {
+    // Mask comments/strings before matching (#1912-class — same bug family as
+    // #1910/#1885): without this, a decoy `import { X } from '...'` sitting
+    // inside a `/* ... */` block comment (a disabled draft, an old import kept
+    // "for reference") matched importLineRegex just as well as real code, so
+    // the REAL import for the same name got dropped as the "duplicate" —
+    // leaving every usage of X with no binding at all.
+    const rawLines = fixedCode.split('\n')
+    const maskedLines = maskCommentsPreservingLines(fixedCode).split('\n')
+    for (let li = 0; li < rawLines.length; li++) {
+      const rawLine = rawLines[li]
       // Reset per-file: multi-file output (// --- FILE: x --- markers) legitimately
       // repeats the same imports in each file — only de-dupe within one file.
+      // Checked against the ORIGINAL line: the marker itself is a `//` comment,
+      // so masking it would blank it out and this reset would never fire again.
       if (FILE_MARKER.test(rawLine.trim())) { seenImportNames = new Set(); outLines.push(rawLine); continue }
-      const m = rawLine.match(importLineRegex)
+      const m = maskedLines[li].match(importLineRegex)
       if (!m) { outLines.push(rawLine); continue }
       const isTypeOnly = !!m[1]
       const defaultName = m[2]
@@ -1185,6 +1196,55 @@ function findTemplateLiteralEndInDestructureCheck(code: string, openIdx: number)
     i++
   }
   return -1
+}
+
+/**
+ * Length-preserving comment mask: `//` and `/* ... *\/` content becomes
+ * spaces, with newlines kept intact so a caller doing a per-line scan sees
+ * the same line count/positions as the original. Skips over string/template-
+ * literal content first so a `//`/`/*` INSIDE a string is never mistaken for
+ * a real comment start. Reuses this file's existing string/template boundary
+ * scanners. Used by Fix 11 (duplicate imports) so a decoy import sitting in a
+ * block comment never gets mistaken for a real, duplicate-worthy declaration.
+ */
+function maskCommentsPreservingLines(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEndInDestructureCheck(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findTemplateLiteralEndInDestructureCheck(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1)
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += code.slice(i, Math.min(end, code.length)).replace(/[^\n]/g, ' ')
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
 }
 
 /**
