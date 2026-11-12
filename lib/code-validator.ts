@@ -9,10 +9,33 @@ import {
 
 /**
  * Multi-file output boundary marker — mirrors lib/multi-file-parser.ts.
- * Used to scope duplicate-declaration checks per file, since the same imports
- * and top-level names legitimately repeat across files in one blob.
+ * Used with `.test(line)` against one RAW line at a time (never against the
+ * whole blob) to reset per-file dedupe state. `findUnresolvedComponents` also
+ * `.split()`s on this directly — deliberately: lacking the `m` flag, `^`/`$`
+ * anchor to the whole string, so on real multi-file content the split never
+ * actually fires and the whole blob is scanned as one pool. That pooling is
+ * intentional there (see __tests__/lib/undefined-components.test.ts's
+ * "resolves a component defined in another file of multi-file output") —
+ * a component declared in any file of the blob is NOT flagged as unresolved
+ * even where the consuming file never imports it, because a separate,
+ * dedicated mechanism (buildLocalExportMap / the local-sibling-import
+ * injector in lib/sandpack/build-files.ts) is what actually wires that
+ * import in; this check only needs to rule out a truly hallucinated name.
+ * Do NOT add the `m` flag here — that would un-pool findUnresolvedComponents
+ * too and break that intentional, tested behavior.
  */
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
+
+/**
+ * Same marker, but anchored per-LINE (`m` flag) and with a non-capturing
+ * group, for callers that `.split()` the blob and actually need a real
+ * per-file boundary — unlike FILE_MARKER above, `.split()` on a regex
+ * lacking `m` can only match if the ENTIRE input is one marker line, so it
+ * silently never splits real multi-file content at all. Keeping the group
+ * non-capturing also avoids `.split()`'s behavior of interleaving a
+ * capturing group's matched text into the result array.
+ */
+const FILE_MARKER_SPLIT = /^\/\/\s*---\s*FILE:\s*(?:.+?)\s*---\s*$/m
 
 /**
  * Code Validation Result
@@ -1668,7 +1691,7 @@ function maskForObjectChildChecks(code: string): string {
 }
 
 export function findObjectRenderedAsChild(code: string): string | null {
-  for (const file of code.split(FILE_MARKER)) {
+  for (const file of code.split(FILE_MARKER_SPLIT)) {
     // Scan a comment/string-masked copy (#1908) so a declaration or JSX-child
     // mention that only appears inside a comment or a demo string/template
     // literal (e.g. a landing page showing its own code as text) can never be
@@ -1830,7 +1853,7 @@ export function findUndefinedReferences(code: string): string | null {
   // (const/let/var/function/class/params/destructure/import/catch), (2) collect
   // every referenced lower-initial identifier; flag a reference that is neither
   // declared nor a known runtime global/component. Fail-open on any error.
-  for (const file of code.split(FILE_MARKER)) {
+  for (const file of code.split(FILE_MARKER_SPLIT)) {
     if (!file.trim()) continue
 
     let ast: any
