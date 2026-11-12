@@ -59,6 +59,83 @@ const ainativeClient = new OpenAI({
 
 const REPAIR_MODELS = ['qwen-coder-32b', 'gpt-oss-20b', 'ministral-14b']
 
+/**
+ * Blank out string/template-literal and block-comment content, char-for-
+ * char (newlines preserved so offsets still line up with the original
+ * text). Deliberately leaves `//` line comments untouched — a genuine
+ * `// --- FILE:` marker IS a line comment, so masking line comments too
+ * would blank real markers right along with decoy ones. Same shape as
+ * lib/code-validator.ts's extractRenderableCode fix (#1962).
+ */
+function maskStringsAndBlockCommentsForFileMarkerScan(content: string): string {
+  let out = ''
+  let i = 0
+  while (i < content.length) {
+    const ch = content[i]
+    const next = content[i + 1]
+    if (ch === '"' || ch === "'") {
+      let j = i + 1
+      while (j < content.length && content[j] !== ch) {
+        if (content[j] === '\\') j++
+        j++
+      }
+      const end = j >= content.length ? content.length - 1 : j
+      out += content.slice(i, end + 1).replace(/[^\n]/g, ' ')
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < content.length && content[j] !== '`') {
+        if (content[j] === '\\') j++
+        j++
+      }
+      const end = j >= content.length ? content.length - 1 : j
+      out += content.slice(i, end + 1).replace(/[^\n]/g, ' ')
+      i = end + 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = content.indexOf('*/', i + 2)
+      end = end === -1 ? content.length : end + 2
+      out += content.slice(i, Math.min(end, content.length)).replace(/[^\n]/g, ' ')
+      i = Math.min(end, content.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
+ * Split `content` on `// --- FILE:` markers, verified against a string/
+ * template/block-comment-masked view so a decoy marker-shaped substring
+ * sitting inside a repaired file's own string, template literal, or block
+ * comment isn't mistaken for a real file boundary — this route's own
+ * re-split used to split the raw, unmasked repaired code directly on the
+ * unmasked marker pattern, with the marker regex not even anchored to a
+ * full line, so a decoy could trigger it from anywhere,
+ * including inside a single-line string. Same bug class and fix shape as
+ * lib/code-validator.ts's extractRenderableCode (#1962), unmerged PR #1965
+ * at time of writing — duplicated locally here per this codebase's
+ * established per-file-copy convention for this exact scan (see
+ * lib/build/bracket-scanner.ts's module doc).
+ */
+function splitOnRealFileMarkers(content: string): string[] {
+  const masked = maskStringsAndBlockCommentsForFileMarkerScan(content)
+  const marker = /\/\/\s*---\s*FILE:\s*/gi
+  const parts: string[] = []
+  let lastEnd = 0
+  let m: RegExpExecArray | null
+  while ((m = marker.exec(masked)) !== null) {
+    parts.push(content.slice(lastEnd, m.index))
+    lastEnd = m.index + m[0].length
+  }
+  parts.push(content.slice(lastEnd))
+  return parts
+}
+
 // #1299: this repair call had no timeout — runValidationRetryLoop (lib/
 // generation-retry.ts) has no bound of its own around the generate()
 // callback it's given, so a hung upstream call here left this request (and
@@ -180,11 +257,11 @@ export async function POST(request: NextRequest) {
         chatId, prompt: 'repair', generatedCode: result.code,
         model: 'repair-loop', codeLength: result.code.length,
       }).catch(() => {})
-      if (result.code.includes('// --- FILE:')) {
+      const fileParts = splitOnRealFileMarkers(result.code)
+      if (fileParts.length > 1) {
         try {
-          const parts = result.code.split(/\/\/\s*---\s*FILE:\s*/i).filter(Boolean)
           const files: Record<string, string> = {}
-          for (const part of parts) {
+          for (const part of fileParts.filter(Boolean)) {
             const [name, ...rest] = part.split('\n')
             if (name?.trim()) files[name.trim()] = rest.join('\n')
           }
