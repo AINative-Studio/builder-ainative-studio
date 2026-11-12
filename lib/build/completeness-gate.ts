@@ -333,8 +333,26 @@ export function findMissingLocalImports(
 
     // A concatenated multi-file blob IS a files map — split it so per-file
     // resolution works (the beacon repro: blob missing the Analytics section).
-    if (!map && /\/\/\s*---\s*FILE:/.test(raw)) {
-      map = splitMarkerBlob(raw)
+    //
+    // Real bug (this loop's overnight comment/string-blindness sweep): this
+    // used to gate the split on a raw, unmasked `/\/\/\s*---\s*FILE:/.test(raw)`
+    // substring test. splitMarkerBlob() itself is already comment/string-safe
+    // (per-line, anchored FILE_MARKER against lines outside any multi-line
+    // construct), so a decoy that merely MENTIONS the convention — e.g. a
+    // single `//` comment like `// Note: this app doesn't use the "// --- FILE:"
+    // convention` — still satisfies the unanchored gate test even though it
+    // never forms a real marker LINE. splitMarkerBlob then ran, found zero
+    // real markers, and returned `{}` — an EMPTY BUT TRUTHY map — which this
+    // function then treated as "the files", iterating zero entries and never
+    // falling back to scanning `raw` as a single blob. Net effect: a plain
+    // comment mentioning the multi-file convention silently disabled this
+    // whole detector for an otherwise single-file payload with a genuinely
+    // missing local import. Fixed by only adopting the split result when it
+    // actually produced entries, so an empty split correctly falls through to
+    // the single-blob branch below instead of short-circuiting on nothing.
+    if (!map) {
+      const split = splitMarkerBlob(raw)
+      if (Object.keys(split).length > 0) map = split
     }
 
     const missing = new Set<string>()
@@ -428,8 +446,14 @@ export function findUndeclaredJsxComponents(
 ): string[] {
   try {
     let map = files && Object.keys(files).length > 0 ? files : null
-    if (!map && /\/\/\s*---\s*FILE:/.test(code || '')) {
-      map = splitMarkerBlob(code || '')
+    // See findMissingLocalImports' matching comment above: only adopt the
+    // split result when it actually found real markers, so a decoy
+    // substring that merely mentions the `// --- FILE:` convention (without
+    // forming a real marker line) doesn't produce an empty-but-truthy map
+    // that silently skips every check below.
+    if (!map) {
+      const split = splitMarkerBlob(code || '')
+      if (Object.keys(split).length > 0) map = split
     }
     if (!map) return []
 
