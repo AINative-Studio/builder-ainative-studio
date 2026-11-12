@@ -293,10 +293,28 @@ ${entries}
 }
 
 /**
+ * Escape text for safe interpolation into a single-quoted JS string literal.
+ * `meta.description` is derived from the raw founder prompt (extractAppMetadata
+ * slices the prompt verbatim), which can contain literal newlines (e.g. a
+ * pasted multi-line prompt) or backslashes — characters a bare `.replace(/'/g,
+ * ...)` on the quote alone does not account for, letting them break out of the
+ * string literal and produce a hard `SyntaxError: Unterminated string constant`
+ * in the generated layout.tsx (confirmed live, company `https-value-eco`).
+ */
+function escapeJsStringLiteral(text: string): string {
+  return text
+    .replace(/\\/g, '\\\\')
+    .replace(/'/g, "\\'")
+    .replace(/\r\n|[\r\n]/g, '\\n')
+}
+
+/**
  * Generate Next.js layout.tsx with full SEO metadata
  */
 export function generateNextLayoutTs(meta: AppMetadata): string {
   const domain = meta.domain || `https://${meta.name.toLowerCase().replace(/\s+/g, '')}.app`
+  const description = escapeJsStringLiteral(meta.description)
+  const shortDescription = escapeJsStringLiteral(meta.description.slice(0, 160))
 
   return `import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
@@ -306,11 +324,11 @@ const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
   title: '${meta.name} — ${meta.type.charAt(0).toUpperCase() + meta.type.slice(1)} Application',
-  description: '${meta.description.replace(/'/g, "\\'")}',
+  description: '${description}',
   metadataBase: new URL('${domain}'),
   openGraph: {
     title: '${meta.name}',
-    description: '${meta.description.replace(/'/g, "\\'").slice(0, 160)}',
+    description: '${shortDescription}',
     url: '${domain}',
     siteName: '${meta.name}',
     type: 'website',
@@ -318,7 +336,7 @@ export const metadata: Metadata = {
   twitter: {
     card: 'summary_large_image',
     title: '${meta.name}',
-    description: '${meta.description.replace(/'/g, "\\'").slice(0, 160)}',
+    description: '${shortDescription}',
   },
   robots: {
     index: true,
