@@ -2270,10 +2270,84 @@ export function isRenderable(rawContent: string): ParseGateResult {
  * markdown code fences, and raw code. Exported so the gate and any caller stay in
  * lockstep with the renderer.
  */
+/**
+ * Blank out string/template-literal and block-comment content, char-for-
+ * char (newlines preserved so offsets still line up with the original
+ * text). Deliberately leaves `//` line comments untouched — a genuine
+ * `// --- FILE:` marker IS a line comment, so masking line comments the
+ * way maskCommentsAndStringsForShadowScan does would blank real markers
+ * right along with decoy ones. Only a marker-shaped substring nested one
+ * level inside a quoted string, backtick template, or `/* ... *\/` block
+ * comment is a decoy; a real marker always sits outside all of those.
+ */
+function maskStringsAndBlockCommentsForFileMarkerScan(content: string): string {
+  let out = ''
+  let i = 0
+  while (i < content.length) {
+    const ch = content[i]
+    const next = content[i + 1]
+    if (ch === '"' || ch === "'") {
+      let j = i + 1
+      while (j < content.length && content[j] !== ch) {
+        if (content[j] === '\\') j++
+        j++
+      }
+      const end = j >= content.length ? content.length - 1 : j
+      out += content.slice(i, end + 1).replace(/[^\n]/g, ' ')
+      i = end + 1
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < content.length && content[j] !== '`') {
+        if (content[j] === '\\') j++
+        j++
+      }
+      const end = j >= content.length ? content.length - 1 : j
+      out += content.slice(i, end + 1).replace(/[^\n]/g, ' ')
+      i = end + 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = content.indexOf('*/', i + 2)
+      end = end === -1 ? content.length : end + 2
+      out += content.slice(i, Math.min(end, content.length)).replace(/[^\n]/g, ' ')
+      i = Math.min(end, content.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
+ * Split `content` on `// --- FILE:` markers, verified against a string/
+ * template/block-comment-masked view so a decoy marker-shaped line sitting
+ * inside another file's own string, template literal, or block comment —
+ * e.g. a generated docs/API-product page demonstrating this project's own
+ * multi-file convention — isn't mistaken for a real file boundary. Same bug
+ * class and fix shape as #1933/#1939/#1949's FILE_MARKER call sites; this
+ * is the 4th, independent one (#1962).
+ */
+function splitOnRealFileMarkers(content: string): string[] {
+  const masked = maskStringsAndBlockCommentsForFileMarkerScan(content)
+  const marker = /\/\/\s*---\s*FILE:\s*/gi
+  const parts: string[] = []
+  let lastEnd = 0
+  let m: RegExpExecArray | null
+  while ((m = marker.exec(masked)) !== null) {
+    parts.push(content.slice(lastEnd, m.index))
+    lastEnd = m.index + m[0].length
+  }
+  parts.push(content.slice(lastEnd))
+  return parts
+}
+
 export function extractRenderableCode(content: string): string {
   // Multi-file output — pick App.tsx, else the largest file with a component.
-  if (content.includes('// --- FILE:')) {
-    const files = content.split(/\/\/\s*---\s*FILE:\s*/i)
+  const files = splitOnRealFileMarkers(content)
+  if (files.length > 1) {
     let mainFile = files.find((f) => /^src\/App\.tsx|^App\.tsx/i.test(f.trim()))
     if (!mainFile) {
       let bestFile = ''
