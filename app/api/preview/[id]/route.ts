@@ -812,7 +812,9 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
     </script>
     <script src="/shadcn-components.js"></script>
     <script src="/aikit-components.js"></script>
-    <style>
+    <!-- id'd so _tailwindStyleInjected() below can tell this static shell
+         style apart from Tailwind's own injected one (#1881) -->
+    <style id="ainative-base-styles">
       body { margin: 0; font-family: ${chosenPreviewSystem
         ? `'${chosenPreviewSystem.fonts.body.family}', '${chosenPreviewSystem.fonts.heading.family}', system-ui, sans-serif`
         : `'Inter', 'Poppins', system-ui, sans-serif`}; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; }
@@ -1635,6 +1637,12 @@ window.__DETECTED_COMPONENT_NAME__ = "${detectedComponentName}";
           function _tailwindStyleInjected() {
             var styles = document.head.querySelectorAll('style');
             for (var i = 0; i < styles.length; i++) {
+              // #1881: this shell's own static <style id="ainative-base-styles">
+              // (body font, spinner CSS, etc.) is present from first paint, long
+              // before Tailwind's CDN script even starts loading — skip it, or
+              // this check is satisfied immediately every time and never
+              // actually waits for Tailwind's real, separately-injected style tag.
+              if (styles[i].id === 'ainative-base-styles') continue;
               if (styles[i].textContent && styles[i].textContent.length > 0) return true;
             }
             return false;
