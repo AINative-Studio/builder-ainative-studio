@@ -62,4 +62,35 @@ describe('buildSandpackFiles — next/image and next/link stubbed inline (#1151)
     })
     expect(built['/App.tsx']).toContain('fill, priority')
   })
+
+  // #1887: a commented-out example import with trailing same-line comment
+  // text must not be rewritten — the real import below it should be stubbed
+  // instead, and the comment line must stay a single, intact comment.
+  it('leaves a commented-out next/image import with trailing text untouched and stubs the real import below it', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': `// import NextImg from 'next/image'  (old approach)\nimport Image from 'next/image'\nexport default function App(){ return <Image src="/a.png" alt="a" /> }`,
+    })
+    const app = built['/App.tsx']
+    expect(app).toContain("// import NextImg from 'next/image'  (old approach)")
+    expect(app).not.toMatch(/^\(old approach\)/m)
+    expect(app).toContain('const Image =')
+  })
+
+  it('leaves a commented-out next/link import with trailing text untouched and stubs the real import below it', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': `// import OldLink from 'next/link'  (deprecated)\nimport Link from 'next/link'\nexport default function App(){ return <Link href="/pricing">Pricing</Link> }`,
+    })
+    const app = built['/App.tsx']
+    expect(app).toContain("// import OldLink from 'next/link'  (deprecated)")
+    expect(app).not.toMatch(/^\(deprecated\)/m)
+    expect(app).toContain('const Link =')
+  })
+
+  it('does not stub a next/image import mentioned only inside a comment', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': `// import NextImg from 'next/image'\nexport default function App(){ return <div>hi</div> }`,
+    })
+    const app = built['/App.tsx']
+    expect(app).not.toContain('const NextImg =')
+  })
 })
