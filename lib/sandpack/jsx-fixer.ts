@@ -119,16 +119,28 @@ function stubNextOnlyModules(code: string): string {
   let fixed = code
 
   // next/navigation — client-side routing hooks/helpers.
+  let masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /import\s+\{([^}]+)\}\s+from\s+['"]next\/navigation['"]\s*;?/g,
-    (_match, names: string) => stubNamedImports(names, (name) => NEXT_NAVIGATION_STUBS[name]),
+    (match: string, names: string, offset: number) => {
+      // stubNamedImports() below can expand one matched import into several
+      // output lines; only the first inherits a leading `//` from a
+      // commented-out match, so skip entirely rather than resurrect the rest
+      // as real code (#1879).
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return stubNamedImports(names, (name) => NEXT_NAVIGATION_STUBS[name])
+    },
   )
 
   // next/font/google, next/font/local — font factory functions; generated
   // code only ever reads `.className`/`.style`/`.variable` off the result.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /import\s+\{([^}]+)\}\s+from\s+['"]next\/font\/(?:google|local)['"]\s*;?/g,
-    (_match, names: string) => stubNamedImports(names, () => FONT_FACTORY_STUB),
+    (match: string, names: string, offset: number) => {
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return stubNamedImports(names, () => FONT_FACTORY_STUB)
+    },
   )
 
   // next/dynamic — default import, e.g. `import dynamic from 'next/dynamic'`.
@@ -167,9 +179,17 @@ function stubLegacyPagesRouterImports(code: string): string {
   // next/router — Pages Router's useRouter() has a different shape than
   // next/navigation's: callers read static fields (pathname/query/asPath)
   // directly off the hook result rather than calling separate hooks.
+  let masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /import\s+\{([^}]+)\}\s+from\s+['"]next\/router['"]\s*;?/g,
-    (_match, names: string) => stubNamedImportsAs(names, { useRouter: NEXT_ROUTER_STUB })
+    (match: string, names: string, offset: number) => {
+      // Guards against the same comment-injection risk as next/document
+      // below (#1879) — a no-op today since this stub map has exactly one
+      // entry, kept consistent in case it ever grows the way next/document's
+      // did.
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return stubNamedImportsAs(names, { useRouter: NEXT_ROUTER_STUB })
+    }
   )
   // Rare default/namespace usage of the deprecated `Router` singleton.
   fixed = fixed.replace(
@@ -189,15 +209,21 @@ function stubLegacyPagesRouterImports(code: string): string {
   // never treats as the preview's entry point, but stub for completeness
   // rather than leaving a guaranteed "Cannot find module" if one somehow
   // ends up in the files map.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /import\s+\{([^}]+)\}\s+from\s+['"]next\/document['"]\s*;?/g,
-    (_match, names: string) =>
-      stubNamedImportsAs(names, {
+    (match: string, names: string, offset: number) => {
+      // This stub map has 4 entries — a commented-out `import { Html, Main }
+      // from 'next/document'` would otherwise resurrect everything after the
+      // first resolved name as real code (#1879).
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return stubNamedImportsAs(names, {
         Html: '(props: any) => props.children ?? null',
         Main: '() => null',
         Head: '(_props: any) => null',
         NextScript: '() => null',
       })
+    }
   )
 
   // next/app — AppProps is a type-only import; dropping it leaves a dangling
@@ -237,9 +263,16 @@ const NEXT_ROUTER_STUB =
  * #1150's react-icons stub).
  */
 function stubFramerMotionImports(code: string): string {
+  const masked = maskPreservingOffsets(code)
   return code.replace(
     /import\s+\{([^}]+)\}\s+from\s+['"]framer-motion['"]\s*;?/g,
-    (_match, names: string) => stubNamedImportsAs(names, FRAMER_MOTION_STUBS)
+    (match: string, names: string, offset: number) => {
+      // FRAMER_MOTION_STUBS has 8 entries — a commented-out multi-name
+      // import would otherwise resurrect everything after the first
+      // resolved name as real code (#1879).
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return stubNamedImportsAs(names, FRAMER_MOTION_STUBS)
+    }
   )
 }
 
@@ -328,9 +361,14 @@ const SHADCN_COMPONENT_FILE: Record<string, string> = {
  * Only touches names we know are shadcn; anything else stays on the original path.
  */
 function fixWrongShadcnSubpaths(code: string): string {
+  const masked = maskPreservingOffsets(code)
   return code.replace(
     /import\s+\{([^}]+)\}\s+from\s+['"](\.\.?\/components\/ui)\/([a-z-]+)['"]\s*;?/g,
-    (match, names: string, base: string, file: string) => {
+    (match, names: string, base: string, file: string, offset: number) => {
+      // Same comment-injection guard as rewriteBarrelImports() above (#1879):
+      // a match living only inside a comment must stay inert, since the
+      // multi-file split below can add lines with no `//` of their own.
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
       const parts = names.split(',').map((n) => n.trim()).filter(Boolean)
       // Group each imported name by the file that actually exports it.
       const byFile: Record<string, string[]> = {}
@@ -479,10 +517,16 @@ function fixCommonSyntax(code: string): string {
  * We rewrite these to import from the known AIKit/shadcn/lucide sources.
  */
 function rewriteBarrelImports(code: string): string {
+  const masked = maskPreservingOffsets(code)
   // Match imports from bare './components' or '../components' (no subpath)
   return code.replace(
     /import\s+\{([^}]+)\}\s+from\s+['"]\.\.?\/components['"]\s*;?/g,
-    (_match, names: string) => {
+    (match: string, names: string, offset: number) => {
+      // A match that only exists inside a `//`/`/* */` comment (or a string)
+      // must never be rewritten: the multi-file split below can add brand-new
+      // lines that, unlike `match` itself, don't inherit the source line's
+      // leading `//` — turning a disabled/example import into a real one (#1879).
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
       const components = names.split(',').map((n: string) => n.trim()).filter(Boolean)
 
       // Known AIKit components
@@ -632,9 +676,16 @@ function stubNextOnlyImports(code: string): string {
  * only ever seen as a model mistake, not an intentional choice.
  */
 function stubUnsupportedIconLibraries(code: string): string {
+  const masked = maskPreservingOffsets(code)
   return code.replace(
     /import\s*\{([^}]*)\}\s*from\s*['"]react-icons\/[\w-]+['"]\s*;?/g,
-    (match, names: string) => {
+    (match, names: string, offset: number) => {
+      // A commented-out multi-icon import (e.g. `// import { FaIcon, FaStar }
+      // from 'react-icons/fa'`) would otherwise resurrect every icon after
+      // the first as a real `const` — and since each stub ends in its own
+      // trailing `//` comment, the very next real line of source then gets
+      // silently swallowed into THAT comment too (#1879).
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
       const identifiers = names
         .split(',')
         .map((n: string) => n.trim())
@@ -1008,6 +1059,58 @@ function maskStringsAndComments(code: string): string {
       end = end === -1 ? code.length : end + 2
       i = end
       out += ' '
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
+ * Length-preserving twin of maskStringsAndComments() above: masked
+ * characters become one-for-one spaces (newlines kept) instead of being
+ * collapsed, so a byte offset into the masked string still lines up with
+ * the same offset in the original. maskStringsAndComments()'s collapsing
+ * makes it useless for that — needed by rewriteBarrelImports() and
+ * fixWrongShadcnSubpaths() to tell whether a specific regex match sits
+ * inside a comment/string before deciding to rewrite it into real code
+ * (#1879). Same technique as lib/sandpack/build-files.ts's own
+ * maskCommentsAndStrings() (deliberately not shared — see this file's other
+ * maskComments-style helpers' own precedent of a local copy per file).
+ */
+function maskPreservingOffsets(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
       continue
     }
     out += ch

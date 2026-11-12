@@ -46,4 +46,14 @@ describe('stubFramerMotionImports', () => {
     const code = "import { useState } from 'react'\nexport default function App(){ return <div/> }"
     expect(fixJsxErrors(code).trim()).toBe(code.trim())
   })
+
+  // #1879: FRAMER_MOTION_STUBS has 8 entries, so a commented-out multi-name
+  // import could expand into several output lines — only the first inherits
+  // the source line's leading `//`, resurrecting the rest as real code.
+  it('does not resurrect a commented-out framer-motion import as real code', () => {
+    const code = ["// import { AnimatePresence, useAnimation } from 'framer-motion'", 'const x = 1'].join('\n')
+    const out = fixJsxErrors(code)
+    expect(out).not.toMatch(/^const useAnimation/m)
+    expect(out).toContain('const x = 1')
+  })
 })

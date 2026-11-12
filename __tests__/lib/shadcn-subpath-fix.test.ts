@@ -90,4 +90,22 @@ describe('fixWrongShadcnSubpaths', () => {
     expect(out).toMatch(/\{ ScrollArea \} from '\.\/components\/ui\/scroll-area'/)
     expect(out).toMatch(/\{ Toast, ToastTitle \} from '\.\/components\/ui\/toast'/)
   })
+
+  // #1879: the rewrite regex matched anywhere in the raw source, including
+  // inside a `//` comment. The first rewritten line stayed commented (it
+  // sits right after the original `//`), but any ADDITIONAL line the
+  // multi-file split adds is a brand-new line with no `//` of its own —
+  // turning a disabled/example import into a real, executing one.
+  it('does not resurrect a commented-out wrong-subpath import as real code', () => {
+    const code = [
+      "// old approach, replaced below:",
+      "// import { Card, Badge } from './components/ui/button'",
+      "import { Button } from './components/ui/button'",
+    ].join('\n')
+    const out = fixJsxErrors(code)
+    expect(out).not.toMatch(/^import \{ Badge \}/m)
+    expect(out).not.toMatch(/^import \{ Card \}/m)
+    // The real, uncommented import must still pass through untouched.
+    expect(out).toMatch(/^import \{ Button \} from '\.\/components\/ui\/button'$/m)
+  })
 })

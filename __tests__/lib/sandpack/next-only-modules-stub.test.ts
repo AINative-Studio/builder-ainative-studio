@@ -84,4 +84,21 @@ describe('fixJsxErrors — stubs remaining Next.js-only module specifiers (#1154
     const code = "import React from 'react'\nexport default function App() { return <div>hi</div> }"
     expect(fixJsxErrors(code)).toContain(code)
   })
+
+  // #1879: NEXT_NAVIGATION_STUBS has 9 entries, so a commented-out multi-hook
+  // import could expand into several output lines — only the first inherits
+  // the source line's leading `//`, resurrecting the rest as real code.
+  it('does not resurrect a commented-out next/navigation import as real code', () => {
+    const code = ["// import { useRouter, usePathname } from 'next/navigation'", 'const x = 1'].join('\n')
+    const fixed = fixJsxErrors(code)
+    expect(fixed).not.toMatch(/^const usePathname/m)
+    expect(fixed).toContain('const x = 1')
+  })
+
+  it('does not resurrect a commented-out next/font import as real code', () => {
+    const code = ["// import { Inter, Roboto } from 'next/font/google'", 'const x = 1'].join('\n')
+    const fixed = fixJsxErrors(code)
+    expect(fixed).not.toMatch(/^const Roboto/m)
+    expect(fixed).toContain('const x = 1')
+  })
 })
