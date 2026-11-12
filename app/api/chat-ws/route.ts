@@ -1534,7 +1534,13 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   const ctrl = new AbortController()
                   const timer = setTimeout(() => ctrl.abort(), 90_000)
                   const response = await client.chat.completions.create(
-                    { model: tryModel, max_tokens: 8192, temperature: 0.7, messages: singleTurnMessages },
+                    // #1969: this sibling fallback branch still had the pre-#325
+                    // 8192 ceiling — a complex multi-file app landing here (primary
+                    // Claude call failed/short) could truncate mid-JSX exactly like
+                    // #325, leaving a dangling `));\n}\n}` that is Sandpack-fatal.
+                    // Match the other two fallback branches in this same chain
+                    // (lines ~1404, ~1455, ~1491), which were already raised to 16000.
+                    { model: tryModel, max_tokens: 16000, temperature: 0.7, messages: singleTurnMessages },
                     { signal: ctrl.signal }
                   )
                   clearTimeout(timer)
