@@ -697,6 +697,31 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     fixes.push('Guarded unsafe property access (|| default) to prevent undefined-method crashes')
   }
 
+  // Applies `pattern` to the Tailwind class VALUE inside a literal
+  // `className="..."` / `className={`...`}` attribute only, never to the
+  // surrounding file text. Each of the four MOBILE-* fixes below used to run
+  // its own replace() against the raw, whole-file `fixedCode` directly — so a
+  // comment or rendered text/copy that merely MENTIONS a matching utility
+  // (e.g. a CSS-tutorial app's own on-page copy: "use grid-cols-4 for a
+  // dashboard", "our sidebar uses min-w-[400px]") got silently rewritten into
+  // nonsense visible/comment text, even though it was never a real className
+  // at all. The MOBILE FLEX ROW fix already scoped itself this way; the other
+  // three did not. Scoping only NARROWS what already matched inside a real
+  // className value, so it changes nothing about the intended mobile-fix
+  // behavior — see #1904/#1897 for the same bug class elsewhere.
+  const replaceInClassNameAttr = (
+    code: string,
+    pattern: RegExp,
+    replacer: (...args: any[]) => string,
+  ): string =>
+    code.replace(/className=(?:"([^"]*)"|\{`([^`]*)`\})/g, (full, dq, tpl) => {
+      const cls = dq !== undefined ? dq : tpl
+      if (cls === undefined) return full
+      const newCls = cls.replace(pattern, replacer)
+      if (newCls === cls) return full
+      return dq !== undefined ? `className="${newCls}"` : `className={\`${newCls}\`}`
+    })
+
   // Fix MOBILE OVERFLOW: fixed pixel widths larger than a phone viewport are the
   // #1 UX defect — they force horizontal scroll on mobile (builder#196). Rewrite
   // Tailwind arbitrary fixed widths `w-[NNNpx]` where NNN > 375 into a responsive
@@ -704,7 +729,8 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // safe: it never makes a layout wider, only lets it shrink on small screens.
   // Skip min-w-/max-w- (already constraints) and values <= 375 (fit on mobile).
   const beforeWidthFix = fixedCode
-  fixedCode = fixedCode.replace(
+  fixedCode = replaceInClassNameAttr(
+    fixedCode,
     /(?<![-\w])w-\[(\d+)px\]/g,
     (m, px) => (parseInt(px, 10) > 375 ? `w-full max-w-[${px}px]` : m),
   )
@@ -713,15 +739,13 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   }
 
   // Fix MOBILE GRID: a fixed multi-column grid (`grid-cols-N`, N >= 2) with NO
-  // responsive breakpoint prefix and NO `grid-cols-1` base forces N columns even
-  // on a 375px phone, overflowing (builder#196). Rewrite the bare `grid-cols-N`
-  // to `grid-cols-1 md:grid-cols-N` (single column on mobile, N from md up).
+  // responsive breakpoint prefix forces N columns even on a 375px phone,
+  // overflowing (builder#196). Rewrite the bare `grid-cols-N` to
+  // `grid-cols-1 md:grid-cols-N` (single column on mobile, N from md up).
   // Conservative: the negative lookbehind `(?<![-:\w])` skips any breakpoint- or
-  // hyphen-prefixed variant (`sm:grid-cols-3`, `md:grid-cols-3`, `lg:grid-cols-3`)
-  // and the `!/grid-cols-1\b/.test` guard skips class strings that already carry a
-  // `grid-cols-1` base, so already-responsive layouts are never touched.
+  // hyphen-prefixed variant (`sm:grid-cols-3`, `md:grid-cols-3`, `lg:grid-cols-3`).
   const beforeGridFix = fixedCode
-  fixedCode = fixedCode.replace(/(?<![-:\w])grid-cols-(\d+)\b/g, (m, n) => {
+  fixedCode = replaceInClassNameAttr(fixedCode, /(?<![-:\w])grid-cols-(\d+)\b/g, (m, n) => {
     const cols = parseInt(n, 10)
     if (cols < 2) return m
     return `grid-cols-1 md:grid-cols-${cols}`
@@ -736,23 +760,16 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // on mobile, row from md up). Conservative: the negative lookbehind skips
   // breakpoint-prefixed variants (`md:flex-row`), and we only apply this per class
   // string that does NOT already contain `flex-col` anywhere (already handling its
-  // own mobile stacking). We scope to className string literals to avoid touching
-  // unrelated `flex-row` occurrences.
+  // own mobile stacking).
   const beforeFlexFix = fixedCode
-  fixedCode = fixedCode.replace(
-    /className=(?:"([^"]*)"|\{`([^`]*)`\})/g,
-    (full, dq, tpl) => {
-      const cls = dq !== undefined ? dq : tpl
-      if (cls === undefined) return full
-      // Skip if a flex-col is already present (author handles mobile stacking) or
-      // if no bare (unprefixed) flex-row exists.
-      if (/(?:^|[\s:])flex-col\b/.test(cls)) return full
-      if (!/(?<![-:\w])flex-row\b/.test(cls)) return full
-      const newCls = cls.replace(/(?<![-:\w])flex-row\b/g, 'flex-col md:flex-row')
-      if (newCls === cls) return full
-      return dq !== undefined ? `className="${newCls}"` : `className={\`${newCls}\`}`
-    },
-  )
+  fixedCode = replaceInClassNameAttr(fixedCode, /(?<![-:\w])flex-row\b/g, (m, _offset, cls: string) => {
+    // Skip if a flex-col is already present anywhere in this class string
+    // (author handles mobile stacking). No capture groups on this pattern, so
+    // String.replace()'s callback args are (match, offset, wholeString) —
+    // `cls` here is that third arg, the full className value being scanned.
+    if (/(?:^|[\s:])flex-col\b/.test(cls)) return m
+    return 'flex-col md:flex-row'
+  })
   if (fixedCode !== beforeFlexFix) {
     fixes.push('Stacked bare flex rows on mobile (flex-col md:flex-row) to prevent mobile overflow')
   }
@@ -761,10 +778,10 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // viewport forces horizontal scroll no matter what its container does. Rewrite
   // `min-w-[NNNpx]` (NNN > 375) to `min-w-0 md:min-w-[NNNpx]` — drop the floor on
   // mobile, restore it from md up. Values <= 375 fit on a phone and are left
-  // alone. The negative lookbehind `(?<![-\w])` avoids matching `max-w-`/`w-` and
+  // alone. The negative lookbehind `(?<![-:\w])` avoids matching `max-w-`/`w-` and
   // the `md:min-w-[...]` variant, mirroring the width fix above.
   const beforeMinWidthFix = fixedCode
-  fixedCode = fixedCode.replace(/(?<![-:\w])min-w-\[(\d+)px\]/g, (m, px) =>
+  fixedCode = replaceInClassNameAttr(fixedCode, /(?<![-:\w])min-w-\[(\d+)px\]/g, (m, px) =>
     parseInt(px, 10) > 375 ? `min-w-0 md:min-w-[${px}px]` : m,
   )
   if (fixedCode !== beforeMinWidthFix) {
@@ -823,8 +840,13 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     let floored = fixedCode
     const flooredFixes: string[] = []
 
-    // 1) Multi-column grids -> single column on mobile, N from md up.
-    floored = floored.replace(/(?<![-:\w])grid-cols-(\d+)\b/g, (m, n) => {
+    // 1) Multi-column grids -> single column on mobile, N from md up. Scoped to
+    // className attribute values (replaceInClassNameAttr, defined above) — this
+    // used to run against the whole raw file, so a comment or on-page copy
+    // merely mentioning e.g. "grid-cols-4" was rewritten into nonsense text
+    // even though it was never a real className (same bug class as #1904's
+    // fix to this block's own entry-gate checks above, just in the body).
+    floored = replaceInClassNameAttr(floored, /(?<![-:\w])grid-cols-(\d+)\b/g, (m, n) => {
       const cols = parseInt(n, 10)
       if (cols < 2) return m
       flooredFixes.push('grid')
@@ -843,14 +865,17 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     })
 
     // 3) Oversized fixed heading text (text-4xl/5xl/6xl/7xl with no breakpoint)
-    //    -> scale up from a mobile-friendly base.
+    //    -> scale up from a mobile-friendly base. Scoped to className values for
+    //    the same reason as step 1 — on-page copy can legitimately say
+    //    "text-5xl" (a design-tool/CSS-reference landing page describing its
+    //    own utility classes) without that being a real Tailwind class.
     const headScale: Record<string, string> = {
       'text-7xl': 'text-4xl sm:text-5xl lg:text-7xl',
       'text-6xl': 'text-4xl sm:text-5xl lg:text-6xl',
       'text-5xl': 'text-3xl sm:text-4xl lg:text-5xl',
       'text-4xl': 'text-2xl sm:text-3xl lg:text-4xl',
     }
-    floored = floored.replace(/(?<![-:\w])text-([4567])xl\b/g, (m) => {
+    floored = replaceInClassNameAttr(floored, /(?<![-:\w])text-([4567])xl\b/g, (m) => {
       const repl = headScale[m]
       if (repl) { flooredFixes.push('text'); return repl }
       return m
