@@ -100,6 +100,14 @@ export interface BuildTask {
    */
   giteaIssueNumber?: number | null
   /**
+   * The browsable URL for `giteaIssueNumber` on the company's own Gitea repo.
+   * Computed at read time by `GET /api/build/tasks` (`issueWebUrl()`, from the
+   * company's `AppEntry.gitRepoUrl` — never persisted on the stored row, since
+   * it's derivable and the clone URL can change). `null`/absent when there's
+   * no issue number yet, or the company has no `gitRepoUrl` on record.
+   */
+  giteaIssueUrl?: string | null
+  /**
    * The id of the oversized parent task this task was decomposed FROM (#904,
    * epic #900, depends on #903's `needsSplit`). Set only on a child task
    * created by `lib/build/task-splitter.ts`'s `splitTask()` — `null`/absent
