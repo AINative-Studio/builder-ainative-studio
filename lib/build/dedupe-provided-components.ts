@@ -30,6 +30,8 @@
 import {
   findMatchingBracket as sharedFindMatchingBracket,
   maskComments,
+  findStringEnd,
+  findBacktickEnd,
 } from './bracket-scanner'
 
 export const SCAFFOLD_PROVIDED_COMPONENTS = [
