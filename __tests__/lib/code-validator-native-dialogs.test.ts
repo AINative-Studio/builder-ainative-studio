@@ -128,6 +128,23 @@ describe('code-validator — autoFixCode neutralizes blocking native dialogs (#1
    * sanitized, calling __previewSafeAlert) was rejected by repair-app's
    * explicit-files gate with that exact false positive.
    */
+  /**
+   * #1921: this scan used to run against raw, unmasked code — a comment
+   * merely mentioning alert(/confirm(/prompt( (or the shim's own
+   * signature) changed the outcome, the same bug class already fixed in
+   * build-files.ts's fixNativeDialogCalls for the Sandpack pipeline.
+   */
+  it('leaves code untouched when the only mention of alert( is inside a comment', () => {
+    const code = [
+      "import React from 'react'",
+      '// this used to call alert(message) before we switched to a toast',
+      'export default function App() { return (<div>hello</div>) }',
+    ].join('\n')
+    const fixed = sanitizeForSandpack(code)
+    expect(fixed).not.toContain('__previewSafe')
+    expect(fixed).toContain('// this used to call alert(message) before we switched to a toast')
+  })
+
   it('isRenderable accepts the __previewSafeAlert/__previewSafeConfirm/__previewSafePrompt shim names sanitizeForSandpack produces', () => {
     const code = [
       "import React from 'react'",
