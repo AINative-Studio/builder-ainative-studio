@@ -614,6 +614,19 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
     // Compute missing icons unconditionally; merge into the existing import
     // statement when one exists, otherwise add a new one, same as the
     // shadcn/AIKit injections above already do.
+    //
+    // Second real bug, same block (overnight loop, 2026-11-08): the
+    // `missingIcons` detection below was the one check in this function
+    // left testing raw `fixed` instead of a comment/string-masked view —
+    // the AIKit block (above) and the shadcn block (below) both already
+    // switched to `maskCommentsAndStrings(fixed)` for exactly this reason.
+    // A sibling file's comment like `// e.g. <Shield className="h-4 w-4" />`
+    // or `// uses icon: Settings for the config page` matches this block's
+    // own `<${icon}[\s/>]` / `icon:\s*${icon}` patterns against the raw
+    // text, wrongly judging the icon "used" and injecting an unused
+    // `import { Shield } from 'lucide-react'`. Masking closes the same gap
+    // here that #1165's own doc comment (below) already fixed for the
+    // bare-word-in-prose variant of this check.
     {
       const allLucideIcons = [
         'Activity', 'AlertCircle', 'AlertTriangle', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'ArrowUp',
@@ -676,8 +689,15 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
       // resolves to undefined and crashes the render ("Element type is
       // invalid").
       const iconImportAliases: Record<string, string> = { Tool: 'Wrench' }
+      //
+      // Matched against `maskCommentsAndStrings(fixed)`, not raw `fixed`
+      // (see this block's doc comment above) — a comment containing
+      // `<Shield className=...` or `icon: Settings` still looks like real
+      // usage to the `<Icon[\s/>]` / `icon:\s*Icon` patterns above even
+      // though #1165 already narrowed them past bare-word prose matches.
+      const fixedNoComments = maskCommentsAndStrings(fixed)
       const missingIcons = allLucideIcons.filter(icon =>
-        new RegExp(`<${icon}[\\s/>]|\\bicon:\\s*${icon}\\b|\\bicon=\\{${icon}\\}`).test(fixed) &&
+        new RegExp(`<${icon}[\\s/>]|\\bicon:\\s*${icon}\\b|\\bicon=\\{${icon}\\}`).test(fixedNoComments) &&
         !alreadyImported.has(icon)
       )
       const toSpecifier = (icon: string) =>
