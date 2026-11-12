@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   detectRootComponent,
+  applyComponentRewrite,
   ANON_DEFAULT_NAME,
   KNOWN_PAGE_NAMES,
   hasDefaultExport,
@@ -656,6 +657,96 @@ describe('detectRootComponent', () => {
       const r = detectRootComponent(code)
       expect(r.name).not.toBe('Footer')
       expect(r.name).toBe('Dashboard')
+    })
+  })
+
+  describe('rewrite is position-anchored, not a blind text search for a decoy comment/string', () => {
+    // Real bug: `rewrite.find` is a short, generic literal (e.g.
+    // 'export default ', 'export default function(') that can ALSO occur,
+    // verbatim, inside an unrelated comment or string earlier in the same
+    // file — e.g. a reminder comment telling the (human or model) author not
+    // to forget the export. Every call site of detectRootComponent() used to
+    // apply the rewrite with `code.replace(rewrite.find, rewrite.replace)`
+    // (a few of this file's OWN earlier tests above still do, since their
+    // fixtures have no decoy) — `String.prototype.replace` with a string
+    // needle rewrites only the FIRST occurrence in the whole file, so a
+    // decoy appearing before the real declaration absorbs the rewrite
+    // instead: the real anonymous default export is never named, leaving
+    // the synthesized binding (e.g. __PreviewDefault) referenced nowhere —
+    // the "Element type is invalid" / blank-page crash this whole detector
+    // exists to prevent, reached through its own rewrite contract instead of
+    // a scanning regex. applyComponentRewrite() (and the `index` now on
+    // every `rewrite`) fixes this by splicing at the real match's own
+    // offset instead of searching the string for `find` at all.
+
+    it('anonymous arrow default export: a decoy "export default " inside an earlier comment is not corrupted, and the REAL export is named', () => {
+      const code = [
+        '// Comment: Dont forget export default at the end of the file!',
+        'export default () => {',
+        '  return <div>Real content</div>',
+        '}',
+      ].join('\n')
+
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.rewrite).toBeDefined()
+
+      // The bug: applying the rewrite as a blind literal-text replace (the
+      // pattern every caller used before this fix, and several of this
+      // file's own earlier tests above still use on decoy-free fixtures)
+      // hits the decoy comment instead of the real export, because it is
+      // the FIRST occurrence of `find` in the file.
+      const naive = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      expect(naive).not.toMatch(/const __PreviewDefault = \(\) =>/)
+      expect(naive).toMatch(/^export default \(\) => \{/m) // real export left un-renamed
+      expect(naive).toContain(`const ${ANON_DEFAULT_NAME} = at the end`) // comment corrupted instead
+
+      // The fix: applyComponentRewrite() splices at the match's own index,
+      // so it always rewrites the real declaration and never touches the
+      // decoy comment.
+      const fixed = applyComponentRewrite(code, r.rewrite)
+      expect(fixed).toContain(`const ${ANON_DEFAULT_NAME} = () => {`)
+      expect(fixed).not.toMatch(/^export default/m)
+      expect(fixed).toContain('Dont forget export default at the end of the file!') // comment untouched
+    })
+
+    it('anonymous function default export: a decoy "export default function(" inside a string is not corrupted, and the REAL export is named', () => {
+      const code = [
+        'const SNIPPET = "example: export default function() {}"',
+        'export default function() {',
+        '  return <div>Real content</div>',
+        '}',
+      ].join('\n')
+
+      const r = detectRootComponent(code)
+      expect(r.name).toBe(ANON_DEFAULT_NAME)
+      expect(r.rewrite).toBeDefined()
+
+      const naive = code.replace(r.rewrite!.find, r.rewrite!.replace)
+      // The decoy STRING gets corrupted instead of the real declaration...
+      expect(naive).toContain(`"example: function ${ANON_DEFAULT_NAME}() {}"`)
+      // ...and the REAL export survives completely un-renamed: no
+      // `function __PreviewDefault(...)` declaration exists anywhere as real
+      // code for the __PreviewDefault binding this detector returned to
+      // resolve to.
+      expect(naive).toMatch(/^export default function\(/m)
+
+      const fixed = applyComponentRewrite(code, r.rewrite)
+      expect(fixed).toContain(`function ${ANON_DEFAULT_NAME}(`)
+      expect(fixed).not.toMatch(/^export default function\(/m)
+      expect(fixed).toContain('example: export default function() {}') // string untouched
+    })
+
+    it('returns code unchanged when `find` no longer sits at `index` (already-transformed source)', () => {
+      const code = 'export default () => {\n  return <div>x</div>\n}'
+      const r = detectRootComponent(code)
+      const alreadyChanged = 'const __PreviewDefault = () => {\n  return <div>x</div>\n}'
+      expect(applyComponentRewrite(alreadyChanged, r.rewrite)).toBe(alreadyChanged)
+    })
+
+    it('applyComponentRewrite() is a no-op when rewrite is undefined', () => {
+      const code = 'export default function Dashboard() { return <div/> }'
+      expect(applyComponentRewrite(code, undefined)).toBe(code)
     })
   })
 })
