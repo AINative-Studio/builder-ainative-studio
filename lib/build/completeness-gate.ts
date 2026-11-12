@@ -37,7 +37,7 @@
  * a raw "Unexpected token" panel.
  */
 
-import { maskComments } from './bracket-scanner'
+import { maskComments, findStringEnd, findBacktickEnd } from './bracket-scanner'
 
 /** One parsed import statement with its local specifier and local bindings. */
 interface LocalImport {
