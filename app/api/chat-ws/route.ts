@@ -24,6 +24,7 @@ import { recallPastPerformance, storeGenerationMemory, relateEntityToPrimitives 
 import { resolveAppByChatId } from '@/lib/build/app-registry'
 import { chatScopeKey } from '@/lib/build/chat-store'
 import { createTask } from '@/lib/build/task-store'
+import { openIssueForNewTask } from '@/lib/build/task-resolver'
 import { buildVerifyPrompt, buildVerifyAgentOptions } from '@/lib/agent/verify-loop'
 import { getWorktreeTestFailure, clearWorktreeTestResult } from '@/lib/agent/test-runner'
 import { GenerationCheckpoint, resolveDegradation } from '@/lib/generation-checkpoint'
@@ -2259,15 +2260,20 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             // defect the generated app shipped with, yet none of them ever
             // became a tracked backlog item, so the nightly task-resolution
             // loop (task-resolution-loop.ts) had nothing to pick up and fix.
-            // File it as a plain `todo` task here — the existing resolver
-            // pipeline (task-resolver.ts, #905 "No Code Without An Issue")
-            // already opens a real Gitea issue for any `todo` row on its own,
-            // so this doesn't need to duplicate that. Detached (not awaited),
-            // same as relateEntityToPrimitives above: createTask's own
-            // story-point estimate is a real LLM call, and gating this SSE
-            // stream's close on it would add founder-visible latency for a
-            // best-effort bookkeeping row. A lookup/write failure here must
-            // never affect the response already served to the founder.
+            // File it as a plain `todo` task here, then open its real Gitea
+            // issue immediately via openIssueForNewTask() (#1928) rather than
+            // relying on a future resolveTask() pass to do it — that pass is
+            // tier-capped (maxTasksForTier()), so for most hobbyist/pro-tier
+            // companies this row would otherwise sit invisible on the
+            // founder's own repo indefinitely, not just briefly delayed, the
+            // same gap #1928 already fixed for the other 3 createTask() call
+            // sites (backlog/route.ts, nightly-loop/route.ts, task-splitter.ts)
+            // but missed here. Detached (not awaited), same as
+            // relateEntityToPrimitives above: createTask's own story-point
+            // estimate is a real LLM call, and gating this SSE stream's close
+            // on it would add founder-visible latency for a best-effort
+            // bookkeeping row. A lookup/write/issue failure here must never
+            // affect the response already served to the founder.
             if (!obFinal.ok && chatId) {
               resolveAppByChatId(chatId)
                 .then((app) => {
@@ -2278,6 +2284,8 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     detail: obFinal.reasons.join('\n'),
                     stage: 'todo',
                     source: 'cody',
+                  }).then((created) => {
+                    if (created) void openIssueForNewTask(scopeKey, app.gitOrg, app.slug, created)
                   })
                 })
                 .catch(() => {})

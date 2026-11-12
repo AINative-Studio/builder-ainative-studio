@@ -166,6 +166,10 @@ vi.mock('@/lib/build/chat-store', () => ({
 vi.mock('@/lib/build/task-store', () => ({
   createTask: vi.fn(async () => ({ id: 'task-1' })),
 }))
+const openIssueForNewTaskMock = vi.fn(async (..._args: any[]): Promise<any> => undefined)
+vi.mock('@/lib/build/task-resolver', () => ({
+  openIssueForNewTask: (...args: any[]) => openIssueForNewTaskMock(...args),
+}))
 
 // ---- verify-loop / test-runner ---------------------------------------------
 vi.mock('@/lib/agent/verify-loop', () => ({
@@ -1085,7 +1089,7 @@ describe('POST /api/chat-ws — route-level coverage (#1202)', () => {
       axComplexWidgetRoleGap: false,
       reasons: ['missing /api/db persistence'],
     })
-    resolveAppByChatIdMock.mockResolvedValueOnce({ slug: 'acme-co', ownerEmail: 'founder@example.com' })
+    resolveAppByChatIdMock.mockResolvedValueOnce({ slug: 'acme-co', ownerEmail: 'founder@example.com', gitOrg: 'acme-org' })
     const { createTask } = await import('@/lib/build/task-store')
     const { POST } = await import('@/app/api/chat-ws/route')
     const req = mockJsonRequest('http://localhost/api/chat-ws', {
@@ -1097,6 +1101,81 @@ describe('POST /api/chat-ws — route-level coverage (#1202)', () => {
     // Fire-and-forget: give the detached promise chain a tick to run.
     await new Promise((r) => setTimeout(r, 0))
     expect(createTask).toHaveBeenCalled()
+  })
+
+  it('#1928-class gap: opens the filed backlog task\'s real Gitea issue immediately, not only if/when a future nightly resolveTask() pass reaches it', async () => {
+    checkObedienceImpl = () => ({
+      ok: false,
+      persistenceGap: true,
+      aikitGaps: [],
+      primitiveComplianceGaps: [],
+      visitorTrackingGap: false,
+      fakeLeadCaptureGap: false,
+      alertInLeadCaptureGap: false,
+      fakeButtonGap: false,
+      hardcodedToggleGap: false,
+      axLandmarkGap: false,
+      axManifestGap: false,
+      axJsonLdGap: false,
+      axSkipNavGap: false,
+      axNavLabelGap: false,
+      axSectionLabelGap: false,
+      axAgentAttributesGap: false,
+      axComplexWidgetRoleGap: false,
+      reasons: ['missing /api/db persistence'],
+    })
+    resolveAppByChatIdMock.mockResolvedValueOnce({ slug: 'acme-co', ownerEmail: 'founder@example.com', gitOrg: 'acme-org' })
+    const { createTask } = await import('@/lib/build/task-store')
+    ;(createTask as any).mockResolvedValueOnce({ id: 'task-7', title: 'Fix generation compliance gap: missing /api/db persistence' })
+    const { POST } = await import('@/app/api/chat-ws/route')
+    const req = mockJsonRequest('http://localhost/api/chat-ws', {
+      message: 'Build a todo app',
+      chatId: 'chat-with-known-app',
+    })
+    const res = await POST(req)
+    await drainSSE(res)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(openIssueForNewTaskMock).toHaveBeenCalledWith(
+      'founder@example.com:acme-co',
+      'acme-org',
+      'acme-co',
+      expect.objectContaining({ id: 'task-7' }),
+    )
+  })
+
+  it('#1928-class gap: never calls openIssueForNewTask when createTask itself returned nothing', async () => {
+    checkObedienceImpl = () => ({
+      ok: false,
+      persistenceGap: true,
+      aikitGaps: [],
+      primitiveComplianceGaps: [],
+      visitorTrackingGap: false,
+      fakeLeadCaptureGap: false,
+      alertInLeadCaptureGap: false,
+      fakeButtonGap: false,
+      hardcodedToggleGap: false,
+      axLandmarkGap: false,
+      axManifestGap: false,
+      axJsonLdGap: false,
+      axSkipNavGap: false,
+      axNavLabelGap: false,
+      axSectionLabelGap: false,
+      axAgentAttributesGap: false,
+      axComplexWidgetRoleGap: false,
+      reasons: ['missing /api/db persistence'],
+    })
+    resolveAppByChatIdMock.mockResolvedValueOnce({ slug: 'acme-co', ownerEmail: 'founder@example.com', gitOrg: 'acme-org' })
+    const { createTask } = await import('@/lib/build/task-store')
+    ;(createTask as any).mockResolvedValueOnce(null)
+    const { POST } = await import('@/app/api/chat-ws/route')
+    const req = mockJsonRequest('http://localhost/api/chat-ws', {
+      message: 'Build a todo app',
+      chatId: 'chat-with-known-app',
+    })
+    const res = await POST(req)
+    await drainSSE(res)
+    await new Promise((r) => setTimeout(r, 0))
+    expect(openIssueForNewTaskMock).not.toHaveBeenCalled()
   })
 
   it('serves the request role + landingPageOnly flag through to the obedience gate options', async () => {

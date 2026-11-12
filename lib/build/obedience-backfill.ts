@@ -56,6 +56,7 @@ import { listAllAppsWithStatus, type AppEntry } from '@/lib/build/app-registry'
 import { loadGeneration } from '@/lib/zerodb-store'
 import { checkObedience } from '@/lib/build/obedience-gate'
 import { createTask, listTasksForCompany } from '@/lib/build/task-store'
+import { openIssueForNewTask } from '@/lib/build/task-resolver'
 import { chatScopeKey } from '@/lib/build/chat-store'
 
 /** Same posture as MAX_BACKFILLS_PER_RUN in zerodb-key-backfill.ts. */
@@ -257,6 +258,13 @@ export async function runObedienceBackfillSweep(
       record({ slug, disposition: 'file_failed', reasons: obedience.reasons })
       continue
     }
+
+    // #1973-class gap: open this task's real Gitea issue now rather than
+    // leaving it to a future tier-capped nightly resolveTask() pass — the
+    // same fix #1928 already applied to every other createTask() call site
+    // that wasn't resolveTask() itself. Best-effort; a filed task is still a
+    // real win even if this fails or the company has no gitOrg yet.
+    void openIssueForNewTask(scopeKey, app.gitOrg, slug, task)
 
     tasksFiled++
     record({ slug, disposition: 'filed_task', reasons: obedience.reasons })

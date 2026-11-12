@@ -42,6 +42,7 @@ interface FakeApp {
   ownerEmail?: string
   idea?: string
   lifecycleStatus?: string
+  gitOrg?: string
 }
 
 interface FakeGeneration {
@@ -109,14 +110,16 @@ async function load(opts: {
     return (opts.existingTasksBySlug || {})[slug] || []
   })
   const chatScopeKey = (ownerKey: string, companySlug: string) => `${ownerKey}::${companySlug}`
+  const openIssueForNewTask = vi.fn(async (_scopeKey: string, _gitOrg: unknown, _slug: string, task: unknown) => task)
 
   vi.doMock('@/lib/build/app-registry', () => ({ listAllAppsWithStatus }))
   vi.doMock('@/lib/zerodb-store', () => ({ loadGeneration }))
   vi.doMock('@/lib/build/task-store', () => ({ createTask, listTasksForCompany }))
+  vi.doMock('@/lib/build/task-resolver', () => ({ openIssueForNewTask }))
   vi.doMock('@/lib/build/chat-store', () => ({ chatScopeKey }))
 
   const mod = await import('@/lib/build/obedience-backfill')
-  return { ...mod, listAllAppsWithStatus, loadGeneration, createTask, listTasksForCompany }
+  return { ...mod, listAllAppsWithStatus, loadGeneration, createTask, listTasksForCompany, openIssueForNewTask }
 }
 
 describe('runObedienceBackfillSweep — leaving clean companies alone', () => {
@@ -209,6 +212,31 @@ describe('runObedienceBackfillSweep — filing a task for a real gap', () => {
         source: 'cody',
       }),
     )
+  })
+
+  it('#1973-class gap: opens the filed task\'s real Gitea issue immediately rather than leaving it for a future tier-capped nightly pass', async () => {
+    const { runObedienceBackfillSweep, createTask, openIssueForNewTask } = await load({
+      apps: [{ slug: 'beacon', chatId: 'chat-beacon', ownerEmail: 'founder@example.com', gitOrg: 'beacon-org' }],
+      generations: { 'chat-beacon': { generatedCode: FAKE_LEAD_CAPTURE_CODE } },
+    })
+
+    await runObedienceBackfillSweep({ dryRun: false })
+
+    expect(createTask).toHaveBeenCalled()
+    const filedTask = await createTask.mock.results[0].value
+    expect(openIssueForNewTask).toHaveBeenCalledWith('founder@example.com::beacon', 'beacon-org', 'beacon', filedTask)
+  })
+
+  it('#1973-class gap: never opens an issue when createTask itself returned nothing', async () => {
+    const { runObedienceBackfillSweep, openIssueForNewTask } = await load({
+      apps: [{ slug: 'beacon', chatId: 'chat-beacon', ownerEmail: 'founder@example.com', gitOrg: 'beacon-org' }],
+      generations: { 'chat-beacon': { generatedCode: FAKE_LEAD_CAPTURE_CODE } },
+      createTaskFails: true,
+    })
+
+    await runObedienceBackfillSweep({ dryRun: false })
+
+    expect(openIssueForNewTask).not.toHaveBeenCalled()
   })
 
   it('falls back to guest:anon scope when the company has no ownerEmail', async () => {
