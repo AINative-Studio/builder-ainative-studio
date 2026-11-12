@@ -290,6 +290,45 @@ describe('flatten-multifile (#308)', () => {
     expect(files['src/App.tsx']).toContain('`inline`')
   })
 
+  // Real bug (this loop's overnight comment/string-blindness sweep):
+  // parseFiles() matched FILE_MARKER against every RAW line, with no
+  // awareness of whether that line sits inside another file's own
+  // multi-line block comment or backtick template literal. A docs/API
+  // product page demonstrating this exact multi-file convention inside a
+  // `/* ... */` comment (no JSDoc `*` margin) or a backtick demo-code
+  // string had that embedded line split off as a bogus extra "file",
+  // corrupting the real file it belonged to.
+  it('a FILE-marker-shaped line nested inside a block comment is not treated as a real marker', () => {
+    const raw = [
+      '// --- FILE: src/Docs.tsx ---',
+      '/*',
+      'Example multi-file format:',
+      '// --- FILE: src/App.tsx ---',
+      'more text',
+      '*/',
+      'export default function Docs(){ return <div>docs</div> }',
+    ].join('\n')
+    const files = parseFiles(raw)
+    expect(Object.keys(files)).toEqual(['src/Docs.tsx'])
+    expect(files['src/Docs.tsx']).toContain('// --- FILE: src/App.tsx ---')
+    expect(files['src/Docs.tsx']).toContain('function Docs')
+  })
+
+  it('a FILE-marker-shaped line nested inside a multi-line backtick template literal is not treated as a real marker', () => {
+    const raw = [
+      '// --- FILE: src/Docs.tsx ---',
+      'const snippet = `',
+      '// --- FILE: src/App.tsx ---',
+      "export default function App(){}",
+      '`',
+      'export default function Docs(){ return <pre>{snippet}</pre> }',
+    ].join('\n')
+    const files = parseFiles(raw)
+    expect(Object.keys(files)).toEqual(['src/Docs.tsx'])
+    expect(files['src/Docs.tsx']).toContain('// --- FILE: src/App.tsx ---')
+    expect(files['src/Docs.tsx']).toContain('function Docs')
+  })
+
   // Real bug found via static analysis + a direct @babel/core repro (this
   // loop's overnight rendering-correctness sweep): an anonymous default
   // export (`export default function(){}`, `export default () => {}`,
