@@ -2382,6 +2382,88 @@ export function validateJavaScriptCode(
 }
 
 /**
+ * Blank out quoted-string / template-literal content and `/* *\/` block
+ * comments (length-preserving: each masked char becomes a space, newlines
+ * kept) while leaving `//` line comments untouched — a genuine
+ * `// --- FILE:` marker IS a line comment, so masking line comments too
+ * would make this indistinguishable from a single-file response. Guards
+ * extractCodeFromMarkdown's multi-file-detection test below. Reuses this
+ * file's existing string/template boundary scanners.
+ *
+ * `content` here is the RAW markdown-wrapped response — prose AND fenced
+ * code — not bare JS, which rules out running the plain JS string/template
+ * scanner over the whole thing: ordinary prose routinely contains an
+ * unpaired apostrophe (a contraction like "Here's"), which would be
+ * mistaken for the start of a string literal and desync every quote pairing
+ * after it (including the real decoy's own quotes), masking the WRONG
+ * span and leaving the decoy text exposed. So masking only applies INSIDE
+ * a ``` fence (tracked via `inFence`, toggled on each fence delimiter,
+ * itself passed through unchanged) — prose outside any fence is passed
+ * through completely untouched, exactly where the real decoy risk (a
+ * string/template/comment inside someone's generated CODE) can actually
+ * occur.
+ */
+function maskForMarkdownFileMarkerScan(content: string): string {
+  let out = ''
+  let i = 0
+  let inFence = false
+  while (i < content.length) {
+    const ch = content[i]
+    const next = content[i + 1]
+
+    if (ch === '`') {
+      let runEnd = i
+      while (content[runEnd] === '`') runEnd++
+      if (runEnd - i >= 3) {
+        // A markdown fence delimiter (open or close) — pass through
+        // unchanged and toggle whether we're inside a fence.
+        out += content.slice(i, runEnd)
+        i = runEnd
+        inFence = !inFence
+        continue
+      }
+      if (!inFence) {
+        // A stray backtick in prose, outside any fence — not JS.
+        out += ch
+        i++
+        continue
+      }
+      const end = findTemplateLiteralEndInDestructureCheck(content, i)
+      const realEnd = end === -1 ? content.length - 1 : end
+      out += content.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+
+    if (!inFence) {
+      // Plain prose outside any fence — never mistake its punctuation for
+      // JS string/comment syntax.
+      out += ch
+      i++
+      continue
+    }
+
+    if (ch === '"' || ch === "'") {
+      const end = findStringEndInDestructureCheck(content, i, ch)
+      const realEnd = end === -1 ? content.length - 1 : end
+      out += content.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = content.indexOf('*/', i + 2)
+      end = end === -1 ? content.length : end + 2
+      out += content.slice(i, Math.min(end, content.length)).replace(/[^\n]/g, ' ')
+      i = Math.min(end, content.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
  * Extract code block from markdown-wrapped code
  * Handles code wrapped in ```jsx, ```javascript, or ```tsx blocks
  * Also handles malformed wrappers like ""`jsx, ```jsx", etc.
@@ -2393,7 +2475,21 @@ export function extractCodeFromMarkdown(content: string): string {
   // shell), silently discarding 95% of a complex app — the #1 cause of shallow,
   // non-interactive complex builds. When markers are present, return the full
   // content with the fences stripped so validation/preview see the ENTIRE app.
-  if (/\/\/\s*---\s*FILE:/.test(content)) {
+  //
+  // Real bug (this loop's overnight comment/string-blindness sweep): this
+  // test used to run directly against the RAW `content`, with zero awareness
+  // of a marker-shaped substring sitting inside a quoted string, backtick
+  // template literal, or block comment belonging to a SINGLE fenced file
+  // (e.g. a string literal demoing this project's own multi-file convention,
+  // like `const note = '// --- FILE: App.tsx'`). A decoy there made a normal,
+  // single-fence response take the "strip all ``` markers, return the whole
+  // response" branch instead of extracting just the fenced code — so any
+  // natural-language preamble/trailing commentary around the fence rode
+  // along as part of the "code" and failed to parse, even though the single
+  // file itself was perfectly valid. Scanning a masked view (strings/
+  // templates/block comments blanked, `//` line comments left alone since a
+  // real marker IS one) fixes it without disturbing real multi-file markers.
+  if (/\/\/\s*---\s*FILE:/.test(maskForMarkdownFileMarkerScan(content))) {
     return content
       // strip opening ```lang fences and closing ``` fences, keep the code
       .replace(/```(?:jsx|javascript|tsx|js|ts|react|typescript)?\s*\n?/gi, '')
