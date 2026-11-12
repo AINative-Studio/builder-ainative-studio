@@ -26,10 +26,39 @@ export interface AppMetadata {
 export function extractAppMetadata(prompt: string, code: string): AppMetadata {
   const lower = prompt.toLowerCase()
 
-  // Extract app name from code (function name) or prompt
+  // Extract app name from code (function name) or prompt.
+  //
+  // Real incident (2026-11-11): every sampled live company (wrench, lumeo,
+  // shingle, tidemark) served a layout.tsx <title>/OG/Twitter metadata block
+  // and metadataBase domain all literally reading "this" — e.g. title "this
+  // — Ecommerce Application", metadataBase "https://this.app". Root cause:
+  // the OLD `for\s+(\w+)/i` fallback does an unanchored scan of the WHOLE
+  // prompt, and the real company-app/route.ts template always contains a
+  // SECOND, later "for" that has nothing to do with the name — "...LANDING
+  // PAGE for "Wrench" (tagline: "...") — a real company for this idea: ...".
+  // `\w+` can't match the opening `"` right after the first "for ", so the
+  // regex engine keeps scanning and locks onto "for this idea", capturing
+  // the literal word "this" every single time a tagline-less OR
+  // tagline-bearing company name is quoted. Fixed by trying a quoted name
+  // right after "for " FIRST (matches company-app/route.ts's landing-page
+  // AND store-teaser templates exactly), then excluding known stopwords from
+  // the old unquoted fallback so it can never again return "this"/"a"/"the".
   const nameMatch = code.match(/function\s+([A-Z][a-zA-Z]+)/)
-  const promptNameMatch = prompt.match(/called\s+(\w+)/i) || prompt.match(/for\s+(\w+)/i)
-  const name = promptNameMatch?.[1] || nameMatch?.[1] || 'AINativeApp'
+  const quotedForMatch = prompt.match(/\bfor\s+"([^"]+)"/)
+  const calledMatch = prompt.match(/\bcalled\s+(\w+)/i)
+  // App-track dashboard wrapper (lib/build/useRealPreview.ts: "Build a
+  // polished, working web app for this idea: {idea}...") never quotes the
+  // name — but a founder-named idea (e.g. the real "Tidemark" company)
+  // itself opens with "{Name} — {tagline}: {rest of idea}", so pull the
+  // leading capitalized word only when it's immediately followed by a
+  // dash/colon separator — avoids misfiring on an anonymous idea that opens
+  // mid-sentence ("a habit tracker...", "I would like to build...").
+  const ideaLeadMatch = prompt.match(/\bidea:\s*([A-Z][\w'-]*)\s*[—:-]/)
+  const FOR_NAME_STOPWORDS = new Set(['this', 'the', 'a', 'an', 'this idea'])
+  const looseForMatch = prompt.match(/\bfor\s+(\w+)/i)
+  const looseForName =
+    looseForMatch && !FOR_NAME_STOPWORDS.has(looseForMatch[1].toLowerCase()) ? looseForMatch[1] : undefined
+  const name = quotedForMatch?.[1] || calledMatch?.[1] || ideaLeadMatch?.[1] || looseForName || nameMatch?.[1] || 'AINativeApp'
 
   // Detect type
   let type: AppMetadata['type'] = 'saas'

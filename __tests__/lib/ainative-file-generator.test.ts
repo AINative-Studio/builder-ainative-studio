@@ -56,4 +56,59 @@ describe('extractAppMetadata', () => {
     const meta = extractAppMetadata('build me a crossposting tool', 'export default function App(){}')
     expect(meta.description).toBe('build me a crossposting tool')
   })
+
+  /**
+   * Real incident (2026-11-11): every sampled live company (wrench, lumeo,
+   * shingle, tidemark) served layout.tsx metadata (<title>, OG/Twitter tags,
+   * metadataBase domain) literally reading "this" / "https://this.app". The
+   * old `prompt.match(/called\s+(\w+)/i) || prompt.match(/for\s+(\w+)/i)`
+   * fallback scanned the WHOLE prompt unanchored and always locked onto the
+   * company-app/route.ts template's own SECOND "for" — "...a real company
+   * for this idea: ..." — capturing the word "this" instead of the real,
+   * quoted company name earlier in the same string.
+   */
+  it('extracts the real quoted company name from the landing-page template, not the literal word "this"', () => {
+    const prompt =
+      'Build a polished, production-quality single-page marketing LANDING PAGE for "Wrench" (tagline: "From job site to paid — on autopilot.") — a real company for this idea: A field service management platform.'
+    const meta = extractAppMetadata(prompt, 'export default function App(){}')
+    expect(meta.name).toBe('Wrench')
+    expect(meta.name).not.toBe('this')
+  })
+
+  it('extracts the quoted company name from the landing-page template with no tagline', () => {
+    const prompt =
+      'Build a polished, production-quality single-page marketing LANDING PAGE for "Lumeo" — a real company for this idea: A knowledge marketplace.'
+    const meta = extractAppMetadata(prompt, 'export default function App(){}')
+    expect(meta.name).toBe('Lumeo')
+  })
+
+  it('extracts the quoted company name from the store-teaser template', () => {
+    const prompt =
+      'Build a polished, production-quality single-page STORE TEASER for "Driftwood" — a real, direct-to-consumer storefront for this idea: a candle shop.'
+    const meta = extractAppMetadata(prompt, 'export default function App(){}')
+    expect(meta.name).toBe('Driftwood')
+  })
+
+  it('extracts a founder-named idea opening ("Name — ...") from the App-track dashboard wrapper', () => {
+    const prompt =
+      'Build a polished, working web app for this idea: Tidemark — your community, clearly visible: a community visibility dashboard where members post updates. Make it interactive.'
+    const meta = extractAppMetadata(prompt, 'export default function App(){}')
+    expect(meta.name).toBe('Tidemark')
+  })
+
+  it('never returns a stopword like "this"/"a"/"the" as the name', () => {
+    const prompts = [
+      'Build a polished, working web app for this idea: a habit tracker with streaks. Make it interactive.',
+      'Build a polished, working web app for this idea: I would like to build an app that connects volunteer firefighters.',
+    ]
+    for (const prompt of prompts) {
+      const meta = extractAppMetadata(prompt, 'export default function App(){}')
+      expect(['this', 'a', 'an', 'the']).not.toContain(meta.name.toLowerCase())
+    }
+  })
+
+  it('still honors "called X" naming when present', () => {
+    const meta = extractAppMetadata('build me an app called Beacon for tracking leads', 'export default function App(){}')
+    expect(meta.name).toBe('Beacon')
+  })
 })
