@@ -1,6 +1,11 @@
 import { parse } from '@babel/parser'
 import { detectRootComponent } from './component-detector'
-import { findMatchingParen, findMatchingBrace as sharedFindMatchingBrace } from './build/bracket-scanner'
+import {
+  findMatchingParen,
+  findMatchingBrace as sharedFindMatchingBrace,
+  findStringEnd,
+  findBacktickEnd,
+} from './build/bracket-scanner'
 
 /**
  * Multi-file output boundary marker — mirrors lib/multi-file-parser.ts.
@@ -1366,6 +1371,69 @@ function findMatchingParenIdxInChildCheck(code: string, openIdx: number): number
   return findMatchingParen(code, openIdx)
 }
 
+/**
+ * Length-preserving string/template-literal/comment mask for
+ * findObjectRenderedAsChild's SHAPE 2 scan below — every masked character
+ * becomes one-for-one whitespace so a match's byte offset against this
+ * mask still lines up with the same offset in the real `code`. Built from
+ * the shared bracket-scanner string/backtick-end primitives (#1893) rather
+ * than a new from-scratch copy.
+ *
+ * Real bug this guards against: SHAPE 2's `findCallHead` regex used to run
+ * directly against the raw, unmasked `code` — so a `.find()`/`.findLast()`
+ * call mentioned only inside a `//`/`/* *\/` comment (a "how this works"
+ * aside, a disabled draft) or inside a string/template literal (a demo
+ * code snippet rendered in a <pre>/syntax-highlighter — an ordinary thing
+ * for an API/SDK product landing page, the same real-world shape already
+ * called out in lib/build/flatten-multifile.ts's own doc comment) was
+ * indistinguishable from a REAL `>{ x.find(...) }<` JSX child. Confirmed
+ * via direct repro against this exact function before this fix: both
+ * `// example: <div>{items.find(i => i.id === x)}</div>` and `` const demo
+ * = `<div>{items.find(i => i.id === x)}</div>` `` made this function return
+ * the matched text as if it were live code — a false-positive "Objects are
+ * not valid as a React child" validation failure on genuinely valid
+ * generated code, triggering a needless regeneration retry.
+ */
+function maskForFindChainScan(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const stop = end === -1 ? code.length : end + 1
+      out += ' '.repeat(stop - i)
+      i = stop
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const stop = end === -1 ? code.length : end + 1
+      out += ' '.repeat(stop - i)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 export function findObjectRenderedAsChild(code: string): string | null {
   for (const file of code.split(FILE_MARKER)) {
     // Identifiers bound to a plain object literal at declaration:
@@ -1417,7 +1485,8 @@ export function findObjectRenderedAsChild(code: string): string | null {
   // elements, renders fine). We match the whole expression as the offending child.
   // Conservative: requires the child to be EXACTLY a `.find(...)` call with nothing
   // else after it (no `?.name`, no `&&`, no `?:` — those access a field or guard and
-  // render fine). Scans the raw code (find-chains don't cross FILE_MARKER).
+  // render fine). Scans a comment/string-masked copy of the whole code (find-chains
+  // don't cross FILE_MARKER) — see maskForFindChainScan below.
   //
   // A flat `\([^{}]*\)` for the call's arguments can't cross any `{`/`}`, so a
   // callback with a real body (`.find(i => { return i.id === x })`) or an
@@ -1428,8 +1497,9 @@ export function findObjectRenderedAsChild(code: string): string | null {
   // same fix already applied to output-validator.ts's analogous
   // findSecretLoggingCalls (PR #1630).
   const findCallHead = /[A-Za-z_$][\w$.]*\.(?:find|findLast)\s*\(/g
+  const maskedForFindChain = maskForFindChainScan(code)
   let fm: RegExpExecArray | null
-  while ((fm = findCallHead.exec(code)) !== null) {
+  while ((fm = findCallHead.exec(maskedForFindChain)) !== null) {
     const openIdx = fm.index + fm[0].length - 1
     const closeIdx = findMatchingParenIdxInChildCheck(code, openIdx)
     if (closeIdx === -1) continue
