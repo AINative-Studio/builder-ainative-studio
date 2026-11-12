@@ -659,9 +659,26 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
       // An icon already present in SOME existing lucide-react import
       // statement (any quote style) doesn't need to be injected again —
       // only truly missing icons do.
-      const existingImportMatch = fixed.match(/import\s*\{([^}]*)\}\s*from\s*['"]lucide-react['"]/)
+      //
+      // Real bug (overnight loop, #1891): this used to match raw `fixed`
+      // directly, so a stale commented-out `// import { Zap } from
+      // 'lucide-react'` line made a REAL, uncommented `<Zap />` usage look
+      // "already imported" and skipped injecting the real import entirely
+      // — "Zap is not defined" at render, the exact crash class this
+      // safety net exists to prevent (worse than an unused-import false
+      // positive, since the real import never lands at all). Can't just
+      // run this against `maskCommentsAndStrings(fixed)` the way the
+      // AIKit/shadcn "already imported" checks do — that also blanks the
+      // `'lucide-react'` string literal's content, so even a REAL import
+      // would stop matching (same gotcha already documented above for the
+      // React-import check). Instead, same fix as that React-import check:
+      // require the import to be its own statement starting a line — a
+      // `//`-prefixed comment line never satisfies that.
+      const existingImportMatch = fixed.match(
+        /(?:^|\n)[ \t]*(import\s*\{([^}]*)\}\s*from\s*['"]lucide-react['"])/
+      )
       const alreadyImported = new Set(
-        (existingImportMatch?.[1] ?? '')
+        (existingImportMatch?.[2] ?? '')
           .split(',')
           .map(s => s.trim())
           .filter(Boolean)
@@ -705,7 +722,7 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
       if (missingIcons.length > 0) {
         if (existingImportMatch) {
           const merged = [...alreadyImported, ...missingIcons.map(toSpecifier)].join(', ')
-          fixed = fixed.replace(existingImportMatch[0], `import { ${merged} } from 'lucide-react'`)
+          fixed = fixed.replace(existingImportMatch[1], `import { ${merged} } from 'lucide-react'`)
         } else {
           fixed = `import { ${missingIcons.map(toSpecifier).join(', ')} } from 'lucide-react'\n${fixed}`
         }
@@ -716,15 +733,26 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
     // in JSX but never imported (see localExportMap comment above). Grouped
     // by source file so multiple names from the same sibling become one
     // import statement, same as the shadcn injection above.
+    //
+    // Real bug (overnight loop, #1891): both checks below used to test raw
+    // `fixed` directly, same gap as the AIKit/shadcn blocks above had before
+    // their own fix — a comment-only `<Name />` mention or a stale
+    // commented-out `// import { Name } from './Sibling'` line is
+    // indistinguishable from the real thing. Unlike the lucide
+    // "already-imported" check just above, neither regex here matches into
+    // a string literal's content, so matching against
+    // `maskCommentsAndStrings(fixed)` (same technique as AIKit/shadcn) is
+    // safe and doesn't need the line-start-anchor workaround.
     {
       const selfPath = normalizeForRelative(path)
+      const fixedNoComments = maskCommentsAndStrings(fixed)
       const byFile = new Map<string, string[]>()
       for (const [name, exportingPath] of localExportMap) {
         if (exportingPath === selfPath) continue
-        if (!new RegExp(`<${name}[\\s/>]`).test(fixed)) continue
+        if (!new RegExp(`<${name}[\\s/>]`).test(fixedNoComments)) continue
         if (
-          new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`).test(fixed) ||
-          new RegExp(`import\\s+${name}\\b`).test(fixed)
+          new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`).test(fixedNoComments) ||
+          new RegExp(`import\\s+${name}\\b`).test(fixedNoComments)
         ) continue
         const rel = relativeImportPath(path, exportingPath)
         if (!byFile.has(rel)) byFile.set(rel, [])

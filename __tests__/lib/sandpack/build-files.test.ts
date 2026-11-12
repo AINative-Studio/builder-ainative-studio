@@ -718,3 +718,62 @@ describe('buildSandpackFiles — lucide-react missing-icon injector is comment-b
     expect(lucideImport?.[1]).toBe('Bell')
   })
 })
+
+/**
+ * Real bug found this run (#1891): two more "already imported"/"is used"
+ * safety-net checks in buildSandpackFiles() were left testing raw, unmasked
+ * text — the same gap the shadcn/AIKit checks right above were already
+ * fixed for, and the one PR #1873 fixes for THIS SAME lucide block's
+ * "is used" (`missingIcons`) half, but not its "already imported" half, and
+ * not the local-sibling-import block at all.
+ */
+describe('buildSandpackFiles — lucide "already imported" and local-sibling-import checks are comment-blind (overnight loop, #1891)', () => {
+  it('still injects the real lucide-react import when the only existing import is inside a line comment (a real, uncommented usage must not be treated as already satisfied)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "// import { Zap } from 'lucide-react'\nexport default function App() { return (<div><Zap className=\"h-5 w-5\" /></div>) }",
+    })
+    expect(built['/App.tsx']).toMatch(/^import\s*\{[^}]*\bZap\b[^}]*\}\s*from\s*['"]lucide-react['"]/m)
+  })
+
+  it('still injects the real lucide-react import when the stale commented-out import line is indented (leading whitespace before `//`)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "export default function App() {\n  // import { Zap } from 'lucide-react'\n  return (<div><Zap className=\"h-5 w-5\" /></div>)\n}",
+    })
+    expect(built['/App.tsx']).toMatch(/^import\s*\{[^}]*\bZap\b[^}]*\}\s*from\s*['"]lucide-react['"]/m)
+  })
+
+  it('still merges a missing lucide icon into a REAL existing import even when a commented-out lucide import line also appears earlier in the file', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "// import { Zap } from 'lucide-react'\nimport { Tag } from 'lucide-react'\nexport default function App() { return (<div><Tag/><Zap/></div>) }",
+    })
+    expect(built['/App.tsx']).toMatch(/import\s*\{[^}]*\bTag\b[^}]*\}\s*from\s*['"]lucide-react['"]/)
+    expect(built['/App.tsx']).toMatch(/import\s*\{[^}]*\bZap\b[^}]*\}\s*from\s*['"]lucide-react['"]/)
+    // Only one REAL (uncommented) lucide-react import — the leftover
+    // commented-out line is untouched, but must not have been merged into
+    // or duplicated as a second real import statement.
+    expect(built['/App.tsx'].match(/^import\s*\{[^}]*\}\s*from\s*['"]lucide-react['"]/gm)?.length).toBe(1)
+  })
+
+  it('still injects the real local-sibling import when the only "already imported"-looking text is inside a line comment', () => {
+    const built = buildSandpackFiles({
+      '/src/App.tsx': "import Dash from './components/Dash'\nexport default function App(){ return <Dash/> }",
+      '/src/components/Dash.tsx':
+        "// import { Hero } from './Hero'\nexport default function Dash(){ return <Hero title=\"x\"/> }",
+      '/src/components/Hero.tsx': "export function Hero({ title }: { title: string }) { return <div>{title}</div> }",
+    })
+    expect(built['/src/components/Dash.tsx']).toMatch(/^import\s*\{\s*Hero\s*\}\s*from\s*['"]\.\/Hero['"]/m)
+  })
+
+  it('does NOT inject a local-sibling import when the only usage is inside a comment (no real JSX tag)', () => {
+    const built = buildSandpackFiles({
+      '/src/App.tsx': "import Dash from './components/Dash'\nexport default function App(){ return <Dash/> }",
+      '/src/components/Dash.tsx':
+        "// <Hero title=\"x\"/>\nexport default function Dash(){ return <div>hi</div> }",
+      '/src/components/Hero.tsx': "export function Hero({ title }: { title: string }) { return <div>{title}</div> }",
+    })
+    expect(built['/src/components/Dash.tsx']).not.toMatch(/from\s*['"]\.\/Hero['"]/)
+  })
+})
