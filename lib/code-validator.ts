@@ -1372,29 +1372,32 @@ function findMatchingParenIdxInChildCheck(code: string, openIdx: number): number
 }
 
 /**
- * Length-preserving string/template-literal/comment mask for
- * findObjectRenderedAsChild's SHAPE 2 scan below — every masked character
- * becomes one-for-one whitespace so a match's byte offset against this
- * mask still lines up with the same offset in the real `code`. Built from
- * the shared bracket-scanner string/backtick-end primitives (#1893) rather
- * than a new from-scratch copy.
+ * Length-preserving string/template-literal/comment mask shared by BOTH
+ * findObjectRenderedAsChild shapes below — every masked character becomes
+ * one-for-one whitespace so a match's byte offset against this mask still
+ * lines up with the same offset in the real `code`. Built from the shared
+ * bracket-scanner string/backtick-end primitives (#1893) rather than a new
+ * from-scratch copy.
  *
- * Real bug this guards against: SHAPE 2's `findCallHead` regex used to run
- * directly against the raw, unmasked `code` — so a `.find()`/`.findLast()`
- * call mentioned only inside a `//`/`/* *\/` comment (a "how this works"
- * aside, a disabled draft) or inside a string/template literal (a demo
- * code snippet rendered in a <pre>/syntax-highlighter — an ordinary thing
- * for an API/SDK product landing page, the same real-world shape already
- * called out in lib/build/flatten-multifile.ts's own doc comment) was
- * indistinguishable from a REAL `>{ x.find(...) }<` JSX child. Confirmed
+ * Real bug this guards against (originally found and fixed for SHAPE 2
+ * only, #1902): a `.find()`/`.findLast()` call, or a `const x = {...}`
+ * declaration plus a bare `>{x}<` mention, inside a `//`/`/* *\/` comment
+ * (a "how this works" aside, a disabled draft) or inside a string/template
+ * literal (a demo code snippet rendered in a <pre>/syntax-highlighter — an
+ * ordinary thing for an API/SDK product landing page, the same real-world
+ * shape already called out in lib/build/flatten-multifile.ts's own doc
+ * comment) was indistinguishable from the REAL JSX-child shape. Confirmed
  * via direct repro against this exact function before this fix: both
  * `// example: <div>{items.find(i => i.id === x)}</div>` and `` const demo
- * = `<div>{items.find(i => i.id === x)}</div>` `` made this function return
- * the matched text as if it were live code — a false-positive "Objects are
- * not valid as a React child" validation failure on genuinely valid
- * generated code, triggering a needless regeneration retry.
+ * = `<div>{items.find(i => i.id === x)}</div>` `` made SHAPE 2 return the
+ * matched text as if it were live code; SHAPE 1 had the identical gap —
+ * `` const demo = `<div>{config}</div>` `` with a real `const config = {
+ * a: 1 }` elsewhere in the file also false-flagged. Both are a
+ * false-positive "Objects are not valid as a React child" validation
+ * failure on genuinely valid generated code, triggering a needless
+ * regeneration retry (#1908).
  */
-function maskForFindChainScan(code: string): string {
+function maskForObjectChildChecks(code: string): string {
   let out = ''
   let i = 0
   while (i < code.length) {
@@ -1436,6 +1439,12 @@ function maskForFindChainScan(code: string): string {
 
 export function findObjectRenderedAsChild(code: string): string | null {
   for (const file of code.split(FILE_MARKER)) {
+    // Scan a comment/string-masked copy (#1908) so a declaration or JSX-child
+    // mention that only appears inside a comment or a demo string/template
+    // literal (e.g. a landing page showing its own code as text) can never be
+    // mistaken for the real thing — see maskForObjectChildChecks above.
+    const maskedFile = maskForObjectChildChecks(file)
+
     // Identifiers bound to a plain object literal at declaration:
     //   const x = { ... }   /   let x = {   (multi-line object opener)
     // The char after `=` `{` must NOT be `}` on the same token in a way that
@@ -1445,7 +1454,7 @@ export function findObjectRenderedAsChild(code: string): string | null {
     // Allow the declaration to follow line-start, newline, `{`, or `;` so
     // inline/minified forms like `function App(){const x={...}` are caught too
     // (not just newline-formatted code). The `\b` keeps it a word boundary.
-    for (const m of file.matchAll(
+    for (const m of maskedFile.matchAll(
       /(?:^|[\n{;])\s*(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*\{/g,
     )) {
       objectVars.add(m[1])
@@ -1461,7 +1470,7 @@ export function findObjectRenderedAsChild(code: string): string | null {
       const reArrayOrCall = new RegExp(
         `\\b${name}\\s*=\\s*(?:\\[|[A-Za-z_$][\\w$.]*\\s*\\(|[A-Za-z_$][\\w$.]*\\.(?:map|filter|reduce|slice|concat)\\b)`,
       )
-      if (reArrayOrCall.test(file)) objectVars.delete(name)
+      if (reArrayOrCall.test(maskedFile)) objectVars.delete(name)
     }
 
     if (objectVars.size === 0) continue
@@ -1472,7 +1481,7 @@ export function findObjectRenderedAsChild(code: string): string | null {
     // shape. `{item.name}`, `{items.map(...)}`, `{a && b}`, `{cond ? x : y}`,
     // `{count}` (a number) all fail the "bound to an object literal" test above,
     // and anything with a `.`/`(`/operator fails this regex's bare-ident group.
-    for (const m of file.matchAll(/>\s*\{\s*([A-Za-z_$][\w$]*)\s*\}\s*</g)) {
+    for (const m of maskedFile.matchAll(/>\s*\{\s*([A-Za-z_$][\w$]*)\s*\}\s*</g)) {
       if (objectVars.has(m[1])) return m[1]
     }
   }
@@ -1486,7 +1495,7 @@ export function findObjectRenderedAsChild(code: string): string | null {
   // Conservative: requires the child to be EXACTLY a `.find(...)` call with nothing
   // else after it (no `?.name`, no `&&`, no `?:` — those access a field or guard and
   // render fine). Scans a comment/string-masked copy of the whole code (find-chains
-  // don't cross FILE_MARKER) — see maskForFindChainScan below.
+  // don't cross FILE_MARKER) — see maskForObjectChildChecks above.
   //
   // A flat `\([^{}]*\)` for the call's arguments can't cross any `{`/`}`, so a
   // callback with a real body (`.find(i => { return i.id === x })`) or an
@@ -1497,7 +1506,7 @@ export function findObjectRenderedAsChild(code: string): string | null {
   // same fix already applied to output-validator.ts's analogous
   // findSecretLoggingCalls (PR #1630).
   const findCallHead = /[A-Za-z_$][\w$.]*\.(?:find|findLast)\s*\(/g
-  const maskedForFindChain = maskForFindChainScan(code)
+  const maskedForFindChain = maskForObjectChildChecks(code)
   let fm: RegExpExecArray | null
   while ((fm = findCallHead.exec(maskedForFindChain)) !== null) {
     const openIdx = fm.index + fm[0].length - 1
