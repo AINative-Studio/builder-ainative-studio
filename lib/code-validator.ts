@@ -1,6 +1,6 @@
 import { parse } from '@babel/parser'
 import { detectRootComponent } from './component-detector'
-import { findMatchingParen } from './build/bracket-scanner'
+import { findMatchingParen, findMatchingBrace as sharedFindMatchingBrace } from './build/bracket-scanner'
 
 /**
  * Multi-file output boundary marker — mirrors lib/multi-file-parser.ts.
@@ -1113,62 +1113,17 @@ function findTemplateLiteralEndInDestructureCheck(code: string, openIdx: number)
  * Index of the `}` that closes the `{` at `openIdx` (honoring arbitrarily
  * nested braces), or -1 if unbalanced.
  *
- * Skips over string/template literals it scans through so a lone, unmatched
- * `}` inside a destructured default value's string content is never
- * mistaken for the destructuring pattern's real closing brace. Also skips
- * over `//` and `/* *\/` comments for the same reason: a lone, unmatched `}`
- * inside a comment between bindings (e.g. `// legacy shape was }`) was
- * previously mistaken for the pattern's real close, truncating the slice
- * scanned for PascalCase identifiers before any binding written after the
- * comment — same bug class as #1715/#1729/#1733/#1744/#1745's comment-blind
- * depth-counters. Scoped to findUnresolvedComponents' destructuring check
- * below.
+ * Delegates to the shared, centrally-tested lib/build/bracket-scanner.ts
+ * utility (#1710) instead of this file's own copy — this function's own
+ * depth-counter used to hand-roll the identical string/template/comment
+ * opacity, which meant it never inherited that module's later regex-
+ * literal-opacity fix (2026-11-08: an unescaped bracket-shaped character
+ * inside a regex literal, e.g. a destructured default value like
+ * `{ pattern = /^[{]/ }`, could desync the depth count and wrongly return
+ * -1 for a perfectly valid destructuring pattern).
  */
 function findMatchingBraceInDestructureCheck(code: string, openIdx: number): number {
-  let depth = 0
-  let i = openIdx
-  while (i < code.length) {
-    const ch = code[i]
-    if (ch === '\\') {
-      i += 2
-      continue
-    }
-    if (ch === '/' && code[i + 1] === '/') {
-      const end = code.indexOf('\n', i)
-      i = end === -1 ? code.length : end + 1
-      continue
-    }
-    if (ch === '/' && code[i + 1] === '*') {
-      const end = code.indexOf('*/', i + 2)
-      i = end === -1 ? code.length : end + 2
-      continue
-    }
-    if (ch === '"' || ch === "'") {
-      const end = findStringEndInDestructureCheck(code, i, ch)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findTemplateLiteralEndInDestructureCheck(code, i)
-      if (end === -1) return -1
-      i = end + 1
-      continue
-    }
-    if (ch === '{') {
-      depth++
-      i++
-      continue
-    }
-    if (ch === '}') {
-      depth--
-      if (depth === 0) return i
-      i++
-      continue
-    }
-    i++
-  }
-  return -1
+  return sharedFindMatchingBrace(code, openIdx)
 }
 
 /**
