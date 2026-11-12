@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { detectRootComponent, applyComponentRewrite } from '@/lib/component-detector'
+import { stripExportsAndBasicTypes } from '@/lib/build/strip-exports-and-types'
 
 function generateNonce(): string {
   return crypto.randomBytes(16).toString('base64')
@@ -37,10 +38,12 @@ export async function POST(request: NextRequest) {
     const detectedComponentName = detection.name || 'App'
     // Strip export statements (not just `export default`) so e.g. a trailing
     // `export { Name }` list doesn't survive into the non-module <script> below,
-    // where any top-level `export` keyword is a hard SyntaxError.
-    componentCode = componentCode
-      .replace(/export\s+default\s+/g, '')
-      .replace(/export\s+/g, '')
+    // where any top-level `export` keyword is a hard SyntaxError. Comment/
+    // string/template-literal-safe (see lib/build/strip-exports-and-types.ts) —
+    // a plain unmasked `.replace(/export\s+/g, '')` would also mangle a
+    // displayed demo snippet showing `export default function Example() {...}`
+    // as literal text inside a quoted string or template literal.
+    componentCode = stripExportsAndBasicTypes(componentCode)
 
     // Create a simple HTML page that renders the React component
     const html = `
