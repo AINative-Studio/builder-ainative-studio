@@ -185,13 +185,26 @@ export function maxTasksForTier(tier: string | null | undefined): number {
  * was attempted. A non-zero value is itself an operational signal worth
  * surfacing (it means a prior run was killed mid-resolution), not just an
  * implementation detail.
+ *
+ * `completedNoCoverage` — #1914: of `completed`, how many were accepted via
+ * `decideOutcomeFromCoverage`'s no-test-suite path (`resolveTask()`'s
+ * `testable: false`) rather than a real, run test suite — i.e. "the LLM
+ * produced files and a Gitea commit succeeded," with zero functional
+ * verification, before `mergeTaskPR()`'s unconditional auto-merge. Today
+ * this is the common case (generated apps ship with no test script by
+ * default), and nothing previously distinguished it from a genuinely
+ * coverage-verified `completed` in the nightly aggregate — an admin reading
+ * `tasksCompleted` alone could not tell "proven to work" from "merely
+ * committed and hoped for." Observability only: does NOT change which tasks
+ * get merged/redeployed — that auto-merge policy question is a human
+ * decision, out of scope here.
  */
 export async function runTaskResolutions(
   scopeKey: string,
   slug: string,
   planTier?: string | null,
-): Promise<{ attempted: number; completed: number; merged: number; redeployed: number; reaped: number }> {
-  if (!scopeKey || !slug) return { attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0 }
+): Promise<{ attempted: number; completed: number; merged: number; redeployed: number; reaped: number; completedNoCoverage: number }> {
+  if (!scopeKey || !slug) return { attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0, completedNoCoverage: 0 }
 
   const limit = maxTasksForTier(planTier)
   let attempted = 0
@@ -199,6 +212,7 @@ export async function runTaskResolutions(
   let merged = 0
   let redeployed = 0
   let reaped = 0
+  let completedNoCoverage = 0
   try {
     const tasks = await listTasks(scopeKey)
 
@@ -266,6 +280,7 @@ export async function runTaskResolutions(
       try {
         const result = await resolveTask(scopeKey, task, slug)
         if (result.ok) completed += 1
+        if (result.ok && result.testable === false) completedNoCoverage += 1
         if (result.merged) merged += 1
         if (result.redeployed) redeployed += 1
       } catch {
@@ -276,5 +291,5 @@ export async function runTaskResolutions(
   } catch {
     /* listing failure is non-fatal */
   }
-  return { attempted, completed, merged, redeployed, reaped }
+  return { attempted, completed, merged, redeployed, reaped, completedNoCoverage }
 }

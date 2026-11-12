@@ -114,6 +114,8 @@ interface CompanyOutcome {
   tasksRedeployed: number
   /** How many orphaned `in_progress` tasks were recovered this run — see task-resolution-loop.ts's isStaleInProgress. */
   tasksReaped: number
+  /** #1914 — of tasksCompleted, how many had no test suite to verify against; see runTaskResolutions(). */
+  tasksCompletedNoCoverage: number
   commsSent: boolean
   stalled: boolean
 }
@@ -209,6 +211,7 @@ export async function GET(request: NextRequest) {
     const tasksMerged = completed.reduce((n, o) => n + (o.value?.tasksMerged || 0), 0)
     const tasksRedeployed = completed.reduce((n, o) => n + (o.value?.tasksRedeployed || 0), 0)
     const tasksReaped = completed.reduce((n, o) => n + (o.value?.tasksReaped || 0), 0)
+    const tasksCompletedNoCoverage = completed.reduce((n, o) => n + (o.value?.tasksCompletedNoCoverage || 0), 0)
     const commsSent = completed.filter((o) => o.value?.commsSent).length
     const stalledCompanies = completed.filter((o) => o.value?.stalled).length
 
@@ -223,7 +226,7 @@ export async function GET(request: NextRequest) {
     logger.info('Nightly autonomous loop complete', {
       dispatched, total: results.length, processed: completed.length, deferred,
       failedCompanies, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted,
-      tasksMerged, tasksRedeployed, tasksReaped,
+      tasksMerged, tasksRedeployed, tasksReaped, tasksCompletedNoCoverage,
       commsSent, stalledCompanies, elapsedMs, budgetExhausted,
     })
     if (stalledCompanies > 0) {
@@ -257,6 +260,7 @@ export async function GET(request: NextRequest) {
       tasksMerged,
       tasksRedeployed,
       tasksReaped,
+      tasksCompletedNoCoverage,
       stalledCompanies,
       elapsedMs,
     })
@@ -279,6 +283,7 @@ export async function GET(request: NextRequest) {
       tasksMerged,
       tasksRedeployed,
       tasksReaped,
+      tasksCompletedNoCoverage,
       commsSent,
       stalledCompanies,
       results,
@@ -309,6 +314,7 @@ export async function GET(request: NextRequest) {
       tasksMerged: 0,
       tasksRedeployed: 0,
       tasksReaped: 0,
+      tasksCompletedNoCoverage: 0,
       stalledCompanies: 0,
       elapsedMs: Date.now() - startedAt,
       crashed: true,
@@ -334,7 +340,7 @@ async function runForCompany(
   const outcome: CompanyOutcome = {
     result: { companyId: e.companyId, briefing: null, taskId: null, status: 'error', detail: 'not run' },
     reportWritten: false, mediaGenerated: 0, tasksAttempted: 0, tasksCompleted: 0,
-    tasksMerged: 0, tasksRedeployed: 0, tasksReaped: 0,
+    tasksMerged: 0, tasksRedeployed: 0, tasksReaped: 0, tasksCompletedNoCoverage: 0,
     commsSent: false, stalled: false,
   }
 
@@ -637,6 +643,7 @@ async function runForCompany(
       outcome.tasksMerged += t.merged || 0
       outcome.tasksRedeployed += t.redeployed || 0
       outcome.tasksReaped += t.reaped || 0
+      outcome.tasksCompletedNoCoverage += t.completedNoCoverage || 0
     } catch (err) {
       logger.warn('Task resolution run failed', { companyId: e.companyId, err: (err as Error)?.message })
     }

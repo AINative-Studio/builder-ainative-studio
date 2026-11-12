@@ -100,6 +100,15 @@ export interface ResolveTaskResult {
   merged?: boolean
   /** #468 — whether a real redeploy was triggered after a successful merge. */
   redeployed?: boolean
+  /**
+   * #1914 — whether a REAL coverage run (a test suite that exists and was
+   * executed) decided this outcome, as opposed to `decideOutcomeFromCoverage`'s
+   * no-test-suite "accepted on implementation, not coverage-gated" path. Only
+   * set once coverage was actually attempted (i.e. past the commit step) —
+   * absent for a task that failed/deferred earlier (implement, commit, etc.),
+   * since no coverage run happened for it to describe.
+   */
+  testable?: boolean
 }
 
 // ---------------------------------------------------------------------------
@@ -515,5 +524,6 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     coveragePercent: coverage.coveragePercent,
     merged,
     redeployed,
+    testable: coverage.testable,
   }
 }

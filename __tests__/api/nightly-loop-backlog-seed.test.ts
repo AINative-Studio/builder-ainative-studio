@@ -391,4 +391,23 @@ describe('GET /api/build/nightly-loop — backlog task seeding (#898)', () => {
     expect(data.tasksMerged).toBe(0)
     expect(data.tasksRedeployed).toBe(0)
   })
+
+  // #1914 — the route must surface how many completions had no real test
+  // suite to verify against, so an admin can tell coverage-verified ship
+  // rate apart from raw completion count.
+  it('aggregates tasksCompletedNoCoverage from runTaskResolutions into the response', async () => {
+    h.runTaskResolutions.mockResolvedValue({ attempted: 2, completed: 2, completedNoCoverage: 1 })
+    const res = await GET(req())
+    const data = await res.json()
+    expect(data.tasksCompleted).toBe(2)
+    expect(data.tasksCompletedNoCoverage).toBe(1)
+  })
+
+  it('never throws when runTaskResolutions resolves without a completedNoCoverage field (older mock/shape)', async () => {
+    h.runTaskResolutions.mockResolvedValue({ attempted: 1, completed: 1 })
+    const res = await GET(req())
+    expect(res.status).toBe(200)
+    const data = await res.json()
+    expect(data.tasksCompletedNoCoverage).toBe(0)
+  })
 })
