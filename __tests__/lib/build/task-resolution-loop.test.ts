@@ -12,6 +12,7 @@ const h = vi.hoisted(() => ({
   updateTask: vi.fn(),
   resolveTask: vi.fn(),
   splitTask: vi.fn(),
+  resolveApp: vi.fn(),
 }))
 
 // needsSplit (#903) is a real, pure, no-I/O derivation — keep the real
@@ -23,6 +24,7 @@ vi.mock('@/lib/build/task-store', async () => {
 })
 vi.mock('@/lib/build/task-resolver', () => ({ resolveTask: h.resolveTask }))
 vi.mock('@/lib/build/task-splitter', () => ({ splitTask: h.splitTask }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
 
 import {
   runTaskResolutions,
@@ -56,6 +58,8 @@ beforeEach(() => {
   h.resolveTask.mockReset()
   h.splitTask.mockReset()
   h.splitTask.mockResolvedValue({ ok: true, childIds: ['c1', 'c2'] })
+  h.resolveApp.mockReset()
+  h.resolveApp.mockResolvedValue(null)
 })
 
 describe('runTaskResolutions (#433)', () => {
@@ -263,9 +267,28 @@ describe('runTaskResolutions calls splitTask on oversized (needsSplit) tasks (#9
     ])
     await runTaskResolutions('a::b', 'my-co')
     expect(h.splitTask).toHaveBeenCalledTimes(3)
-    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't3' }))
-    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't5' }))
-    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't8' }))
+    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't3' }), expect.objectContaining({ slug: 'my-co' }))
+    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't5' }), expect.objectContaining({ slug: 'my-co' }))
+    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't8' }), expect.objectContaining({ slug: 'my-co' }))
+  })
+
+  it('#1928 — resolves the company gitOrg once per run and passes it through to splitTask for every oversized child', async () => {
+    h.listTasks.mockResolvedValue([
+      task({ id: 't3', storyPoints: 3 }),
+      task({ id: 't5', storyPoints: 5 }),
+    ])
+    h.resolveApp.mockResolvedValue({ gitOrg: 'acme-org' })
+    await runTaskResolutions('a::b', 'my-co')
+    expect(h.resolveApp).toHaveBeenCalledWith('my-co')
+    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't3' }), { gitOrg: 'acme-org', slug: 'my-co' })
+    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 't5' }), { gitOrg: 'acme-org', slug: 'my-co' })
+  })
+
+  it('#1928 — never resolves the app registry when there are no oversized tasks this run', async () => {
+    h.listTasks.mockResolvedValue([task({ id: 'small', storyPoints: 1 })])
+    h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
+    await runTaskResolutions('a::b', 'my-co')
+    expect(h.resolveApp).not.toHaveBeenCalled()
   })
 
   it('never calls splitTask for a non-oversized or unestimated todo task', async () => {
@@ -282,7 +305,7 @@ describe('runTaskResolutions calls splitTask on oversized (needsSplit) tasks (#9
     ])
     h.resolveTask.mockResolvedValue({ ok: true, stage: 'completed' })
     const res = await runTaskResolutions('a::b', 'my-co')
-    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'big' }))
+    expect(h.splitTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'big' }), expect.objectContaining({ slug: 'my-co' }))
     expect(h.resolveTask).toHaveBeenCalledWith('a::b', expect.objectContaining({ id: 'small' }), 'my-co')
     expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0 })
   })

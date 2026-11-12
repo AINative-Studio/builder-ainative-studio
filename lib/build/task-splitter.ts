@@ -37,6 +37,7 @@
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 import { createTask, updateTask, needsSplit, type BuildTask } from '@/lib/build/task-store'
 import { estimateStoryPoints } from '@/lib/build/story-estimator'
+import { openIssueForNewTask } from '@/lib/build/task-resolver'
 
 /** AINative OpenAI-compatible base URL — same env var + resolution as story-estimator.ts. */
 const AINATIVE_BASE = process.env.AINATIVE_BASE_URL || 'https://api.ainative.studio/api/v1'
@@ -194,7 +195,7 @@ export async function splitTaskViaLLM(
 export async function splitTask(
   scopeKey: string,
   parent: BuildTask,
-  opts: { depth?: number } = {},
+  opts: { depth?: number; gitOrg?: string | null; slug?: string } = {},
 ): Promise<SplitTaskResult> {
   const depth = opts.depth ?? 0
 
@@ -238,10 +239,20 @@ export async function splitTask(
       }
     }
 
+    // #1928 — open this child's real Gitea issue now, same as any other
+    // freshly-created task: a split child is otherwise invisible on the
+    // founder's own repo until (if ever) a future resolveTask() call reaches
+    // it, and oversized tasks are explicitly never counted against the
+    // tier's nightly resolution limit — so for most tiers, "later" could
+    // mean "never." Best-effort; never blocks the split.
+    if (opts.slug) {
+      await openIssueForNewTask(scopeKey, opts.gitOrg, opts.slug, created)
+    }
+
     // If this child itself still estimates oversized and we have re-split
     // budget left, recurse; otherwise accept it as-is at the depth ceiling.
     if (!atDepthCeiling && needsSplit(created.storyPoints)) {
-      const sub = await splitTask(scopeKey, created, { depth: depth + 1 })
+      const sub = await splitTask(scopeKey, created, { depth: depth + 1, gitOrg: opts.gitOrg, slug: opts.slug })
       if (sub.ok) {
         childIds.push(...sub.childIds)
         continue

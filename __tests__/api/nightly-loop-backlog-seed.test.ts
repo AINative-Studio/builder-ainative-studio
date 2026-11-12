@@ -55,6 +55,7 @@ const h = vi.hoisted(() => ({
   updateTask: vi.fn(),
   readTaskStatus: vi.fn(),
   getAinativeApiKey: vi.fn(),
+  openIssueForNewTask: vi.fn(),
 }))
 
 vi.mock('@/lib/build/loop-enrollment', () => ({ listEnrolled: h.listEnrolled, recordRun: h.recordRun, recordRunHealth: h.recordRunHealth }))
@@ -77,6 +78,7 @@ vi.mock('@/lib/build/task-store', async (importOriginal) => {
   return { ...actual, createTask: h.createTask, listTasks: h.listTasks, updateTask: h.updateTask }
 })
 vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/task-resolver', () => ({ openIssueForNewTask: h.openIssueForNewTask }))
 vi.mock('@/lib/build/comms-policy', () => ({ runNightlyCommsOutreach: h.runNightlyCommsOutreach }))
 vi.mock('@/lib/build/swarm-task-health', async (importOriginal) => {
   const actual = await importOriginal<typeof import('@/lib/build/swarm-task-health')>()
@@ -125,6 +127,7 @@ describe('GET /api/build/nightly-loop — backlog task seeding (#898)', () => {
     h.updateTask.mockResolvedValue(true)
     h.readTaskStatus.mockResolvedValue({ taskId: 'prior-task', dispatchedAt: '', status: 'unknown' })
     h.getAinativeApiKey.mockReturnValue('test-key')
+    h.openIssueForNewTask.mockImplementation(async (_scopeKey: string, _gitOrg: unknown, _slug: string, task: unknown) => task)
   })
   afterEach(() => { vi.restoreAllMocks() })
 
@@ -168,6 +171,43 @@ describe('GET /api/build/nightly-loop — backlog task seeding (#898)', () => {
     })
     await GET(req())
     expect(h.createTask).not.toHaveBeenCalled()
+  })
+
+  it('#1928 — opens a real Gitea issue for the freshly seeded app-track task when the company is git-provisioned', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'beacon-org' })
+    const created = { id: 't1', title: 'Nightly backlog: Beacon' }
+    h.createTask.mockResolvedValue(created)
+    await GET(req())
+    expect(h.openIssueForNewTask).toHaveBeenCalledTimes(1)
+    const [scopeKey, gitOrg, slug, task] = h.openIssueForNewTask.mock.calls[0]
+    expect(scopeKey).toEqual(expect.any(String))
+    expect(gitOrg).toBe('beacon-org')
+    expect(slug).toBe('beacon')
+    expect(task).toBe(created)
+  })
+
+  it('#1928 — skips opening an issue for an app-track seed when createTask itself failed (no real task to attach one to)', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'beacon-org' })
+    h.createTask.mockResolvedValue(null)
+    await GET(req())
+    expect(h.openIssueForNewTask).not.toHaveBeenCalled()
+  })
+
+  it('#1928 — opens a real Gitea issue for the freshly seeded company-track task when the company is git-provisioned', async () => {
+    h.listEnrolled.mockResolvedValue([COMPANY_ENROLLMENT])
+    h.resolveApp.mockResolvedValue({ gitOrg: 'acme-org' })
+    h.runNightlyLoop.mockResolvedValue({
+      companyId: 'acme-co', briefing: 'real briefing', taskId: 'swarm-task-9', status: 'dispatched', detail: 'ok',
+    })
+    const created = { id: 't2', title: 'Nightly backlog: Acme Co' }
+    h.createTask.mockResolvedValue(created)
+    await GET(req())
+    expect(h.openIssueForNewTask).toHaveBeenCalledTimes(1)
+    const [scopeKey, gitOrg, slug, task] = h.openIssueForNewTask.mock.calls[0]
+    expect(scopeKey).toEqual(expect.any(String))
+    expect(gitOrg).toBe('acme-org')
+    expect(slug).toBe('acme-co')
+    expect(task).toBe(created)
   })
 
   it('#1521 — true-up: a prior unresolved company-track row is updated to its real stage via readTaskStatus before seeding a new one', async () => {

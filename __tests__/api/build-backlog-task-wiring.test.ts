@@ -29,6 +29,7 @@ const h = vi.hoisted(() => ({
   listTasks: vi.fn(),
   deriveOwnerKey: vi.fn(() => 'owner'),
   chatScopeKey: vi.fn(() => 'scope-key'),
+  openIssueForNewTask: vi.fn(),
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
@@ -43,6 +44,12 @@ vi.mock('@/lib/build/chat-store', () => ({
   deriveOwnerKey: h.deriveOwnerKey,
   chatScopeKey: h.chatScopeKey,
 }))
+vi.mock('@/lib/build/task-resolver', () => ({ openIssueForNewTask: h.openIssueForNewTask }))
+
+/** Flushes the microtask queue so a fire-and-forget `.then()` chain (the
+ * createTask().then(openIssueForNewTask) wiring under test, #1928) has had a
+ * chance to run before assertions check it. */
+const flush = () => new Promise((r) => setTimeout(r, 0))
 
 import { GET } from '@/app/api/build/backlog/route'
 
@@ -55,6 +62,7 @@ beforeEach(() => {
   h.resolveApp.mockReset()
   h.createTask.mockReset().mockResolvedValue(null)
   h.listTasks.mockReset().mockResolvedValue([])
+  h.openIssueForNewTask.mockReset().mockResolvedValue(undefined)
 })
 
 describe('GET /api/build/backlog — real task wiring (#670)', () => {
@@ -109,6 +117,33 @@ describe('GET /api/build/backlog — real task wiring (#670)', () => {
 
     expect(body.queued.every((i: any) => i.status === 'blocked')).toBe(true)
     expect(h.createTask).not.toHaveBeenCalled()
+  })
+
+  it('#1928 — opens a real Gitea issue for each newly created queued task when the company is git-provisioned', async () => {
+    h.auth.mockResolvedValue({ user: { email: 'founder@example.com' } })
+    h.resolveApp.mockResolvedValue({ zerodbProjectId: 'proj_1', domain: 'acme.com', plan: 'launch', gitOrg: 'acme-org' })
+    h.createTask.mockResolvedValue({ id: 't1', title: 'Authentication + user accounts (OAuth, JWT, sessions)' })
+
+    await GET(req('http://x/api/build/backlog?idea=CRM+for+sales+teams&companyName=Acme&companyId=acme'))
+    await flush()
+
+    expect(h.openIssueForNewTask).toHaveBeenCalled()
+    const [scopeKey, gitOrg, slug, task] = h.openIssueForNewTask.mock.calls[0]
+    expect(scopeKey).toBe('scope-key')
+    expect(gitOrg).toBe('acme-org')
+    expect(slug).toBe('acme')
+    expect(task).toMatchObject({ id: 't1' })
+  })
+
+  it('#1928 — never opens an issue when createTask itself returned nothing (no real task to attach one to)', async () => {
+    h.auth.mockResolvedValue({ user: { email: 'founder@example.com' } })
+    h.resolveApp.mockResolvedValue({ zerodbProjectId: 'proj_1', domain: 'acme.com', plan: 'launch', gitOrg: 'acme-org' })
+    // h.createTask keeps its default null resolution from beforeEach.
+
+    await GET(req('http://x/api/build/backlog?idea=CRM+for+sales+teams&companyName=Acme&companyId=acme'))
+    await flush()
+
+    expect(h.openIssueForNewTask).not.toHaveBeenCalled()
   })
 
   it('creates no tasks when no companyId is given at all (no scope to key on)', async () => {
