@@ -591,8 +591,14 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   {
     const localDecls = new Set<string>()
     const declRe = /^(?:export\s+(?:default\s+)?)?(?:function|class|const|let)\s+([A-Za-z_$][\w$]*)/gm
+    // Scan a comment/string-masked view (see maskCommentsAndStringsForShadowScan's
+    // own doc comment) — a declaration-shaped line inside a disabled comment or a
+    // template-literal demo snippet must never register as a real local
+    // declaration here, or the import rewrite below strips the file's only real
+    // binding for that name as "shadowed".
+    const maskedForShadowScan = maskCommentsAndStringsForShadowScan(fixedCode)
     let dm: RegExpExecArray | null
-    while ((dm = declRe.exec(fixedCode)) !== null) localDecls.add(dm[1])
+    while ((dm = declRe.exec(maskedForShadowScan)) !== null) localDecls.add(dm[1])
 
     if (localDecls.size > 0) {
       const removedShadowed: string[] = []
@@ -1244,6 +1250,68 @@ function maskCommentsForUnresolvedScan(code: string): string {
       let end = code.indexOf('*/', i + 2)
       end = end === -1 ? code.length : end + 2
       out += ' '.repeat(Math.min(end, code.length) - i)
+      i = Math.min(end, code.length)
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
+ * Length-preserving mask of `//` / `/* *\/` comments AND string/template
+ * literal CONTENTS (all become spaces, newlines kept) — used by the LOCAL
+ * DECL SHADOWS IMPORT fix in autoFixCode() below.
+ *
+ * Real bug this guards against: that fix's `declRe` scan used to run
+ * directly against raw, unmasked `fixedCode` with a `^...$`-anchored,
+ * multiline regex. A commented-out declaration whose text happens to start
+ * at the beginning of a line inside a `/* ... *\/` block comment (e.g. a
+ * disabled draft kept "for reference") — or a multi-line template-literal
+ * demo snippet showing example source (an ordinary thing for an API/SDK
+ * landing page's code sample, same real-world shape already called out in
+ * lib/build/flatten-multifile.ts's own doc comment) — registered as a REAL
+ * local declaration. The fix then stripped the matching named import
+ * specifier as "shadowed", even though the import was the file's ONLY real
+ * binding for that name — "X is not defined" the moment the component
+ * renders, a strictly worse outcome than the duplicate-declaration crash
+ * this fix exists to prevent. Unlike maskCommentsForUnresolvedScan above,
+ * this ALSO blanks string/template content (not just comments), since a
+ * declaration-shaped line inside a template-literal demo snippet is exactly
+ * as fake as one inside a comment for this specific line-anchored scan.
+ */
+function maskCommentsAndStringsForShadowScan(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEndInDestructureCheck(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findTemplateLiteralEndInDestructureCheck(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += code.slice(i, Math.min(end, code.length)).replace(/[^\n]/g, ' ')
       i = Math.min(end, code.length)
       continue
     }
