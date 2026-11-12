@@ -149,6 +149,67 @@ describe('code-validator: duplicate declaration handling (#64)', () => {
 })
 
 /**
+ * #1885 — findDuplicateTopLevelDeclaration() scanned raw, unmasked source
+ * line-by-line with zero comment/template-literal awareness. A column-0
+ * line showing a discarded earlier attempt inside a `/* ... *\/` block
+ * comment (or a code sample embedded in a backtick template literal) was
+ * mistaken for a second, real top-level declaration — falsely rejecting a
+ * file that declares the name exactly once and forcing an unnecessary
+ * regeneration (builder#64's retry path).
+ */
+describe('code-validator: findDuplicateTopLevelDeclaration is comment/template-literal aware (#1885)', () => {
+  it('does not flag a decl-shaped line sitting inside a block comment with no leading `*`', () => {
+    const code = [
+      '/*',
+      'const Hero = () => null',
+      '*/',
+      'const Hero = () => {',
+      '  return null',
+      '}',
+      '',
+      'export default function App() {',
+      '  return null',
+      '}',
+    ].join('\n')
+    expect(findDuplicateTopLevelDeclaration(code)).toBeNull()
+  })
+
+  it('does not flag a decl-shaped line sitting inside a multi-line backtick template literal', () => {
+    const code = [
+      "const snippet = `",
+      'export default function Example() {}',
+      '`',
+      'export default function App() {',
+      '  return null',
+      '}',
+    ].join('\n')
+    expect(findDuplicateTopLevelDeclaration(code)).toBeNull()
+  })
+
+  it('still flags a real duplicate that merely sits near an unrelated block comment', () => {
+    const code = [
+      '/* an unrelated note about this component */',
+      'const Hero = () => null',
+      'const Hero = () => null',
+      'export default function App() { return null }',
+    ].join('\n')
+    expect(findDuplicateTopLevelDeclaration(code)).toBe('Hero')
+  })
+
+  it('still flags a real duplicate declared after a multi-line block comment', () => {
+    const code = [
+      '/*',
+      ' * doc comment',
+      ' */',
+      'const Hero = () => null',
+      'const Hero = () => null',
+      'export default function App() { return null }',
+    ].join('\n')
+    expect(findDuplicateTopLevelDeclaration(code)).toBe('Hero')
+  })
+})
+
+/**
  * Same class of defect surfaced by the #64 regression run: a stray semicolon
  * splitting a ternary (accepted by Babel errorRecovery, fatal in Sandpack →
  * "Unexpected token, expected ':'"). Must be auto-fixed to strict-valid, or
