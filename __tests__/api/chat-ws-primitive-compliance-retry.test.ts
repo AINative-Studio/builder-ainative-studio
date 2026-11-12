@@ -45,7 +45,9 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
   it('detects multi-file input and asks for the SAME marker-format output back, not a single-file collapse', () => {
     const idx = source.indexOf('async function closePrimitiveComplianceGap')
     const nearby = source.slice(idx, idx + 7500)
-    expect(nearby).toMatch(/isMultiFile\s*=\s*\/\\\/\\\/\\s\*---\\s\*FILE:\//)
+    // hasRealFileMarker() (comment/string-masking, #1981) replaced a raw
+    // unmasked `.test()` call here — see chat-ws-file-marker-decoy.test.ts.
+    expect(nearby).toMatch(/isMultiFile\s*=\s*hasRealFileMarker\(current\)/)
     expect(nearby).toMatch(/FILE: src\/App\.tsx/)
     // Rejects a candidate that lost the multi-file structure — never
     // silently regresses real multi-file content to single-file.

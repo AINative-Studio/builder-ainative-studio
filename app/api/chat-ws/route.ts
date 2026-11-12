@@ -270,6 +270,82 @@ async function runClaudePass(system: string, user: string, maxTokens = 16000, mo
 }
 
 /**
+ * Line indices (0-based) of `code` that sit INSIDE a still-open backtick
+ * template literal or block comment carried over from an earlier line,
+ * rather than at top level — same helper shape as sandbox-builder.ts's and
+ * multi-file-parser.ts's `linesInsideMultilineConstruct` (#1933/#1939
+ * class). A single/double-quoted string or a `//` line comment can't
+ * contain a literal newline in valid JS, so only these two multi-line
+ * constructs can hide an embedded line this way.
+ */
+function linesInsideMultilineConstruct(code: string): Set<number> {
+  const inside = new Set<number>()
+  const markSpan = (from: number, to: number, line: number): number => {
+    for (let j = from; j < to; j++) if (code[j] === '\n') { line++; inside.add(line) }
+    return line
+  }
+  let line = 0
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1
+      while (j < code.length && code[j] !== ch) { if (code[j] === '\\') j++; j++ }
+      i = j + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < code.length && code[j] !== '`') { if (code[j] === '\\') j++; j++ }
+      const stop = j >= code.length ? code.length : j + 1
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const stop = closeIdx === -1 ? code.length : closeIdx + 2
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '\n') { line++; i++; continue }
+    i++
+  }
+  return inside
+}
+
+/**
+ * Whether `code` really contains a `// --- FILE: path --- ` multi-file
+ * marker on a real top-level line, rather than merely mentioning the
+ * convention inside an earlier line's own open backtick template literal
+ * or block comment. This file's 5 isMultiFile/multi/usedMultiFile call
+ * sites all used to `.test()` the unmasked raw string directly — the same
+ * decoy class #1933/#1945/#1962/#1977/#1978 independently found and fixed
+ * in this codebase's other FILE-marker scans. A model-written comment or
+ * template literal that merely documents this project's own marker
+ * convention (an ordinary thing to generate when the idea is itself a
+ * docs/code-sharing product) was mistaken for a real marker, flipping
+ * single-file content to "multi-file" and sending the wrong follow-up
+ * retry prompt / wrongly rejecting a valid single-file candidate.
+ */
+function hasRealFileMarker(code: string): boolean {
+  const hidden = linesInsideMultilineConstruct(code)
+  const lines = code.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    if (!hidden.has(i) && /\/\/\s*---\s*FILE:/.test(lines[i])) return true
+  }
+  return false
+}
+
+/**
  * Real gap found live (issue #624, Meridian real-product build, 2026-09-10):
  * the general obedience-repair pass adopts its result if ANY dimension
  * improved (AIKit hand-rolling fixed, say) even when the primitive-
@@ -318,7 +394,7 @@ async function closePrimitiveComplianceGap(
   // (matching buildFixAndDecomposePrompt's marker format) means this retry
   // is now safe to run on multi-file content too, instead of being scoped
   // out of the more common case for a real product.
-  const isMultiFile = /\/\/\s*---\s*FILE:/.test(current)
+  const isMultiFile = hasRealFileMarker(current)
   // Real bug found live (2026-09-10): this used to fire traceComplianceRetry
   // WITHOUT awaiting it before returning — a genuine fire-and-forget. The
   // three call sites below DO `await closePrimitiveComplianceGap(...)`, but
@@ -403,7 +479,7 @@ async function closePrimitiveComplianceGap(
     }
     // Multi-file in, multi-file out: reject a candidate that collapsed back
     // to a single file (a real regression a bounded retry must never adopt).
-    if (isMultiFile && !/\/\/\s*---\s*FILE:/.test(validated.code)) {
+    if (isMultiFile && !hasRealFileMarker(validated.code)) {
       console.log(`🔌 Primitive-compliance retry ${attempt} lost the multi-file structure — rejecting, keeping prior version.`)
       continue
     }
@@ -1882,7 +1958,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   16000, selectedGenModel,
                 )
                 const v = validateGeneratedCode(raw)
-                const multi = /\/\/\s*---\s*FILE:/.test(v.code || '')
+                const multi = hasRealFileMarker(v.code || '')
                 const after = v.valid ? checkObedience(v.code, message, validRole, obedienceOptions) : ob
                 const obeyImproved = (ob.persistenceGap && !after.persistenceGap) ||
                   (ob.aikitGaps.length > after.aikitGaps.length) ||
@@ -2091,7 +2167,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   16000, selectedGenModel,
                 )
                 const decValidation = validateGeneratedCode(decRaw)
-                const decMultiFile = /\/\/\s*---\s*FILE:/.test(decValidation.code || '')
+                const decMultiFile = hasRealFileMarker(decValidation.code || '')
                 if (decValidation.valid && decMultiFile && (decValidation.code?.length || 0) > finalContent.length * 0.7) {
                   console.log('🧩 Decomposition produced a valid multi-file app — adopting.')
                   finalContent = decValidation.code; validation = decValidation; checkpoint.record('decomposition', finalContent, true)
@@ -2141,7 +2217,7 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
             const served = finalContent || ''
             const obFinal = checkObedience(served, message, validRole, obedienceOptions)
             const dbBacked = /\/api\/db\//.test(served)
-            const usedMultiFile = /\/\/\s*---\s*FILE:/.test(served)
+            const usedMultiFile = hasRealFileMarker(served)
             // Simple quality proxy in [0,1]: valid + data-backed + no obedience gaps + multi-file-when-warranted.
             const quality = (validation.valid ? 0.4 : 0) + (dbBacked ? 0.25 : 0) +
               (obFinal.ok ? 0.2 : 0) + ((wantsMultiFile ? usedMultiFile : true) ? 0.15 : 0)
