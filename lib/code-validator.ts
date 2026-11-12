@@ -1869,6 +1869,109 @@ export function findUndefinedReferences(code: string): string | null {
 }
 
 /**
+ * Detect `await` used inside a function that is NOT `async` (#1963) — e.g. the
+ * model writes an `async` outer handler whose body calls `.map()`/`.filter()`
+ * with a plain, non-async callback, then uses `await` inside THAT callback.
+ * `await` is only legal inside an `async` function (or at true module top
+ * level); this is standard JS syntax, not a Babel quirk — a plain
+ * `@babel/parser` call with no special flags throws "Unexpected reserved
+ * word 'await'" on it immediately. Sandpack's bundler parses just as
+ * strictly, so this is a RUNTIME-FATAL crash the two parse calls in
+ * `validateJavaScriptCode` below can never catch by construction: both set
+ * `allowAwaitOutsideFunction: true` (meant to permit legitimate top-level
+ * `await`), which also globally disables this exact check for every nested
+ * function in the file. Returns a short description of the first offending
+ * callsite, or null.
+ *
+ * FLAG rather than rewrite — same rationale as `findObjectRenderedAsChild`/
+ * `findUndefinedReferences` above: there's no safe automatic fix. Naively
+ * adding `async` to the callback would silently change `.map()`'s return
+ * value from `T[]` to `Promise<T>[]`, a different (and quieter) bug.
+ *
+ * An `AwaitExpression` with NO enclosing function at all (true top-level) is
+ * deliberately left unflagged, preserving the original top-level-await
+ * intent `allowAwaitOutsideFunction` exists for.
+ */
+export function findAwaitInNonAsyncFunction(code: string): string | null {
+  for (const file of code.split(FILE_MARKER)) {
+    if (!file.trim()) continue
+
+    let ast: any
+    try {
+      ast = parse(file, {
+        sourceType: 'module',
+        plugins: ['jsx', 'typescript'],
+        errorRecovery: true,
+        allowReturnOutsideFunction: true,
+        allowAwaitOutsideFunction: true,
+        allowSuperOutsideMethod: true,
+      })
+    } catch {
+      // Unparseable — leave it to the syntax-error path, don't false-flag.
+      continue
+    }
+
+    let found: string | null = null
+
+    // Manual walk (no @babel/traverse, see findUndefinedReferences above for
+    // why), tracking a stack of enclosing function nodes so an AwaitExpression
+    // can check the ASYNC-NESS of its NEAREST enclosing function, not the
+    // outermost one.
+    const fnStack: any[] = []
+    const visit = (node: any) => {
+      if (found || !node || typeof node !== 'object') return
+      if (Array.isArray(node)) {
+        for (const c of node) visit(c)
+        return
+      }
+      if (typeof node.type !== 'string') return
+
+      const isFn =
+        node.type === 'FunctionDeclaration' ||
+        node.type === 'FunctionExpression' ||
+        node.type === 'ArrowFunctionExpression' ||
+        node.type === 'ObjectMethod' ||
+        node.type === 'ClassMethod' ||
+        node.type === 'ClassPrivateMethod'
+
+      if (node.type === 'AwaitExpression') {
+        const enclosing = fnStack[fnStack.length - 1]
+        if (enclosing && !enclosing.async) {
+          const fnLabel = enclosing.id?.name
+            ? `function '${enclosing.id.name}'`
+            : enclosing.type === 'ArrowFunctionExpression'
+              ? 'an arrow function'
+              : 'a function'
+          found = `'await' used inside ${fnLabel} that is not declared 'async'`
+          return
+        }
+      }
+
+      if (isFn) fnStack.push(node)
+
+      for (const k of Object.keys(node)) {
+        if (k === 'loc' || k === 'start' || k === 'end' || k === 'range' || k === 'leadingComments' || k === 'trailingComments') continue
+        const child = (node as any)[k]
+        if (child && typeof child === 'object') visit(child)
+        if (found) break
+      }
+
+      if (isFn) fnStack.pop()
+    }
+
+    try {
+      visit(ast.program)
+    } catch {
+      continue // exotic tree — fail open
+    }
+
+    if (found) return found
+  }
+
+  return null
+}
+
+/**
  * Validate JavaScript/JSX code using Babel parser
  *
  * This catches syntax errors like unterminated strings, missing brackets,
@@ -1956,6 +2059,25 @@ export function validateJavaScriptCode(
   if (undefRef) {
     const errorMessage = `Reference to undefined variable '${undefRef}' — declare it or remove the reference.`
     console.error('❌ Code validation failed (undefined reference):', undefRef)
+    return {
+      valid: false,
+      error: errorMessage,
+      code: fixedCode,
+      autoFixed: fixes.length > 0,
+      fixes: fixes.length > 0 ? fixes : undefined,
+    }
+  }
+
+  // Catch "await used inside a non-async function" (#1963) — a RUNTIME-FATAL
+  // SyntaxError the two parse calls below can never see, because both set
+  // `allowAwaitOutsideFunction: true` (for legitimate top-level await), which
+  // also silently disables this exact check for every nested function in the
+  // file. We FLAG rather than rewrite — adding `async` automatically could
+  // silently change a `.map()`/`.filter()` callback's return type.
+  const badAwait = findAwaitInNonAsyncFunction(fixedCode)
+  if (badAwait) {
+    const errorMessage = `SyntaxError: ${badAwait}`
+    console.error('❌ Code validation failed (await outside async function):', badAwait)
     return {
       valid: false,
       error: errorMessage,
