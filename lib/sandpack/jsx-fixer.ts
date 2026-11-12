@@ -173,6 +173,57 @@ function stubNextOnlyModules(code: string): string {
  * mix of App Router and the older Pages Router convention, so it reaches
  * for these just as often as the App Router APIs already covered. See #1174.
  */
+/**
+ * Length-preserving comment/string mask: every character belonging to a
+ * string, template literal, or comment is replaced one-for-one with a
+ * space, so a regex match's byte offset against the ORIGINAL code still
+ * lines up with the same offset in the masked output. Unlike this file's
+ * existing `maskStringsAndComments()` (which collapses a whole span to a
+ * single space, fine for a plain boolean "is this name used" test but
+ * useless for deciding whether one specific match's offset falls inside a
+ * comment), this lets a caller slice `masked.slice(offset, offset + len)`
+ * and check it's blank to know the matched span is comment/string-only.
+ */
+function maskPreservingLength(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const stop = end === -1 ? code.length : end + 1
+      out += ' '.repeat(stop - i)
+      i = stop
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const stop = end === -1 ? code.length : end + 1
+      out += ' '.repeat(stop - i)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      let end = code.indexOf('\n', i)
+      if (end === -1) end = code.length
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      let end = code.indexOf('*/', i + 2)
+      end = end === -1 ? code.length : end + 2
+      out += ' '.repeat(end - i)
+      i = end
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
 function stubLegacyPagesRouterImports(code: string): string {
   let fixed = code
 
@@ -230,7 +281,26 @@ function stubLegacyPagesRouterImports(code: string): string {
   // type reference, which Sandpack's transpile-only bundler strips rather
   // than type-checks, so it compiles fine without a stub (same risk-free
   // handling as #1150's type-import fix for a different malformed shape).
-  fixed = fixed.replace(/import\s+(?:type\s+)?\{\s*AppProps\s*\}\s+from\s+['"]next\/app['"]\s*;?\n?/g, '')
+  //
+  // The regex's trailing `\s*;?\n?` is deliberately greedy about swallowing
+  // the import's own trailing newline for the normal case (so deleting the
+  // import doesn't leave a blank line behind) — but `\s` matches `\n`, so
+  // when this exact import text appears inside a `//` comment instead, that
+  // same greedy `\s*` keeps consuming through the comment's own line-ending
+  // newline and merges whatever REAL code starts the next line into the
+  // comment, silently disabling it. Confirmed via direct repro:
+  // `"// import { AppProps } from 'next/app'\nconst x = 1\n".replace(re, '')`
+  // → `"// const x = 1\n"`. Guarded the same way as the sibling call sites in
+  // this function (next/router, next/document): a length-preserving mask
+  // decides whether the match lives inside a comment/string, in which case
+  // it's left untouched instead of deleted.
+  {
+    const appPropsImport = /import\s+(?:type\s+)?\{\s*AppProps\s*\}\s+from\s+['"]next\/app['"]\s*;?\n?/g
+    const maskedForAppProps = maskPreservingLength(fixed)
+    fixed = fixed.replace(appPropsImport, (match: string, offset: number) =>
+      maskedForAppProps.slice(offset, offset + match.length).trim() === '' ? match : ''
+    )
+  }
 
   return fixed
 }

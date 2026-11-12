@@ -84,4 +84,17 @@ describe('fixJsxErrors — stubs legacy Pages Router module specifiers (#1174)',
     expect(fixed).not.toMatch(/^const Main/m)
     expect(fixed).toContain('const x = 1')
   })
+
+  // The AppProps regex's trailing `\s*;?\n?` is meant to cleanly delete a
+  // real import line without leaving a blank line behind — but `\s` matches
+  // `\n`, so when this import text is inside a `//` comment instead, the
+  // same greedy match swallows the comment's line-ending newline and merges
+  // the REAL next line into the comment, silently disabling it.
+  it('does not swallow the next real line into the comment when a commented-out next/app AppProps import precedes it', () => {
+    const code = "// import type { AppProps } from 'next/app'\nexport default function App(){ return <div>hi</div> }"
+    const fixed = fixJsxErrors(code)
+    expect(fixed).toContain("// import type { AppProps } from 'next/app'")
+    expect(fixed).not.toMatch(/^\/\/.*export default function App/m)
+    expect(fixed).toMatch(/^export default function App/m)
+  })
 })
