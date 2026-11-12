@@ -34,60 +34,7 @@
  * (e.g. a counter).
  */
 import { scorePrimitives, RUNTIME_PROXY_PATH_SUBSTRINGS, getRuntimeProxyInstruction, type CompanyRole } from './primitive-catalog'
-import { findMatchingBracket, findMatchingParen, findMatchingBrace, findStringEnd, findBacktickEnd } from './bracket-scanner'
-
-/**
- * Blanks out `//` and `/* *\/` comments (replacing their characters with
- * spaces, preserving length/newlines) while leaving string and
- * template-literal CONTENTS untouched. Real, live bug class (#1704/#1708/
- * #1713/#1717): several of this file's gap checks ran a raw regex against
- * the WHOLE file, including comments — a model that writes a comment
- * MERELY MENTIONING a required path/marker/role, without the app ever
- * actually using it, satisfied the regex and wrongly reported "already
- * compliant," hiding a real gap from the re-prompt loop. Strings must stay
- * intact (the real markers these checks look for are often inside JSX
- * attribute strings) so only comment text is blanked, never string/
- * template content.
- */
-function maskComments(code: string): string {
-  let out = ''
-  let i = 0
-  while (i < code.length) {
-    const ch = code[i]
-    const next = code[i + 1]
-    if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
-      out += code.slice(i, realEnd + 1)
-      i = realEnd + 1
-      continue
-    }
-    if (ch === '`') {
-      const end = findBacktickEnd(code, i)
-      const realEnd = end === -1 ? code.length - 1 : end
-      out += code.slice(i, realEnd + 1)
-      i = realEnd + 1
-      continue
-    }
-    if (ch === '/' && next === '/') {
-      let end = code.indexOf('\n', i)
-      if (end === -1) end = code.length
-      out += ' '.repeat(end - i)
-      i = end
-      continue
-    }
-    if (ch === '/' && next === '*') {
-      let end = code.indexOf('*/', i + 2)
-      end = end === -1 ? code.length : end + 2
-      out += ' '.repeat(Math.min(end, code.length) - i)
-      i = Math.min(end, code.length)
-      continue
-    }
-    out += ch
-    i++
-  }
-  return out
-}
+import { findMatchingBracket, findMatchingParen, findMatchingBrace, findStringEnd, findBacktickEnd, maskComments } from './bracket-scanner'
 
 /** Does the code call the ZeroDB proxy for real persistence? */
 export function usesDataLayer(code: string): boolean {
