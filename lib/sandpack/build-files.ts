@@ -1268,9 +1268,16 @@ function buildLocalExportMap(sandpackFiles: Record<string, string>, builtinPaths
     if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
     const normalized = normalizeForRelative(path)
     const names = new Set<string>()
+    // #1900: scan a comment/string-masked view — a comment merely MENTIONING
+    // an old/removed `export const/function/class Name` declaration (kept
+    // "for reference") must never register as a real export here, or the
+    // sibling-import injection below wires a file to a component that
+    // doesn't actually exist at runtime ("does not provide an export named
+    // 'X'" the moment Sandpack evaluates the injected import).
+    const masked = maskCommentsAndStrings(code)
     let match: RegExpExecArray | null
     exportRe.lastIndex = 0
-    while ((match = exportRe.exec(code))) names.add(match[1])
+    while ((match = exportRe.exec(masked))) names.add(match[1])
     for (const name of extractBareExportListNames(code)) {
       if (/^[A-Z]\w*$/.test(name)) names.add(name)
     }
@@ -1311,12 +1318,20 @@ function buildLocalExportMap(sandpackFiles: Record<string, string>, builtinPaths
  * Deliberately excludes re-exports (`export { X } from './Y'`) — this
  * only reads what a file exports of ITS OWN local declarations, same
  * scope as the regex it supplements.
+ *
+ * #1900: scans a comment/string-masked view (maskCommentsAndStrings(),
+ * same technique this file already uses for the react-import check) — a
+ * comment merely MENTIONING an old/removed `export { Name }` line (kept
+ * "for reference" after a refactor) must never register as a real export,
+ * or buildLocalExportMap() below wires a sibling import to a component
+ * that doesn't actually exist at runtime.
  */
 function extractBareExportListNames(code: string): string[] {
   const names: string[] = []
+  const masked = maskCommentsAndStrings(code)
   const re = /export\s*\{([^}]*)\}(?!\s*from)/g
   let match: RegExpExecArray | null
-  while ((match = re.exec(code))) {
+  while ((match = re.exec(masked))) {
     for (const entry of match[1].split(',')) {
       const trimmed = entry.trim()
       if (!trimmed || /^type\s/.test(trimmed)) continue
