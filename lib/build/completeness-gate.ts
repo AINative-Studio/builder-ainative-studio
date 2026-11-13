@@ -468,7 +468,14 @@ export function findTruncatedFiles(files?: Record<string, string>): string[] {
         continue
       }
 
-      if (looksLikeComponentFile(path) && !/\bexport\b/.test(maskComments(content))) {
+      const masked = maskComments(content)
+      // A file that is ENTIRELY comments (e.g. the real, legitimate
+      // "// Removed as AIKitSidebar is used in App.tsx" placeholder
+      // convention — confirmed live, company "younova") has no code at all
+      // to export something from. That's an intentionally emptied stub, not
+      // a truncated generation — only flag a component-shaped file that has
+      // SOME real code but never got to its own export statement.
+      if (looksLikeComponentFile(path) && masked.trim() && !/\bexport\b/.test(masked)) {
         broken.push(path)
       }
     }

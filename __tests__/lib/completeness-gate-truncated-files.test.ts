@@ -73,6 +73,14 @@ const ContactFormSection = () => {
     expect(findTruncatedFiles(files)).toEqual([])
   })
 
+  it('does not flag an intentionally emptied comment-only stub file (real convention, company "younova")', () => {
+    const files = {
+      '/src/components/Sidebar.tsx': `// Removed as AIKitSidebar is used in App.tsx\n`,
+      '/src/components/ActivityTimeline.tsx': `// Removed as AIKitTimeline is used in App.tsx\n`,
+    }
+    expect(findTruncatedFiles(files)).toEqual([])
+  })
+
   it('does not flag a file using plain top-level await/return (allowed, not a truncation signal)', () => {
     const files = {
       '/src/components/TopLevel.tsx': `export default function X(){ return null }\nreturn 1;`,
