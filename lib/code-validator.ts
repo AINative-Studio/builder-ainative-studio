@@ -11,8 +11,32 @@ import {
  * Multi-file output boundary marker — mirrors lib/multi-file-parser.ts.
  * Used to scope duplicate-declaration checks per file, since the same imports
  * and top-level names legitimately repeat across files in one blob.
+ *
+ * Needs the `m` flag (#1967): without it, `^`/`$` anchor to the start/end of
+ * the ENTIRE input, not each line, so `code.split(FILE_MARKER)` against a
+ * real multi-file blob never matches at all (the marker is never the whole
+ * string) and silently returns the input unsplit. The two call sites that
+ * run `.test()`/`.match()` against one already-`split('\n')`-ed line at a
+ * time (not affected either way, since a single line has no embedded
+ * newline for `^`/`$` to disagree about) stay correct with `m` added too.
  */
-const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
+const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/m
+
+/**
+ * Same pattern as FILE_MARKER, non-capturing, for the three `code.split(...)`
+ * call sites below. `String.prototype.split()` with a CAPTURING group's
+ * regex interleaves each capture into the result array alongside the real
+ * content chunks (#1967) — `code.split(FILE_MARKER)` on a 2-file blob
+ * returns `["", "App.tsx", "\n...", "Foo.tsx", "\n..."]`, not just the two
+ * content chunks. `findUndefinedReferences` below only skips a chunk that is
+ * EMPTY after `.trim()`; a bare filename string like `"App.tsx"` is not
+ * empty, so it would otherwise get fed straight into the Babel parser as if
+ * it were real source — which doesn't throw (it's a valid bare expression
+ * statement) but pollutes the declared/referenced-name analysis with noise
+ * from tokens that were never real code. Splitting on this non-capturing
+ * variant instead yields only the real content chunks.
+ */
+const FILE_MARKER_SPLIT = /^\/\/\s*---\s*FILE:\s*.+?\s*---\s*$/m
 
 /**
  * Code Validation Result
@@ -1486,7 +1510,7 @@ function maskCommentsAndStringsForShadowScan(code: string): string {
 export function findUnresolvedComponents(code: string): string[] {
   const unresolved = new Set<string>()
 
-  for (const rawFile of code.split(FILE_MARKER)) {
+  for (const rawFile of code.split(FILE_MARKER_SPLIT)) {
     const file = maskCommentsForUnresolvedScan(rawFile)
     // Names available in this file: known globals + local decls + imports.
     const available = new Set<string>(KNOWN_AVAILABLE_COMPONENTS)
@@ -1668,7 +1692,7 @@ function maskForObjectChildChecks(code: string): string {
 }
 
 export function findObjectRenderedAsChild(code: string): string | null {
-  for (const file of code.split(FILE_MARKER)) {
+  for (const file of code.split(FILE_MARKER_SPLIT)) {
     // Scan a comment/string-masked copy (#1908) so a declaration or JSX-child
     // mention that only appears inside a comment or a demo string/template
     // literal (e.g. a landing page showing its own code as text) can never be
@@ -1830,7 +1854,7 @@ export function findUndefinedReferences(code: string): string | null {
   // (const/let/var/function/class/params/destructure/import/catch), (2) collect
   // every referenced lower-initial identifier; flag a reference that is neither
   // declared nor a known runtime global/component. Fail-open on any error.
-  for (const file of code.split(FILE_MARKER)) {
+  for (const file of code.split(FILE_MARKER_SPLIT)) {
     if (!file.trim()) continue
 
     let ast: any
@@ -1971,6 +1995,98 @@ export function findUndefinedReferences(code: string): string | null {
 }
 
 /**
+ * Detect `await` used inside a nested function/arrow expression that is
+ * NOT itself `async` (#1963). `await` is only legal inside an `async`
+ * function (or at true module top level) — this is standard JS syntax, a
+ * hard SyntaxError in any strict parser (Sandpack's bundler included), not
+ * a Babel quirk. validateJavaScriptCode's two parse() calls both set
+ * `allowAwaitOutsideFunction: true` so legitimate module-top-level `await`
+ * can parse — but that option doesn't just permit the top-level case, it
+ * globally disables Babel's "await only valid in async function" check for
+ * the ENTIRE file, including `await` nested inside any non-async callback
+ * anywhere in the tree (e.g. `tasks.map(async (t) => ...)`'s sibling
+ * mistake, a plain non-async `.map()` callback that still awaits inside
+ * it). Neither parse call, nor findUndefinedReferences' own AST walk above
+ * (same flags), can ever catch this shape by construction.
+ *
+ * Same manual-walk style as findUndefinedReferences above (this file
+ * deliberately avoids @babel/traverse — not a direct/bundleable dep).
+ * Tracks the nearest enclosing function's `async` flag; flags an
+ * AwaitExpression whose nearest enclosing function has `async: false`. An
+ * AwaitExpression with NO enclosing function (true top-level await) stays
+ * allowed, preserving the option's original intent. FLAGS rather than
+ * rewrites — there's no safe automatic fix: adding `async` to the
+ * enclosing callback can silently change its return type (e.g. `.map()`
+ * returning `Promise<T>[]` instead of `T[]`), a different bug.
+ */
+export function findAwaitOutsideAsyncFunction(code: string): boolean {
+  for (const file of code.split(FILE_MARKER_SPLIT)) {
+    if (!file.trim()) continue
+
+    let ast: any
+    try {
+      ast = parse(file, {
+        sourceType: 'module',
+        plugins: ['jsx', 'typescript'],
+        errorRecovery: true,
+        allowReturnOutsideFunction: true,
+        allowAwaitOutsideFunction: true,
+        allowSuperOutsideMethod: true,
+      })
+    } catch {
+      continue // Unparseable — leave it to the syntax-error path.
+    }
+
+    let found = false
+
+    const visit = (node: any, enclosingAsync: boolean | null): void => {
+      if (found || !node || typeof node !== 'object') return
+      if (Array.isArray(node)) {
+        for (const c of node) visit(c, enclosingAsync)
+        return
+      }
+      if (typeof node.type !== 'string') return
+
+      if (node.type === 'AwaitExpression') {
+        if (enclosingAsync === false) {
+          found = true
+          return
+        }
+        // Still need to recurse into the awaited expression itself (it
+        // could contain its own nested non-async function with its own
+        // await — an unlikely but possible compound case).
+        visit(node.argument, enclosingAsync)
+        return
+      }
+
+      const isFunctionNode =
+        node.type === 'FunctionDeclaration' ||
+        node.type === 'FunctionExpression' ||
+        node.type === 'ArrowFunctionExpression'
+      const nextEnclosing = isFunctionNode ? !!node.async : enclosingAsync
+
+      for (const k of Object.keys(node)) {
+        if (k === 'loc' || k === 'start' || k === 'end' || k === 'range' || k === 'leadingComments' || k === 'trailingComments') continue
+        const child = (node as any)[k]
+        if (child && typeof child === 'object') visit(child, nextEnclosing)
+      }
+    }
+
+    try {
+      // `enclosingAsync: null` = true top-level, no enclosing function yet —
+      // an AwaitExpression here is allowed (module-top-level await).
+      visit(ast.program, null)
+    } catch {
+      continue // exotic tree — fail open
+    }
+
+    if (found) return true
+  }
+
+  return false
+}
+
+/**
  * Validate JavaScript/JSX code using Babel parser
  *
  * This catches syntax errors like unterminated strings, missing brackets,
@@ -2058,6 +2174,26 @@ export function validateJavaScriptCode(
   if (undefRef) {
     const errorMessage = `Reference to undefined variable '${undefRef}' — declare it or remove the reference.`
     console.error('❌ Code validation failed (undefined reference):', undefRef)
+    return {
+      valid: false,
+      error: errorMessage,
+      code: fixedCode,
+      autoFixed: fixes.length > 0,
+      fixes: fixes.length > 0 ? fixes : undefined,
+    }
+  }
+
+  // Catch `await` used inside a non-async nested function (#1963) — a hard
+  // SyntaxError in Sandpack's strict bundler that this file's own
+  // `allowAwaitOutsideFunction: true` parse option (needed for legitimate
+  // module-top-level await) structurally can't catch, since it disables
+  // the async-function check for the whole file, not just the top level.
+  // Runs on both paths, same as the undefined-reference check above — this
+  // is a real crash either way, not an artifact of import stripping.
+  if (findAwaitOutsideAsyncFunction(fixedCode)) {
+    const errorMessage =
+      "'await' is only allowed within async functions — a nested callback uses 'await' without being declared 'async'."
+    console.error('❌ Code validation failed (await outside async function)')
     return {
       valid: false,
       error: errorMessage,
@@ -2366,6 +2502,53 @@ export function isRenderable(rawContent: string): ParseGateResult {
 }
 
 /**
+ * Length-preserving mask of string/template-literal content AND `/* *\/`
+ * block comments — deliberately NOT `//` line comments, unlike this file's
+ * other mask* helpers. Built for extractRenderableCode's FILE_MARKER split
+ * below (#1962): that marker (`// --- FILE: path ---`) IS ITSELF a `//`
+ * line comment, so a mask that also blanks line comments would hide every
+ * REAL marker exactly as effectively as it hides a decoy one, making it
+ * impossible to tell them apart. Hiding only strings/templates/block
+ * comments still defeats a decoy marker sitting inside one of those (the
+ * actual real-world shape — a `<pre>`/syntax-highlighted code sample, or a
+ * backtick template literal demoing this project's own multi-file
+ * convention), while leaving every genuine top-level marker intact to
+ * match against.
+ */
+function maskStringsAndBlockCommentsOnly(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEndInDestructureCheck(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findTemplateLiteralEndInDestructureCheck(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const stop = closeIdx === -1 ? code.length : closeIdx + 2
+      out += code.slice(i, stop).replace(/[^\n]/g, ' ')
+      i = stop
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
+
+/**
  * Extract the renderable component code from raw stored preview content, mirroring
  * the extraction in app/api/preview/[id]/route.ts so the parse gate parses the SAME
  * code the preview renderer will run. Handles multi-file blobs (// --- FILE: ---),
@@ -2374,8 +2557,39 @@ export function isRenderable(rawContent: string): ParseGateResult {
  */
 export function extractRenderableCode(content: string): string {
   // Multi-file output — pick App.tsx, else the largest file with a component.
-  if (content.includes('// --- FILE:')) {
-    const files = content.split(/\/\/\s*---\s*FILE:\s*/i)
+  //
+  // #1962: this used to call `content.includes('// --- FILE:')` and
+  // `content.split(/\/\/\s*---\s*FILE:\s*/i)` directly against the raw,
+  // unmasked content — a 4th, independent FILE_MARKER call site with the
+  // same bug class as #1933/#1939/#1949, just not caught by any of their
+  // individual fixes (each covers a different file). A generated landing
+  // page displaying this project's own multi-file convention as example
+  // text (e.g. an SDK/docs-style product page showing `// --- FILE:
+  // src/App.tsx ---` inside a <pre>/syntax-highlighted code sample, or
+  // inside a backtick template literal) gets its decoy mistaken for a real
+  // file boundary, so the App.tsx-name/largest-file heuristics below pick
+  // the wrong "file" and feed corrupted content into validation/repair.
+  // Locate real marker positions in `maskStringsAndBlockCommentsOnly(content)`
+  // — deliberately NOT a mask that also blanks `//` line comments: the real
+  // marker IS itself a `//` line comment, so blanking those too would hide
+  // every real marker exactly as effectively as it hides a decoy, making
+  // this check unable to tell them apart. Masking only strings/template
+  // literals/block comments still hides the decoy case (it lives inside
+  // one of those), while leaving every real top-level marker line intact
+  // to match against. Then split the ORIGINAL content at those verified
+  // offsets so real file contents (including their own genuine quoted/
+  // templated strings) survive intact.
+  const maskedForFileSplit = maskStringsAndBlockCommentsOnly(content)
+  if (/\/\/\s*---\s*FILE:\s*/i.test(maskedForFileSplit)) {
+    const splitRe = /\/\/\s*---\s*FILE:\s*/gi
+    const files: string[] = []
+    let lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = splitRe.exec(maskedForFileSplit))) {
+      files.push(content.slice(lastIndex, m.index))
+      lastIndex = m.index + m[0].length
+    }
+    files.push(content.slice(lastIndex))
     let mainFile = files.find((f) => /^src\/App\.tsx|^App\.tsx/i.test(f.trim()))
     if (!mainFile) {
       let bestFile = ''
