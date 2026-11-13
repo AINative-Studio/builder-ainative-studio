@@ -506,6 +506,25 @@ describe('resolveTask — end-to-end orchestration', () => {
     const result = await resolveTask('owner::slug', TASK, 'slug')
     expect(result.ok).toBe(true)
     expect(result.stage).toBe('completed')
+    // #1914 — this is exactly the case the nightly-loop aggregate must be
+    // able to tell apart from a real coverage-verified completion.
+    expect(result.testable).toBe(false)
+  })
+
+  // #1914 — the counterpart to the untestable case above: a real,
+  // coverage-verified completion must report testable: true, so
+  // runTaskResolutions() never miscounts it as a no-test-suite acceptance.
+  it('reports testable: true on a genuinely coverage-verified completion', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({})
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 91, testable: true, passed: true })
+
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+    expect(result.ok).toBe(true)
+    expect(result.stage).toBe('completed')
+    expect(result.testable).toBe(true)
   })
 })
 

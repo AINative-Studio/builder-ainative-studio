@@ -326,6 +326,19 @@ export interface NightlyRunHealth {
    * explicit 0.
    */
   tasksReaped?: number
+  /**
+   * #1914 — of tasksCompleted, how many were accepted via
+   * decideOutcomeFromCoverage's no-test-suite path (no real test suite to
+   * run, "accepted on implementation, not coverage-gated") rather than a
+   * genuinely run, passing coverage check. Today this is the common case,
+   * not the exception, and `mergeTaskPR()` auto-merges a `completed` task
+   * either way — so this field lets a human reading this aggregate tell
+   * "proven to work" apart from "merely committed and hoped for," which
+   * tasksCompleted alone cannot. Optional for the same reason as
+   * tasksMerged/tasksRedeployed/tasksReaped — an older/pre-this-field row is
+   * never mistaken for an explicit 0.
+   */
+  tasksCompletedNoCoverage?: number
   stalledCompanies: number
   elapsedMs: number
   /**
