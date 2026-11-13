@@ -84,6 +84,7 @@ async function main() {
     console.log(`  ${r.slug}: ${r.disposition}${r.reason ? ` (${r.reason})` : ''}`)
     if (r.missingImports) for (const m of r.missingImports) console.log(`      - missing import: ${m}`)
     if (r.undeclaredJsx) for (const u of r.undeclaredJsx) console.log(`      - undeclared JSX: ${u}`)
+    if (r.truncatedFiles) for (const t of r.truncatedFiles) console.log(`      - truncated file (fails strict parse): ${t}`)
   }
 
   if (dryRun && result.gapsFound > 0) {

@@ -253,6 +253,36 @@ describe('runCompletenessBackfillSweep — filing a task for a real gap', () => 
     expect(r.gapsFound).toBe(1)
     expect(r.results[0].undeclaredJsx).toEqual(expect.arrayContaining(['Card']))
   })
+
+  it('flags a truncated component file (#2013 — cut off before any export) via the files map', async () => {
+    const TRUNCATED_CONTACT_FORM = `
+import React, { useState } from 'react';
+
+const ContactFormSection = () => {
+  const [submitted, setSubmitted] = useState(false);
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+}
+}
+`
+    const { runCompletenessBackfillSweep } = await load({
+      apps: [{ slug: 'luminary', chatId: 'chat-luminary' }],
+      generations: {
+        'chat-luminary': {
+          generatedCode: CLEAN_CODE,
+          files: {
+            '/src/App.tsx': CLEAN_CODE,
+            '/src/components/ContactFormSection.tsx': TRUNCATED_CONTACT_FORM,
+          },
+        },
+      },
+    })
+
+    const r = await runCompletenessBackfillSweep({ dryRun: true })
+
+    expect(r.gapsFound).toBe(1)
+    expect(r.results[0].truncatedFiles).toEqual(['/src/components/ContactFormSection.tsx'])
+  })
 })
 
 describe('runCompletenessBackfillSweep — idempotency and failure handling', () => {

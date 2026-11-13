@@ -30,6 +30,16 @@
  * existing Gitea resolver pipeline (task-resolver.ts, #905) picks it up
  * exactly the same way.
  *
+ * ALSO RUNS `findTruncatedFiles()` (#2013) — a STRICT per-file Babel parse,
+ * catching the class neither import/JSX-shape detector can see: a file that
+ * got cut off mid-statement (no closing brace, no export, nothing left to
+ * import or render) rather than one that imports/renders something missing.
+ * Real repro: company "luminary" (chatId xW3lIi44cTNLYsOdeOUzj),
+ * `ContactFormSection.tsx` ends right after `e.preventDefault();` with no
+ * return/JSX/export at all — `findMissingLocalImports`/
+ * `findUndeclaredJsxComponents` both report that file clean, since it
+ * declares no local import and uses no undeclared JSX tag; it just stops.
+ *
  * WHY A ONE-SHOT SWEEP AND NOT A CRON (same posture as obedience-backfill.ts)
  * There is no way to tell from this script alone whether a company's gap is
  * "new since last swept" without re-running, so this is a reviewed,
@@ -55,7 +65,11 @@
 
 import { listAllAppsWithStatus, type AppEntry } from '@/lib/build/app-registry'
 import { loadGeneration } from '@/lib/zerodb-store'
-import { findMissingLocalImports, findUndeclaredJsxComponents } from '@/lib/build/completeness-gate'
+import {
+  findMissingLocalImports,
+  findUndeclaredJsxComponents,
+  findTruncatedFiles,
+} from '@/lib/build/completeness-gate'
 import { createTask, listTasksForCompany } from '@/lib/build/task-store'
 import { chatScopeKey } from '@/lib/build/chat-store'
 
@@ -85,6 +99,7 @@ export interface CompletenessBackfillCompanyResult {
   disposition: CompletenessBackfillDisposition
   missingImports?: string[]
   undeclaredJsx?: string[]
+  truncatedFiles?: string[]
   reason?: string
 }
 
@@ -104,12 +119,15 @@ function isDeleted(app: { lifecycleStatus?: string }): boolean {
   return (app.lifecycleStatus || 'active') === 'deleted'
 }
 
-/** Same message shape ready-gate.ts uses for these two checks, so a reviewer recognizes it instantly. */
-function firstReasonFor(missing: string[], undeclared: string[]): string {
+/** Same message shape ready-gate.ts uses for these checks, so a reviewer recognizes it instantly. */
+function firstReasonFor(missing: string[], undeclared: string[], truncated: string[]): string {
   if (missing.length > 0) {
     return `imported local module(s) never defined in the payload: ${missing.join(', ')}`
   }
-  return `undeclared JSX component(s) — used but never imported: ${undeclared.join(', ')}`
+  if (undeclared.length > 0) {
+    return `undeclared JSX component(s) — used but never imported: ${undeclared.join(', ')}`
+  }
+  return `file(s) fail a strict parse — truncated/incomplete generation: ${truncated.join(', ')}`
 }
 
 /** Same title format as #1140/obedience-backfill.ts's createTask() calls, so idempotency matching works identically either way. */
@@ -204,23 +222,36 @@ export async function runCompletenessBackfillSweep(
     const files = gen?.files ?? undefined
     const missing = findMissingLocalImports(code, files)
     const undeclared = findUndeclaredJsxComponents(code, files)
+    const truncated = findTruncatedFiles(files)
 
-    if (missing.length === 0 && undeclared.length === 0) {
+    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0) {
       record({ slug, disposition: 'clean' })
       continue
     }
 
     gapsFound++
-    const firstReason = firstReasonFor(missing, undeclared)
+    const firstReason = firstReasonFor(missing, undeclared, truncated)
 
     if (dryRun) {
-      record({ slug, disposition: 'would_file_task', missingImports: missing, undeclaredJsx: undeclared })
+      record({
+        slug,
+        disposition: 'would_file_task',
+        missingImports: missing,
+        undeclaredJsx: undeclared,
+        truncatedFiles: truncated,
+      })
       continue
     }
 
     const existing = await listTasksForCompany(slug)
     if (hasOpenTaskForReason(existing, firstReason)) {
-      record({ slug, disposition: 'already_tracked', missingImports: missing, undeclaredJsx: undeclared })
+      record({
+        slug,
+        disposition: 'already_tracked',
+        missingImports: missing,
+        undeclaredJsx: undeclared,
+        truncatedFiles: truncated,
+      })
       continue
     }
 
@@ -231,6 +262,7 @@ export async function runCompletenessBackfillSweep(
         reason: `per-run cap of ${MAX_TASKS_FILED_PER_RUN} reached — re-run to continue`,
         missingImports: missing,
         undeclaredJsx: undeclared,
+        truncatedFiles: truncated,
       })
       continue
     }
@@ -238,6 +270,7 @@ export async function runCompletenessBackfillSweep(
     const detailLines = [
       ...missing.map((m) => `Missing local import definition: ${m}`),
       ...undeclared.map((u) => `Undeclared JSX component used but never imported: ${u}`),
+      ...truncated.map((t) => `File fails a strict parse (truncated/incomplete generation): ${t}`),
     ]
 
     const scopeKey = chatScopeKey(app.ownerEmail || 'guest:anon', slug)
@@ -250,12 +283,24 @@ export async function runCompletenessBackfillSweep(
 
     if (!task) {
       failed++
-      record({ slug, disposition: 'file_failed', missingImports: missing, undeclaredJsx: undeclared })
+      record({
+        slug,
+        disposition: 'file_failed',
+        missingImports: missing,
+        undeclaredJsx: undeclared,
+        truncatedFiles: truncated,
+      })
       continue
     }
 
     tasksFiled++
-    record({ slug, disposition: 'filed_task', missingImports: missing, undeclaredJsx: undeclared })
+    record({
+      slug,
+      disposition: 'filed_task',
+      missingImports: missing,
+      undeclaredJsx: undeclared,
+      truncatedFiles: truncated,
+    })
   }
 
   return {
