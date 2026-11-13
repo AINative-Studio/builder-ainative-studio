@@ -366,6 +366,23 @@ function nameAnonymousDefaultExport(code: string, fallbackName: string): string 
   ) {
     const prefix = code.slice(0, trailingMatch.index)
     const [, pre, indent, expr] = trailingMatch
+    // #1994: a truncated `export default ` with nothing but a trailing `;`
+    // (or only whitespace) after it still satisfies the `[\s\S]+?` capture —
+    // it only requires ONE character, and the file's own per-file `.trim()`
+    // (parseFiles) always eats pure trailing whitespace, but NOT a trailing
+    // `;` — so `expr` comes back as just `";"` (or whitespace) with no real
+    // expression in it. Emitting `const ${fallbackName} = ${expr};` then
+    // produces `const AIKitHeader = ;;` — the parser throws "Unexpected
+    // token" at the FIRST `;` (the lone `;` right after `=`), reading
+    // identically to `const AIKitHeader = ;` in the error detail, which is
+    // exactly what two independent real companies ("tidemark"/"driftwood")
+    // hard-failed their /build/{slug} preview with. A safe no-op stub
+    // component keeps the blob syntactically valid — this one child renders
+    // nothing instead of the whole page staying blank.
+    const exprCore = expr.replace(/;+\s*$/, '').trim()
+    if (exprCore === '') {
+      return `${prefix}${pre}${indent}function ${fallbackName}() { return null; }`
+    }
     return `${prefix}${pre}${indent}const ${fallbackName} = ${expr};\nexport default ${fallbackName};`
   }
 
