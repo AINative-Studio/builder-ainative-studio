@@ -398,6 +398,12 @@ export function findMissingLocalImports(
 /** Capitalized JSX opening tags: `<Card`, `<Card.Item`, `<Card />` — not `<div>`. */
 const JSX_TAG = /<([A-Z][\w$]*)(?:\.[A-Za-z_$][\w$]*)?[\s/>]/g
 
+/** An identifier character immediately before a `<` means it's a generic type
+ * argument (`Array<Foo>`, `useRef<HTMLInputElement>(null)`, `React.
+ * ButtonHTMLAttributes<HTMLButtonElement>`), not a JSX tag — a real JSX `<`
+ * is always preceded by whitespace, punctuation, or the start of the file. */
+const IDENTIFIER_CHAR = /[A-Za-z0-9_$]/
+
 /** Global/ambient identifiers a generated component may reference without a local import. */
 const KNOWN_GLOBAL_JSX = new Set([
   'React',
@@ -463,7 +469,17 @@ export function findUndeclaredJsxComponents(
       const known = collectKnownIdentifiers(content)
       // Comment-masked too — a tag only MENTIONED in a comment (e.g. a usage
       // example) is not real JSX usage and must not be flagged as undeclared.
-      for (const m of maskComments(content).matchAll(JSX_TAG)) {
+      const masked = maskComments(content)
+      for (const m of masked.matchAll(JSX_TAG)) {
+        // Real bug (overnight render-integrity sweep): a TS generic type
+        // argument immediately following an identifier — e.g. `React.
+        // ButtonHTMLAttributes<HTMLButtonElement>` or `useRef<HTMLInputElement>
+        // (null)`, both common in shadcn-style ui/*.tsx primitives — matches
+        // this same `<Capitalized...>` shape as a real JSX tag. A genuine JSX
+        // `<` is never immediately preceded by an identifier character, so
+        // skip a match whose preceding character is one.
+        const precedingChar = m.index > 0 ? masked[m.index - 1] : ''
+        if (IDENTIFIER_CHAR.test(precedingChar)) continue
         const name = m[1]
         if (!known.has(name)) problems.add(name)
       }
