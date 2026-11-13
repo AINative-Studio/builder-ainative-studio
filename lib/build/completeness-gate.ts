@@ -37,6 +37,7 @@
  * a raw "Unexpected token" panel.
  */
 
+import { parse } from '@babel/parser'
 import { maskComments, findStringEnd, findBacktickEnd } from './bracket-scanner'
 
 /** One parsed import statement with its local specifier and local bindings. */
@@ -392,6 +393,96 @@ export function findMissingLocalImports(
   } catch {
     // Pure detector must never block on its own failure — fail-open.
     return []
+  }
+}
+
+/** `components/Foo.tsx` / `Foo.tsx` — a capitalized basename, this project's component-file convention. Not `index.tsx`/`main.tsx`/`App.tsx` entry points' lowercase siblings, and not `index` itself (a barrel file legitimately re-exporting, or not exporting at all, is not this detector's concern). */
+function componentBasename(path: string): string {
+  const base = (path.split('/').pop() || '').replace(/\.(t|j)sx?$/, '')
+  return base
+}
+
+function looksLikeComponentFile(path: string): boolean {
+  const base = componentBasename(path)
+  return /^[A-Z]/.test(base) && base.toLowerCase() !== 'index'
+}
+
+/**
+ * THE TRUNCATION DETECTOR (#2013).
+ *
+ * findMissingLocalImports()/findUndeclaredJsxComponents() above both only
+ * look at import / JSX-tag shape — neither one tries to parse a file's own
+ * body. A generation that got cut off mid-statement is not a missing-import
+ * gap: the broken file doesn't import anything undefined, it simply never
+ * finished. Real repro (#2013, company "luminary", chatId
+ * xW3lIi44cTNLYsOdeOUzj): `ContactFormSection.tsx` ends right after
+ * `e.preventDefault();` with no closing brace, no JSX, no export at all —
+ * both detectors above report a clean bill of health on that file since it
+ * declares no local import and no undeclared JSX tag; it just stops.
+ *
+ * Two independent signals, either one flags a file:
+ *
+ *  1. STRICT PARSE FAILURE — the same jsx+typescript, errorRecovery:false
+ *     Babel configuration lib/code-validator.ts's isRenderable()/
+ *     validateJavaScriptCode() use, i.e. the same bar Sandpack's own bundler
+ *     fails a file on (unbalanced braces, an unterminated string, …).
+ *
+ *  2. NO EXPORT AT ALL, on a component-shaped file. The #2013 repro above is
+ *     the trap: cut off exactly where it was, `ContactFormSection.tsx`'s
+ *     braces still balance (the arrow function that was cut off just never
+ *     got a chance to open anything it didn't close) and the file is
+ *     syntactically VALID JavaScript — a strict parse alone says nothing is
+ *     wrong. But every component file this project generates is required to
+ *     `export` something (`export default`, at minimum), so a capitalized
+ *     `.tsx`/`.jsx` file with zero `export` keyword anywhere is a reliable
+ *     sign the stream stopped before the file ever finished, not a
+ *     legitimately exportless file.
+ *
+ * Never throws; a file this detector itself can't evaluate is treated as
+ * clean, not flagged — a false "truncated" verdict would be worse than
+ * missing one.
+ *
+ * Only meaningful with a files map (there is no single-blob equivalent: a
+ * concatenated multi-file blob with no real markers for a given chunk isn't
+ * this detector's problem to split).
+ */
+export function findTruncatedFiles(files?: Record<string, string>): string[] {
+  if (!files) return []
+  const broken: string[] = []
+  try {
+    for (const [path, content] of Object.entries(files)) {
+      if (!CODE_FILE.test(path) || path.endsWith('.d.ts') || typeof content !== 'string') continue
+      if (!content.trim()) continue
+
+      try {
+        parse(content, {
+          sourceType: 'module',
+          plugins: ['jsx', 'typescript'],
+          errorRecovery: false,
+          allowReturnOutsideFunction: true,
+          allowAwaitOutsideFunction: true,
+          allowSuperOutsideMethod: true,
+        })
+      } catch {
+        broken.push(path)
+        continue
+      }
+
+      const masked = maskComments(content)
+      // A file that is ENTIRELY comments (e.g. the real, legitimate
+      // "// Removed as AIKitSidebar is used in App.tsx" placeholder
+      // convention — confirmed live, company "younova") has no code at all
+      // to export something from. That's an intentionally emptied stub, not
+      // a truncated generation — only flag a component-shaped file that has
+      // SOME real code but never got to its own export statement.
+      if (looksLikeComponentFile(path) && masked.trim() && !/\bexport\b/.test(masked)) {
+        broken.push(path)
+      }
+    }
+    return broken
+  } catch {
+    // Pure detector must never block on its own failure — fail-open.
+    return broken
   }
 }
 
