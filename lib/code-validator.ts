@@ -6,6 +6,7 @@ import {
   findStringEnd,
   findBacktickEnd,
 } from './build/bracket-scanner'
+import { extractSingleFencedCode } from './build/extract-single-fenced-code'
 
 /**
  * Multi-file output boundary marker — mirrors lib/multi-file-parser.ts.
@@ -2768,9 +2769,9 @@ export function extractRenderableCode(content: string): string {
     if (mainFile) return mainFile.replace(/^.*?---\s*\n?/, '').trim()
   }
 
-  // Markdown code block.
-  const codeBlockMatch = content.match(/```(?:tsx?|jsx?|javascript|typescript)?\s*\n([\s\S]*?)```/)
-  if (codeBlockMatch) return codeBlockMatch[1].trim()
+  // Markdown code block (decoy-nested-fence-aware — see extractSingleFencedCode).
+  const fenced = extractSingleFencedCode(content)
+  if (fenced !== null) return fenced
 
   // Raw content — strip stray quote/backtick wrappers.
   return content

@@ -8,6 +8,7 @@ import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 import { convertTemplateLiteralAttrsToConcat } from '@/lib/build/template-literal-to-concat'
 import { dedupeProvidedComponents } from '@/lib/build/dedupe-provided-components'
 import { stripExportsAndBasicTypes } from '@/lib/build/strip-exports-and-types'
+import { extractSingleFencedCode } from '@/lib/build/extract-single-fenced-code'
 import type { FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 // #1561 — mintPreviewDbToken/mintPreviewPrimitiveTokens/FOUNDER_SCOPED_PRIMITIVES
 // extracted to lib/build/preview-tokens.ts so app/build/[slug]/page.tsx can
@@ -296,11 +297,11 @@ export async function GET(
     console.log(`[Preview] Flattened multi-file output → single module (${componentCode.length} chars)`)
   }
 
-  // If no multi-file, try markdown code blocks
+  // If no multi-file, try markdown code blocks (decoy-nested-fence-aware — see extractSingleFencedCode)
   if (!componentCode) {
-    const codeBlockMatch = content.match(/```(?:tsx?|jsx?|javascript|typescript)?\s*\n([\s\S]*?)```/)
-    if (codeBlockMatch) {
-      componentCode = codeBlockMatch[1].trim()
+    const fenced = extractSingleFencedCode(content)
+    if (fenced !== null) {
+      componentCode = fenced
     }
   }
 
