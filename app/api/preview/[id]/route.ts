@@ -8,6 +8,7 @@ import { flattenMultiFile } from '@/lib/build/flatten-multifile'
 import { convertTemplateLiteralAttrsToConcat } from '@/lib/build/template-literal-to-concat'
 import { dedupeProvidedComponents } from '@/lib/build/dedupe-provided-components'
 import { stripExportsAndBasicTypes } from '@/lib/build/strip-exports-and-types'
+import { detectUnknownJsxTags } from '@/lib/build/detect-unknown-jsx-tags'
 import type { FounderScopedPrimitive } from '@/lib/build/primitive-credentials'
 // #1561 — mintPreviewDbToken/mintPreviewPrimitiveTokens/FOUNDER_SCOPED_PRIMITIVES
 // extracted to lib/build/preview-tokens.ts so app/build/[slug]/page.tsx can
@@ -515,10 +516,8 @@ export async function GET(
     'ErrorBoundary',
   ])
 
-  // Find all PascalCase JSX tags in the code
-  const jsxTagMatches = componentCode.match(/<([A-Z][a-zA-Z0-9]+)[\s/>]/g) || []
-  const jsxTags = [...new Set(jsxTagMatches.map((m: string) => m.slice(1).replace(/[\s/>]/g, '')))]
-  const unknownTags = jsxTags.filter((tag: string) => !knownComponents.has(tag))
+  // Find all PascalCase JSX tags in the code (generic-type-arg/DOM-type-aware — see detectUnknownJsxTags)
+  const unknownTags = detectUnknownJsxTags(componentCode, knownComponents)
 
   // Store fallback definitions separately — they're plain JS, NOT JSX
   // They'll be injected into a plain <script> block, not the Babel block
