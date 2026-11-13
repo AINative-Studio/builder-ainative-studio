@@ -416,6 +416,35 @@ describe('flatten-multifile (#308)', () => {
       expect(detection.source).toBe('pascalcase-jsx')
     })
 
+    // Real bug found live (#1994): two independent real companies
+    // ("tidemark", "driftwood") both hard-failed their /build/{slug}
+    // preview with the identical `const AIKitHeader = ;` SyntaxError. A
+    // truncated `export default ;` (just a bare trailing semicolon, no real
+    // expression — plausible from a generation cut off mid-statement, this
+    // repo's established truncation-bug class, #1975 et al.) survives
+    // parseFiles' per-file `.trim()` (a trailing `;` isn't whitespace), so
+    // the generic fallback's capture (`expr`) comes back as just `";"` with
+    // no real expression in it. The old code emitted
+    // `const AIKitHeader = ;;\nexport default AIKitHeader;` verbatim — the
+    // parser throws "Unexpected token" at the FIRST `;` (right after `=`),
+    // reading identically to the reported `const AIKitHeader = ;`.
+    it('sibling with a truncated `export default ;` (bare trailing semicolon, no expression) gets a safe no-op stub, not `const X = ;`', () => {
+      const raw = [
+        '// --- FILE: src/App.tsx ---',
+        "import AIKitHeader from './components/aikit/AIKitHeader'",
+        'export default function App(){ return (<div><AIKitHeader/></div>) }',
+        '// --- FILE: src/components/aikit/AIKitHeader.tsx ---',
+        'export default ;',
+      ].join('\n')
+      const out = flattenMultiFile(raw)
+      expect(out).not.toMatch(/=\s*;/) // no `const X = ;`
+      expect(out).not.toMatch(/export\s+default/)
+      expect(() =>
+        babelParse(out, { sourceType: 'script', plugins: ['jsx', 'typescript'] }),
+      ).not.toThrow()
+      expect(out).toMatch(/function\s+AIKitHeader\s*\(\)\s*\{\s*return\s+null;?\s*\}/)
+    })
+
     it('the entry file itself (App.tsx) with an anonymous default export is named `App`', () => {
       // A lone FILE-marker with no local imports hits flattenMultiFile's
       // documented no-op shortcut (paths.length <= 1) and is intentionally
