@@ -155,4 +155,38 @@ describe('findUndeclaredJsxComponents', () => {
     }
     expect(findUndeclaredJsxComponents(files['/src/App.tsx'], files)).toEqual([])
   })
+
+  // #1998 — real live repro (companies `zova`/`fieldwright`/`eave`/`mendr`):
+  // shadcn-style ui/*.tsx primitives type their props as
+  // `React.ButtonHTMLAttributes<HTMLButtonElement>` etc. The JSX_TAG regex
+  // matches `<HTMLButtonElement>` as if it were a real JSX tag — but a
+  // generic type argument is always preceded by an identifier character
+  // (`Attributes<...`), which a real JSX `<` never is.
+  it('does not flag a TS generic type argument as an undeclared JSX component', () => {
+    const files = {
+      '/src/App.tsx': `import Button from './components/ui/button'\nexport default function App(){ return <Button/> }`,
+      '/src/components/ui/button.tsx': [
+        `import * as React from 'react'`,
+        `export function Button({ className, children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {`,
+        `  return <button className={className} {...props}>{children}</button>`,
+        `}`,
+      ].join('\n'),
+      '/src/components/ui/input.tsx': [
+        `import * as React from 'react'`,
+        `export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props}/> }`,
+      ].join('\n'),
+    }
+    expect(findUndeclaredJsxComponents(files['/src/App.tsx'], files)).toEqual([])
+  })
+
+  it('still flags a real undeclared component on the same line as a generic type argument', () => {
+    const files = {
+      '/src/App.tsx': [
+        `import * as React from 'react'`,
+        `function useThing(ref: React.RefObject<HTMLInputElement>) { return ref }`,
+        `export default function App(){ return <Ghost/> }`,
+      ].join('\n'),
+    }
+    expect(findUndeclaredJsxComponents(files['/src/App.tsx'], files)).toEqual(['Ghost'])
+  })
 })
