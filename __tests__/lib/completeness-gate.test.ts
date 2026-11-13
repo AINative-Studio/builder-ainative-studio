@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { findMissingLocalImports } from '@/lib/build/completeness-gate'
+import { findMissingLocalImports, findUndeclaredJsxComponents } from '@/lib/build/completeness-gate'
 
 /**
  * builder#333 — completeness gate detector.
@@ -371,5 +371,47 @@ describe('splitMarkerBlob (raw-blob FILE-marker path) — comment-blindness (#19
       `export default function Sidebar(){ return <aside/> }`,
     ].join('\n')
     expect(findMissingLocalImports(raw)).toEqual(['./components/Analytics'])
+  })
+})
+
+// Real bug (this loop's overnight comment/string-blindness sweep): the raw-
+// blob fallback gated splitMarkerBlob() on an UNMASKED, unanchored
+// `/\/\/\s*---\s*FILE:/.test(raw)` substring test. splitMarkerBlob() itself
+// is already comment/string-safe, so for a single-file payload that merely
+// MENTIONS the `// --- FILE:` convention in an ordinary comment (never
+// forming a real marker line), the gate still fired, splitMarkerBlob found
+// zero real markers and returned `{}`, and that EMPTY BUT TRUTHY map was
+// then treated as "the files" — silently skipping every check (both
+// detectors) instead of falling back to scanning the raw blob.
+describe('findMissingLocalImports/findUndeclaredJsxComponents — decoy-only gate (no real markers)', () => {
+  it('a comment merely mentioning the FILE-marker convention does not disable missing-import detection on an otherwise single-file blob', () => {
+    const raw = [
+      '// Note: this app doesn\'t use the "// --- FILE:" multi-file convention',
+      `import Analytics from './components/Analytics'`,
+      `export default function App(){ return <div><Analytics/></div> }`,
+    ].join('\n')
+    expect(findMissingLocalImports(raw)).toEqual(['./components/Analytics'])
+  })
+
+  it('a comment merely mentioning the FILE-marker convention does not disable undeclared-JSX detection when a real files map is absent', () => {
+    const raw = [
+      '// Note: this app doesn\'t use the "// --- FILE:" multi-file convention',
+      `export default function App(){ return <div><Card/></div> }`,
+    ].join('\n')
+    // No files map and no real `// --- FILE:` markers at all: the detector
+    // has no per-file boundaries to work with, so it correctly declines
+    // (empty array) rather than silently "succeeding" on a decoy-only split.
+    expect(findUndeclaredJsxComponents(raw)).toEqual([])
+  })
+
+  it('still detects an undeclared JSX component when a real files map is provided alongside decoy text', () => {
+    const files = {
+      '/src/App.tsx': [
+        '// Note: this app doesn\'t use the "// --- FILE:" multi-file convention',
+        `export default function App(){ return <div><Card/></div> }`,
+      ].join('\n'),
+      '/src/components/ui/card.tsx': `export function Card(){ return <div/> }`,
+    }
+    expect(findUndeclaredJsxComponents('', files)).toEqual(['Card'])
   })
 })
