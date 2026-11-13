@@ -16,9 +16,79 @@
  * so this module stays testable without the network.
  */
 
-/** Does the code already have file markers (i.e. the model volunteered multi-file)? */
+/**
+ * Line indices (0-based) of `code` that sit INSIDE a still-open backtick
+ * template literal or block comment carried over from an earlier line,
+ * rather than at top level — same helper shape as sandbox-builder.ts's/
+ * multi-file-parser.ts's `linesInsideMultilineConstruct` (#1933/#1939
+ * class). A single/double-quoted string or a `//` line comment can't
+ * contain a literal newline in valid JS, so only these two multi-line
+ * constructs can hide an embedded line this way.
+ */
+function linesInsideMultilineConstruct(code: string): Set<number> {
+  const inside = new Set<number>()
+  const markSpan = (from: number, to: number, line: number): number => {
+    for (let j = from; j < to; j++) if (code[j] === '\n') { line++; inside.add(line) }
+    return line
+  }
+  let line = 0
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '\\') { i += 2; continue }
+    if (ch === '"' || ch === "'") {
+      let j = i + 1
+      while (j < code.length && code[j] !== ch) { if (code[j] === '\\') j++; j++ }
+      i = j + 1
+      continue
+    }
+    if (ch === '/' && next === '/') {
+      const end = code.indexOf('\n', i)
+      i = end === -1 ? code.length : end
+      continue
+    }
+    if (ch === '`') {
+      let j = i + 1
+      while (j < code.length && code[j] !== '`') { if (code[j] === '\\') j++; j++ }
+      const stop = j >= code.length ? code.length : j + 1
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const stop = closeIdx === -1 ? code.length : closeIdx + 2
+      line = markSpan(i, stop, line)
+      i = stop
+      continue
+    }
+    if (ch === '\n') { line++; i++; continue }
+    i++
+  }
+  return inside
+}
+
+/**
+ * Does the code already have file markers (i.e. the model volunteered
+ * multi-file)? Real bug found live (this loop's overnight comment/string-
+ * blindness sweep, #1933/#1939/#1945/#1949/#1962/#1977/#1978/#1981/#1983
+ * class): this used to `.test()` the raw, unmasked code directly, so a
+ * decoy marker-shaped line sitting inside an earlier line's own open
+ * backtick template literal or block comment (e.g. a generated docs page
+ * demonstrating this project's own multi-file convention) was mistaken for
+ * a real marker on genuinely single-file code — silently defeating
+ * shouldDecompose() for exactly the "complex idea stuck in one giant file"
+ * case this module exists to fix.
+ */
 export function hasFileMarkers(code: string): boolean {
-  return /\/\/\s*---\s*FILE:/.test(code || '')
+  const src = code || ''
+  const hidden = linesInsideMultilineConstruct(src)
+  const lines = src.split('\n')
+  for (let i = 0; i < lines.length; i++) {
+    if (!hidden.has(i) && /\/\/\s*---\s*FILE:/.test(lines[i])) return true
+  }
+  return false
 }
 
 /**

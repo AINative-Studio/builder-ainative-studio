@@ -9,6 +9,38 @@ describe('decomposition (#293 · Phase 5)', () => {
     expect(hasFileMarkers('export default function App(){}')).toBe(false)
   })
 
+  /**
+   * Real bug found live (this loop's overnight comment/string-blindness
+   * sweep): hasFileMarkers used to `.test()` the raw code directly, so a
+   * decoy marker-shaped line hidden inside an earlier line's own open
+   * block comment or template literal was mistaken for a real marker,
+   * silently defeating shouldDecompose() for a genuinely single-file
+   * complex app.
+   */
+  it('does not mistake a decoy marker hidden inside a block comment for a real marker', () => {
+    const decoy = [
+      '/**',
+      ' * Elsewhere we use the',
+      ' * // --- FILE: path/to/file.tsx ---',
+      ' * convention.',
+      ' */',
+      'export default function App(){}',
+    ].join('\n')
+    expect(hasFileMarkers(decoy)).toBe(false)
+  })
+
+  it('does not mistake a decoy marker hidden inside a template literal for a real marker', () => {
+    const decoy = [
+      'export default function App() {',
+      '  const docs = `',
+      '// --- FILE: path/to/file.tsx ---',
+      '  `',
+      '  return docs',
+      '}',
+    ].join('\n')
+    expect(hasFileMarkers(decoy)).toBe(false)
+  })
+
   it('decomposes a large single-file complex app', () => {
     expect(shouldDecompose(bigSingleFile, true)).toBe(true)
   })
