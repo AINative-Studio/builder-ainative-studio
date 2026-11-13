@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import crypto from 'crypto'
 import { detectRootComponent, applyComponentRewrite } from '@/lib/component-detector'
 import { stripExportsAndBasicTypes } from '@/lib/build/strip-exports-and-types'
+import { extractSingleFencedCode } from '@/lib/build/extract-single-fenced-code'
 
 function generateNonce(): string {
   return crypto.randomBytes(16).toString('base64')
@@ -16,9 +17,9 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: 'No code provided' }, { status: 400 })
     }
 
-    // Extract the React component code from the markdown
-    const codeMatch = code.match(/```(?:typescript|tsx|jsx|javascript|js)?\n([\s\S]*?)```/);
-    let componentCode = codeMatch ? codeMatch[1] : code;
+    // Extract the React component code from the markdown (decoy-nested-fence-aware — see extractSingleFencedCode)
+    const extractedFence = extractSingleFencedCode(code);
+    let componentCode = extractedFence !== null ? extractedFence : code;
 
     // Detect the root component BEFORE stripping exports (same approach as
     // app/api/preview/[id]/route.ts, via lib/component-detector.ts). The old

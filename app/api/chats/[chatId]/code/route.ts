@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getPreview } from '@/lib/preview-store'
+import { extractSingleFencedCode } from '@/lib/build/extract-single-fenced-code'
 
 export async function GET(
   request: NextRequest,
@@ -31,16 +32,9 @@ export async function GET(
       )
     }
 
-    // Extract code from markdown code blocks
-    const codeMatch = content.match(/```(?:jsx|javascript|tsx|ts|js)?\n?([\s\S]*?)```/)
-
-    let code = ''
-    if (codeMatch && codeMatch[1]) {
-      code = codeMatch[1].trim()
-    } else {
-      // If no code block found, try using raw content
-      code = content.trim()
-    }
+    // Extract code from markdown code blocks (decoy-nested-fence-aware — see extractSingleFencedCode)
+    const extracted = extractSingleFencedCode(content)
+    const code = extracted !== null ? extracted : content.trim()
 
     return NextResponse.json({
       code,
