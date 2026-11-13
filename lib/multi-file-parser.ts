@@ -7,6 +7,7 @@ import { generateAINativeFileSet } from './ainative-file-generator'
 import { sanitizeForSandpack } from './code-validator'
 import { detectRootComponent } from './component-detector'
 import { findStringEnd, findBacktickEnd } from './build/bracket-scanner'
+import { extractSingleFencedCode } from './build/extract-single-fenced-code'
 
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
 
@@ -189,12 +190,9 @@ export function parseMultiFileOutput(rawOutput: string, userPrompt?: string): Re
 
   // Fallback: if no file markers found, treat entire output as single page
   if (Object.keys(files).length === 0) {
-    // Strip markdown code fences if present
-    let code = rawOutput
-    const fenceMatch = code.match(/```(?:tsx?|jsx?|typescript|javascript)?\s*\n([\s\S]*?)```/)
-    if (fenceMatch) {
-      code = fenceMatch[1]
-    }
+    // Strip markdown code fences if present (decoy-nested-fence-aware — see extractSingleFencedCode)
+    const extractedFence = extractSingleFencedCode(rawOutput)
+    const code = extractedFence !== null ? extractedFence : rawOutput
     files['/src/App.tsx'] = code.trim()
   }
 
