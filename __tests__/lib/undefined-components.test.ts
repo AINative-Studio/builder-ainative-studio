@@ -133,7 +133,30 @@ describe('findUnresolvedComponents (#76)', () => {
     expect(findUnresolvedComponents(code)).toEqual([])
   })
 
-  it('resolves a component defined in another file of multi-file output', () => {
+  it('resolves a component defined in another file of multi-file output, given a real cross-file import', () => {
+    const code = [
+      '// --- FILE: App.tsx ---',
+      "import React from 'react'",
+      "import { Sidebar } from './Sidebar'",
+      'export default function App(){ return <Sidebar/>; }',
+      '// --- FILE: Sidebar.tsx ---',
+      'export function Sidebar(){ return <nav/>; }',
+    ].join('\n')
+    // A real import makes Sidebar available in App.tsx's own scope — must
+    // not be flagged.
+    expect(findUnresolvedComponents(code)).toEqual([])
+  })
+
+  // #1967: FILE_MARKER lacked the `m` flag, so code.split(FILE_MARKER) never
+  // actually split a real multi-file blob — every "file" was scanned as one
+  // combined blob, so a component defined ANYWHERE in the blob (even with NO
+  // real import statement wiring it into the file that uses it) looked
+  // "available." That's a genuine false negative: Sandpack's bundler does
+  // NOT auto-resolve a sibling component without an explicit import — a
+  // real company's `<Sidebar/>` usage with no import crashes at runtime
+  // with "Sidebar is not defined," exactly the class of bug this check
+  // exists to catch.
+  it('still flags a component usage with NO real import, even when the same name is defined in another file', () => {
     const code = [
       '// --- FILE: App.tsx ---',
       "import React from 'react'",
@@ -141,8 +164,8 @@ describe('findUnresolvedComponents (#76)', () => {
       '// --- FILE: Sidebar.tsx ---',
       'export function Sidebar(){ return <nav/>; }',
     ].join('\n')
-    // Sidebar is defined in the second file — must not be flagged.
-    expect(findUnresolvedComponents(code)).toEqual([])
+    // No import wires Sidebar into App.tsx's own file — a real runtime crash.
+    expect(findUnresolvedComponents(code)).toContain('Sidebar')
   })
 
   it('handles destructured components (const { X } = ...)', () => {
