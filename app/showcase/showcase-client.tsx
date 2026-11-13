@@ -4,7 +4,65 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
 import { detectRootComponent, applyComponentRewrite } from '@/lib/component-detector'
-import { findMatchingBrace } from '@/lib/build/bracket-scanner'
+import { findMatchingBrace, findStringEnd, findBacktickEnd } from '@/lib/build/bracket-scanner'
+
+/**
+ * Length-preserving mask of string/template-literal content AND `/* *\/`
+ * block comments — deliberately NOT `//` line comments. Same bug class as
+ * lib/code-validator.ts's extractRenderableCode (#1962), lib/showcase-
+ * quality.ts's isQualityApp (#1986), lib/build/decomposition.ts's
+ * hasFileMarkers (#1985), app/api/chat-ws/route.ts's isMultiFile (#1981),
+ * and app/api/build/repair-app/route.ts (#1983): buildPreviewHtml below
+ * used to call `cleanCode.includes('// --- FILE:')` and a matching
+ * `cleanCode.split(...)` directly against the raw, unmasked content — a
+ * 6th, independent FILE_MARKER call site with the
+ * same bug, missed by every one of those files' individual fixes. A
+ * generated landing page whose own text happens to mention this project's
+ * `// --- FILE: ... ---` multi-file convention (e.g. a docs/SDK-style demo
+ * page showing it inside a <pre>/syntax-highlighted sample, or inside a
+ * backtick template literal) has that decoy mistaken for a real file
+ * boundary, so the single-file app gets wrongly split and the showcase
+ * preview renders the wrong (or corrupted) fragment.
+ *
+ * The real marker (`// --- FILE: path ---`) IS ITSELF a `//` line comment,
+ * so a mask that also blanks line comments would hide every REAL marker
+ * exactly as effectively as a decoy one, making it impossible to tell them
+ * apart. Masking only strings/templates/block comments still defeats a
+ * decoy sitting inside one of those (the actual real-world shape) while
+ * leaving every genuine top-level marker intact to match against.
+ */
+function maskStringsAndBlockCommentsOnly(code: string): string {
+  let out = ''
+  let i = 0
+  while (i < code.length) {
+    const ch = code[i]
+    const next = code[i + 1]
+    if (ch === '"' || ch === "'") {
+      const end = findStringEnd(code, i, ch)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '`') {
+      const end = findBacktickEnd(code, i)
+      const realEnd = end === -1 ? code.length - 1 : end
+      out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
+      i = realEnd + 1
+      continue
+    }
+    if (ch === '/' && next === '*') {
+      const closeIdx = code.indexOf('*/', i + 2)
+      const stop = closeIdx === -1 ? code.length : closeIdx + 2
+      out += code.slice(i, stop).replace(/[^\n]/g, ' ')
+      i = stop
+      continue
+    }
+    out += ch
+    i++
+  }
+  return out
+}
 
 /**
  * Strip every top-level `interface Name { ... }` declaration from `code`.
@@ -41,9 +99,22 @@ function stripTypeScriptInterfaces(code: string): string {
 export function buildPreviewHtml(code: string): string {
   let cleanCode = code
 
-  // Handle multi-file output — extract only the main App file
-  if (cleanCode.includes('// --- FILE:')) {
-    const files = cleanCode.split(/\/\/\s*---\s*FILE:\s*/i)
+  // Handle multi-file output — extract only the main App file.
+  // Locate real marker positions in the masked copy (hides a decoy marker
+  // living inside a string/template-literal/block comment, see
+  // maskStringsAndBlockCommentsOnly above), then split the ORIGINAL code at
+  // those verified offsets so real file contents survive intact.
+  const maskedForFileSplit = maskStringsAndBlockCommentsOnly(cleanCode)
+  if (/\/\/\s*---\s*FILE:\s*/i.test(maskedForFileSplit)) {
+    const splitRe = /\/\/\s*---\s*FILE:\s*/gi
+    const files: string[] = []
+    let lastIndex = 0
+    let m: RegExpExecArray | null
+    while ((m = splitRe.exec(maskedForFileSplit))) {
+      files.push(cleanCode.slice(lastIndex, m.index))
+      lastIndex = m.index + m[0].length
+    }
+    files.push(cleanCode.slice(lastIndex))
     let mainFile = files.find(f => /^src\/App\.tsx|^App\.tsx/i.test(f.trim()))
     if (!mainFile) mainFile = files.find(f => /\.tsx|\.jsx/i.test(f.split('\n')[0]))
     if (!mainFile && files.length > 1) mainFile = files[1]
