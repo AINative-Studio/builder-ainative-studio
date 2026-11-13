@@ -347,7 +347,15 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     // Close JSX return: need );\n} pattern
     for (let i = 0; i < op - cp; i++) suffix += ')'
     if (suffix) suffix += ';\n'
-    for (let i = 0; i < ob - cb; i++) suffix += '}\n'
+    // Close unclosed `{` blocks from innermost to outermost. A bare `}` closes
+    // most blocks fine, but a `try { ... }` needs a `catch`/`finally` clause —
+    // closing it with a bare `}` is its own SyntaxError ("Missing catch or
+    // finally clause") even though the brace *count* ends up balanced.
+    const unclosedKinds = findUnclosedBraceKinds(fixedCode)
+    for (let i = 0; i < ob - cb; i++) {
+      const kind = unclosedKinds[unclosedKinds.length - 1 - i]
+      suffix += kind === 'try' ? '} catch (e) { /* auto-closed from truncation */ }\n' : '}\n'
+    }
 
     if (suffix) {
       fixedCode += '\n' + suffix
@@ -1505,6 +1513,33 @@ function maskCommentsAndStringsForShadowScan(code: string): string {
     i++
   }
   return out
+}
+
+/**
+ * Scans comment/string-masked code with a brace stack and returns, in open
+ * order (outermost first), the kind of each `{` that is still unclosed at
+ * end-of-input. Used by autoFixCode's truncation-recovery path: an unclosed
+ * `try { ... }` needs a synthetic `catch` appended when it's closed, not a
+ * bare `}` (see builder#1975).
+ */
+function findUnclosedBraceKinds(code: string): Array<'try' | 'other'> {
+  const masked = maskCommentsAndStringsForShadowScan(code)
+  const stack: Array<'try' | 'other'> = []
+  for (let i = 0; i < masked.length; i++) {
+    const ch = masked[i]
+    if (ch === '{') {
+      let j = i - 1
+      while (j >= 0 && /\s/.test(masked[j])) j--
+      const precededByTry =
+        j >= 2 &&
+        masked.slice(j - 2, j + 1) === 'try' &&
+        !/[A-Za-z0-9_$]/.test(j - 3 >= 0 ? masked[j - 3] : '')
+      stack.push(precededByTry ? 'try' : 'other')
+    } else if (ch === '}') {
+      stack.pop()
+    }
+  }
+  return stack
 }
 
 export function findUnresolvedComponents(code: string): string[] {
