@@ -37,10 +37,25 @@ const RENDER_TIMEOUT_MS = 90_000
 
 /**
  * Strip a markdown code fence wrapper, if present. PURE.
+ *
+ * Real bug this guards against: the previous regex had no anchoring at all —
+ * it matched the FIRST ``` ... ``` pair ANYWHERE in the raw string, not just
+ * one wrapping the whole thing. A generated component's own JSDoc `@example`
+ * block (an ordinary thing for a docs/SDK-style landing page component to
+ * include, e.g. `/** @example\n * \`\`\`jsx\n * <Foo/>\n * \`\`\`\n *\/`)
+ * contains exactly such a pair with real newlines (block comments span real
+ * newlines), so the match captured ONLY the demo snippet between them and
+ * discarded the entire real component declaration surrounding it — the SSR
+ * render then ran against a one-line JSX fragment instead of the founder's
+ * actual app. Only strip a fence that wraps the ENTIRE string (opening fence
+ * on the first line, closing fence on the last line), same anchored shape as
+ * lib/build/flatten-multifile.ts's `stripWrappingCodeFence` — a fence pair
+ * sitting anywhere else in the middle is left untouched.
  */
 function stripMarkdownFence(componentCode: string): string {
-  const codeMatch = componentCode.match(/```(?:jsx|tsx|javascript|js|typescript)?\n([\s\S]*?)```/)
-  return codeMatch ? codeMatch[1] : componentCode
+  const trimmed = (componentCode || '').trim()
+  const m = trimmed.match(/^```[a-zA-Z0-9]*\s*\n([\s\S]*?)\n?```$/)
+  return m ? m[1] : componentCode
 }
 
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
