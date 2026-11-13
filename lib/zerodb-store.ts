@@ -186,16 +186,35 @@ export async function loadGeneration(chatId: string): Promise<{
   designConformanceStatus?: 'pass' | 'partial' | 'fail'
 } | null> {
   try {
-    // Use ZeroDB query endpoint with server-side filtering by chat_id
+    // Use ZeroDB query endpoint with server-side filtering by chat_id.
+    //
+    // Real bug found live (younova and others, 2026-11-13): saveGeneration()
+    // always APPENDS a new row per turn for a given chat_id — it never
+    // updates one in place (see its own comment above) — so any chat with
+    // more than one saved turn (a regenerate, an edit, a retry) has MULTIPLE
+    // rows sharing the same chat_id. This call used to fetch only `limit: 1`
+    // with no sort, trusting the query endpoint to hand back the LATEST row.
+    // It doesn't: loadChatHistory (below), which hits this exact same table
+    // with the exact same chat_id filter, already has to sort its results by
+    // created_at client-side for this reason — proof the endpoint gives no
+    // ordering guarantee. With `limit: 1`, an early/incomplete turn's row
+    // (e.g. one saved before a later regeneration actually produced real
+    // code) could be the one returned, while a real, later generation for
+    // the same chat_id is sitting in a row this call never sees — serving a
+    // permanently stale or empty preview even though good code exists.
+    // Fetch a window of rows instead and keep the newest by created_at, same
+    // as loadChatHistory.
     const result = await zerodbRequest(
       'POST',
       `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
-      { filters: { chat_id: chatId }, limit: 1 }
+      { filters: { chat_id: chatId }, limit: 50 }
     )
 
-    const rows = result?.data || []
+    const rows = (result?.data || [])
+      .map((r: any) => r.row_data || r)
+      .sort((a: any, b: any) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
     if (rows.length > 0) {
-      const row = rows[0].row_data || rows[0]
+      const row = rows[rows.length - 1]
       console.log(`[ZeroDB] Loaded generation ${chatId} (${row.code_length || '?'} chars)`)
       // Rehydrate the durable files map (#333) — tolerate absent/corrupt JSON.
       let files: Record<string, string> | null = null
