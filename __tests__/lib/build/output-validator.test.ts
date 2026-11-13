@@ -477,6 +477,45 @@ describe('findMissingJsxImports', () => {
     `
     expect(findMissingJsxImports(code)).toEqual(['Card'])
   })
+
+  // Same bug class as completeness-gate.ts's findUndeclaredJsxComponents
+  // (#1998), independently present here since this is a separate,
+  // independently-maintained regex: shadcn-style ui/*.tsx primitives type
+  // their props as `React.ButtonHTMLAttributes<HTMLButtonElement>` /
+  // `React.InputHTMLAttributes<HTMLInputElement>` — ordinary, standard
+  // generated code. JSX_TAG's `<([A-Z][\w$]*)...` shape matches
+  // `<HTMLButtonElement>` as if it were a real JSX tag. A generic type
+  // argument is always preceded by an identifier character (`Attributes<...`),
+  // which a real JSX `<` never is.
+  it('does not flag a TS generic type argument as a missing JSX import', () => {
+    const code = `
+      import * as React from 'react'
+      export function Button({ className, children, ...props }: React.ButtonHTMLAttributes<HTMLButtonElement>) {
+        return <button className={className} {...props}>{children}</button>
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('does not flag a bare generic type argument with no member access (useRef<HTMLInputElement>)', () => {
+    const code = `
+      import * as React from 'react'
+      export function Input() {
+        const ref = React.useRef<HTMLInputElement>(null)
+        return <input ref={ref} />
+      }
+    `
+    expect(findMissingJsxImports(code)).toEqual([])
+  })
+
+  it('still flags a real undeclared component on the same line as a generic type argument', () => {
+    const code = `
+      import * as React from 'react'
+      function useThing(ref: React.RefObject<HTMLInputElement>) { return ref }
+      export default function App(){ return <Ghost/> }
+    `
+    expect(findMissingJsxImports(code)).toEqual(['Ghost'])
+  })
 })
 
 describe('checkJsxImportsResolved', () => {
