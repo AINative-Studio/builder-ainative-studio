@@ -26,6 +26,7 @@ import { isRenderable, type ParseGateResult } from '@/lib/code-validator'
 import {
   findMissingLocalImports,
   findUndeclaredJsxComponents,
+  findTruncatedFiles,
   findDuplicateLandmarkElements,
 } from '@/lib/build/completeness-gate'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
@@ -184,6 +185,26 @@ export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
       ok: false,
       reason: 'missing_local_import',
       error: `Undeclared JSX component(s) — used but never imported: ${undeclared.join(', ')}`,
+    }
+  }
+
+  // Truncation gate (#2013, "the luminary repro"): a file can stop mid-statement
+  // with balanced braces and no dangling import/JSX reference — the two checks
+  // above both report a clean bill of health, since the file doesn't import or
+  // render anything undefined, it just never finished. findTruncatedFiles()
+  // (lib/build/completeness-gate.ts) was built for exactly this shape (strict
+  // parse failure OR a component-shaped file with zero `export`), but until now
+  // it only ran in the retroactive backfill sweep — never at the one seam that
+  // can stop a broken generation from being marked ready in the first place.
+  // Only meaningful with a files map; silently no-ops otherwise, same fail-open
+  // posture as the two gates above it.
+  const truncated = findTruncatedFiles(stored.files ?? undefined)
+  if (truncated.length > 0) {
+    return {
+      checked: true,
+      ok: false,
+      reason: 'truncated_file',
+      error: `Truncated generation: file(s) cut off mid-stream, never finished: ${truncated.join(', ')}`,
     }
   }
 
