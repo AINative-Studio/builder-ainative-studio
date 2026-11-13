@@ -20,6 +20,11 @@ export function fixJsxErrors(code: string): string {
   // are undefined → "Element type is invalid" / Sandpack "Something went wrong".
   fixed = fixWrongShadcnSubpaths(fixed)
 
+  // Fix 0b3: Rewrite a bare './components/ui' (no subpath) barrel import —
+  // unlike the AIKit bundle, shadcn-bundle.ts has no ui/index barrel, so this
+  // path is unresolvable in Sandpack regardless of JSX usage (#2018).
+  fixed = rewriteUiBarrelImports(fixed)
+
   // Fix 0c: Rewrite hallucinated package names to known equivalents
   fixed = rewriteHallucinatedPackages(fixed)
 
@@ -459,6 +464,60 @@ function fixWrongShadcnSubpaths(code: string): string {
       if (keepOnOriginal.length > 0) lines.push(`import { ${keepOnOriginal.join(', ')} } from '${base}/${file}';`)
       // Trailing newline so an adjacent import on the next source line doesn't
       // concatenate onto ours (which would be a parse error).
+      return lines.join('\n') + '\n'
+    },
+  )
+}
+
+/**
+ * Rewrite a bare './components/ui' (or '../components/ui') import with NO
+ * subpath. The shadcn bundle emits per-component files only
+ * (lib/sandpack/shadcn-bundle.ts has no 'ui/index.ts' barrel, unlike the
+ * AIKit bundle's real './components/aikit' barrel — aikit-bundle.ts:7) — so
+ * this path is unresolvable in Sandpack whatever it imports, independent of
+ * how the imported names are used. build-files.ts's AIKit/shadcn
+ * auto-import nets can reroute a wrong-path import, but only when the
+ * component is used as a JSX tag (the signal both nets gate on, #2016/PR
+ * #2017); a name imported from here and used only as a value — a prop
+ * (`icon={Badge}`), a variant map, a dynamically-rendered binding
+ * (`const C = Button; <C />`) — never reaches that gate and stays on this
+ * dead path. Routes each recognized shadcn name to the file that actually
+ * exports it, exactly like fixWrongShadcnSubpaths above. An unrecognized
+ * name is left on './components/ui' untouched rather than guessed onto
+ * './components/aikit' (which wouldn't export it either, unlike
+ * rewriteBarrelImports()'s bare './components' case where "unknown" really
+ * does mean "probably an AIKit name") — see #2018.
+ */
+function rewriteUiBarrelImports(code: string): string {
+  const masked = maskPreservingOffsets(code)
+  return code.replace(
+    /import\s+\{([^}]+)\}\s+from\s+['"](\.\.?\/components\/ui)['"]\s*;?/g,
+    (match: string, names: string, base: string, offset: number) => {
+      // Same comment-injection guard as fixWrongShadcnSubpaths/
+      // rewriteBarrelImports above (#1879): a match living only inside a
+      // comment must stay inert, since the multi-file split below can add
+      // lines with no `//` of their own.
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      const parts = names.split(',').map((n) => n.trim()).filter(Boolean)
+      const byFile: Record<string, string[]> = {}
+      const unknown: string[] = []
+      for (const raw of parts) {
+        const name = raw.split(/\s+as\s+/)[0].trim()
+        const correct = SHADCN_COMPONENT_FILE[name]
+        if (correct) (byFile[correct] ||= []).push(raw)
+        else unknown.push(raw)
+      }
+      // Nothing recognized — leave untouched (still unresolvable, but no
+      // worse than before, and no wrong guess risked).
+      if (Object.keys(byFile).length === 0) return match
+      const lines: string[] = []
+      for (const [file, fileNames] of Object.entries(byFile)) {
+        lines.push(`import { ${fileNames.join(', ')} } from '${base}/${file}'`)
+      }
+      if (unknown.length > 0) lines.push(`import { ${unknown.join(', ')} } from '${base}'`)
+      // Trailing newline so an adjacent import on the next source line
+      // doesn't concatenate onto ours (which would be a parse error) —
+      // same precedent as fixWrongShadcnSubpaths above.
       return lines.join('\n') + '\n'
     },
   )
