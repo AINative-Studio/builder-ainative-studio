@@ -6,6 +6,7 @@ import {
   findStringEnd,
   findBacktickEnd,
 } from './build/bracket-scanner'
+import { extractSingleFencedCode } from './build/extract-single-fenced-code'
 
 /**
  * Multi-file output boundary marker — mirrors lib/multi-file-parser.ts.
@@ -2497,12 +2498,38 @@ export function extractCodeFromMarkdown(content: string): string {
       .trim()
   }
 
-  // Try proper markdown code blocks first
-  const codeBlockRegex = /```(?:jsx|javascript|tsx|js|ts|react)?\s*\n([\s\S]*?)```/
-  const match = content.match(codeBlockRegex)
+  // Try proper markdown code blocks first.
+  //
+  // A markdown fence delimiter is a BLOCK-level construct (CommonMark): it
+  // must start at the beginning of a line, with at most a few spaces of
+  // leading indentation -- never prefixed by other text. The previous lazy
+  // /```lang?\n([\s\S]*?)```/ regex ignored this and happily matched the
+  // FIRST "```" found anywhere as the close -- including a decoy ```
+  // pair sitting inside the real component's own JSDoc @example block (a
+  // routine thing for a docs/SDK-style generated component to include).
+  // Same bug class as #2004's lib/sandbox-builder.ts stripMarkdownFence:
+  // the decoy's lines are prefixed by `" * "` (JSDoc continuation), so they
+  // never actually start at column 0 -- but the old regex didn't check
+  // that, so it matched the decoy's inner close and silently discarded the
+  // real component declaration that followed it.
+  //
+  // Fix: require the opening fence to start a line, then take the LAST
+  // real (line-starting) closing fence in the content -- not the first
+  // "```" found anywhere -- so a decoy pair fully nested inside the real
+  // code is skipped over rather than terminating the extraction early.
+  const openFenceRe = /(?:^|\n)[ \t]{0,3}```(?:jsx|javascript|tsx|js|ts|react)?[ \t]*\n/
+  const openMatch = content.match(openFenceRe)
 
-  if (match && match[1]) {
-    return match[1].trim()
+  if (openMatch) {
+    const bodyStart = openMatch.index! + openMatch[0].length
+    const closeFenceRe = /\n[ \t]{0,3}```[ \t]*(?=\n|$)/g
+    closeFenceRe.lastIndex = bodyStart
+    let lastClose: RegExpExecArray | null = null
+    let cm: RegExpExecArray | null
+    while ((cm = closeFenceRe.exec(content))) lastClose = cm
+    if (lastClose) {
+      return content.slice(bodyStart, lastClose.index).trim()
+    }
   }
 
   // If no proper markdown found, aggressively clean malformed wrappers
@@ -2742,9 +2769,9 @@ export function extractRenderableCode(content: string): string {
     if (mainFile) return mainFile.replace(/^.*?---\s*\n?/, '').trim()
   }
 
-  // Markdown code block.
-  const codeBlockMatch = content.match(/```(?:tsx?|jsx?|javascript|typescript)?\s*\n([\s\S]*?)```/)
-  if (codeBlockMatch) return codeBlockMatch[1].trim()
+  // Markdown code block (decoy-nested-fence-aware — see extractSingleFencedCode).
+  const fenced = extractSingleFencedCode(content)
+  if (fenced !== null) return fenced
 
   // Raw content — strip stray quote/backtick wrappers.
   return content
