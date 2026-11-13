@@ -34,4 +34,26 @@ describe('isQualityApp (showcase #58 quality gate)', () => {
       '// --- FILE: App.js\nfunction App(){ return 1 }\n' + 'x '.repeat(1500)
     expect(isQualityApp(code, 'abc')).toBe(true)
   })
+
+  /**
+   * Real bug found live (this loop's overnight comment/string-blindness
+   * sweep, same class as #1933/#1939/#1945/#1949/#1962/#1977/#1978/#1981/
+   * #1983): isQualityApp used to gate on a raw, unmasked
+   * `.includes()`/`.split()` with a marker regex not anchored to a full
+   * line, so a decoy marker-shaped substring anywhere (including inside a
+   * single-line string) could corrupt mainSection, wrongly rejecting a
+   * genuinely substantive single-file app.
+   */
+  it('accepts substantive single-file code containing a decoy marker inside a string literal', () => {
+    const code =
+      "const note = '// --- FILE: App.tsx'\nfunction App(){ return 1 }\n" + 'x '.repeat(1200)
+    expect(isQualityApp(code, 'abc')).toBe(true)
+  })
+
+  it('accepts substantive single-file code containing a decoy marker inside a block comment', () => {
+    const code =
+      '/**\n * Elsewhere we use the // --- FILE: path/to/file.tsx --- convention.\n */\n' +
+      'function App(){ return 1 }\n' + 'x '.repeat(1200)
+    expect(isQualityApp(code, 'abc')).toBe(true)
+  })
 })
