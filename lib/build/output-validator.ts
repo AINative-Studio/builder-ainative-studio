@@ -395,6 +395,15 @@ function parseLocalDefinitions(code: string): Set<string> {
  *  binding check; only the well-known members are exempted outright). */
 const AMBIENT_JSX_GLOBALS = new Set(['Fragment'])
 
+/** An identifier character immediately before a `<` means it's a generic type
+ * argument (`Array<Foo>`, `useRef<HTMLInputElement>(null)`, `React.
+ * ButtonHTMLAttributes<HTMLButtonElement>`), not a JSX tag — a real JSX `<`
+ * is always preceded by whitespace, punctuation, or the start of the file.
+ * Same fix as completeness-gate.ts's findUndeclaredJsxComponents (#1998) —
+ * this is a separate, independently-maintained regex with the same shape, so
+ * that fix didn't cover it. */
+const IDENTIFIER_CHAR = /[A-Za-z0-9_$]/
+
 /**
  * PURE. Returns the capitalized JSX component names USED in `code` that have
  * no import binding and no local definition in the SAME file. Namespaced JSX
@@ -412,6 +421,13 @@ export function findMissingJsxImports(code: string): string[] {
   const jsxTag = /<([A-Z][\w$]*)(?:\.[A-Za-z_$][\w$]*)?[\s/>]/g
   let m: RegExpExecArray | null
   while ((m = jsxTag.exec(masked)) !== null) {
+    // A TS generic type argument immediately following an identifier (e.g.
+    // `React.ButtonHTMLAttributes<HTMLButtonElement>`, `useRef<HTMLInputElement>
+    // (null)`, both common in shadcn-style ui/*.tsx primitives) matches this
+    // same `<Capitalized...>` shape as a real JSX tag — skip a match whose
+    // preceding character is an identifier character.
+    const precedingChar = m.index > 0 ? masked[m.index - 1] : ''
+    if (IDENTIFIER_CHAR.test(precedingChar)) continue
     used.add(m[1])
   }
   if (used.size === 0) return []
