@@ -172,6 +172,41 @@ function hasUnresolvableBareImport(code: string): boolean {
 }
 
 /**
+ * #2016: the AIKit/shadcn auto-import safety nets below decide a component
+ * is "already imported" (and so skip injecting the correction) by checking
+ * only whether the identifier appears somewhere between `import` and `from`
+ * — not whether that import's `from` clause actually resolves to the
+ * component's real bundle. A generated file that imports e.g. `AIKitBanner`
+ * from `./components/ui` (the shadcn barrel, not `./components/aikit`,
+ * where it's really exported) satisfies that check and the real, resolvable
+ * import is never injected, leaving the wrong-bundle import live and
+ * unresolvable in Sandpack.
+ *
+ * Detaches `name` from any single-line `import { ... } from '...'`
+ * statement whose module path isn't one of `acceptableModules`, dropping
+ * the whole statement if `name` was its only named specifier. This makes
+ * `name` look "not yet imported" again so the ordinary injection logic
+ * right below adds a correct, resolvable import instead of leaving a
+ * second, conflicting one. A no-op when `name` isn't imported at all, or is
+ * already imported from a bundle that really exports it — `Skeleton` is
+ * exported by both the aikit and the shadcn bundle, so either path is
+ * legitimate and neither should be rewritten to the other.
+ */
+function detachFromWrongPathImport(code: string, name: string, acceptableModules: string[]): string {
+  const importLineRe = /^import\s*\{([^}]*)\}\s*from\s*(['"])([^'"]+)\2\s*;?\s*$/gm
+  return code.replace(importLineRe, (fullLine, specifiers: string, quote: string, modulePath: string) => {
+    if (acceptableModules.includes(modulePath)) return fullLine
+    const specs = specifiers.split(',').map(s => s.trim()).filter(Boolean)
+    const matches = (s: string) => s.replace(/^type\s+/, '').split(/\s+as\s+/)[0].trim() === name
+    if (!specs.some(matches)) return fullLine
+    const remaining = specs.filter(s => !matches(s))
+    return remaining.length > 0
+      ? `import { ${remaining.join(', ')} } from ${quote}${modulePath}${quote}`
+      : ''
+  })
+}
+
+/**
  * Build the final Sandpack `files` map from a generated app's raw files map,
  * exactly as components/chat/sandpack-preview.tsx does: overlay onto builtins,
  * normalize /src and /app paths, assemble /App.tsx as the entry point, then run
@@ -525,57 +560,89 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
     // right before each block below (rather than once, upfront) since
     // `fixed` is mutated in between by the aikit block's own injection.
 
+    const aikitComponents = [
+      'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView',
+      'SafetyBadge', 'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay',
+      'TokenUsageBar', 'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable',
+      'AIKitTimeline', 'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard',
+      'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
+      'AIKitStepper', 'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
+    ]
+    const shadcnMap: Record<string, string[]> = {
+      'ui/button': ['Button'],
+      'ui/card': ['Card', 'CardHeader', 'CardContent', 'CardTitle', 'CardDescription', 'CardFooter'],
+      'ui/badge': ['Badge'],
+      'ui/avatar': ['Avatar', 'AvatarImage', 'AvatarFallback'],
+      'ui/input': ['Input'],
+      'ui/tabs': ['Tabs', 'TabsList', 'TabsTrigger', 'TabsContent'],
+      'ui/label': ['Label'],
+      'ui/table': ['Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell'],
+      'ui/separator': ['Separator'],
+      'ui/progress': ['Progress', 'CircularProgress'],
+      'ui/alert': ['Alert', 'AlertTitle', 'AlertDescription'],
+      'ui/dialog': ['Dialog', 'DialogOverlay', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter'],
+      'ui/select': ['Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem'],
+      'ui/checkbox': ['Checkbox', 'RadioGroup', 'RadioGroupItem'],
+      'ui/accordion': ['Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent'],
+      // This map had drifted out of sync with lib/sandpack/shadcn-bundle.ts's
+      // real export surface — same shape as #1248 (AIKIT_COMPONENTS missing
+      // VideoPlayer/StreamingText/MediaGallery). A model using any of these
+      // without an explicit import sailed through this safety net unfixed.
+      'ui/popover': ['Popover', 'PopoverTrigger', 'PopoverContent'],
+      'ui/switch': ['Switch'],
+      'ui/textarea': ['Textarea'],
+      'ui/tooltip': ['Tooltip', 'TooltipProvider', 'TooltipTrigger', 'TooltipContent'],
+      'ui/dropdown-menu': ['DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuLabel', 'DropdownMenuSeparator'],
+      'ui/scroll-area': ['ScrollArea', 'ScrollBar'],
+      'ui/skeleton': ['Skeleton'],
+      'ui/slider': ['Slider'],
+      'ui/toast': ['Toast', 'ToastDescription', 'ToastTitle'],
+    }
+    const aikitModule = `${componentsPrefix}aikit`
+    // #2016: every bundle path that really exports a given name. `Skeleton`
+    // is exported by both bundles, so both of its paths are legitimate and
+    // neither detach pass below may rewrite one into the other.
+    const bundlePathsByComponent: Record<string, string[]> = {}
+    for (const c of aikitComponents) {
+      bundlePathsByComponent[c] = [...(bundlePathsByComponent[c] || []), aikitModule]
+    }
+    for (const [mod, components] of Object.entries(shadcnMap)) {
+      for (const c of components) {
+        bundlePathsByComponent[c] = [...(bundlePathsByComponent[c] || []), `${componentsPrefix}${mod}`]
+      }
+    }
+
     {
-      const aikitComponents = [
-        'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView',
-        'SafetyBadge', 'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay',
-        'TokenUsageBar', 'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable',
-        'AIKitTimeline', 'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard',
-        'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
-        'AIKitStepper', 'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
-      ]
+      // #2016: detach a used component from a wrong-bundle import first, so
+      // the "already imported" check just below can't be fooled by it.
+      for (const c of aikitComponents) {
+        if (new RegExp(`<${c}[\\s/>]`).test(maskCommentsAndStrings(fixed))) {
+          fixed = detachFromWrongPathImport(fixed, c, bundlePathsByComponent[c])
+        }
+      }
       const fixedNoComments = maskCommentsAndStrings(fixed)
       const usedAikit = aikitComponents.filter(c =>
         new RegExp(`<${c}[\\s/>]`).test(fixedNoComments) &&
         !new RegExp(`import\\s+.*\\b${c}\\b.*from\\s+`).test(fixedNoComments)
       )
       if (usedAikit.length > 0) {
-        fixed = `import { ${usedAikit.join(', ')} } from '${componentsPrefix}aikit'\n${fixed}`
+        fixed = `import { ${usedAikit.join(', ')} } from '${aikitModule}'\n${fixed}`
       }
     }
 
     {
-      const shadcnMap: Record<string, string[]> = {
-        'ui/button': ['Button'],
-        'ui/card': ['Card', 'CardHeader', 'CardContent', 'CardTitle', 'CardDescription', 'CardFooter'],
-        'ui/badge': ['Badge'],
-        'ui/avatar': ['Avatar', 'AvatarImage', 'AvatarFallback'],
-        'ui/input': ['Input'],
-        'ui/tabs': ['Tabs', 'TabsList', 'TabsTrigger', 'TabsContent'],
-        'ui/label': ['Label'],
-        'ui/table': ['Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell'],
-        'ui/separator': ['Separator'],
-        'ui/progress': ['Progress', 'CircularProgress'],
-        'ui/alert': ['Alert', 'AlertTitle', 'AlertDescription'],
-        'ui/dialog': ['Dialog', 'DialogOverlay', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter'],
-        'ui/select': ['Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem'],
-        'ui/checkbox': ['Checkbox', 'RadioGroup', 'RadioGroupItem'],
-        'ui/accordion': ['Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent'],
-        // This map had drifted out of sync with lib/sandpack/shadcn-bundle.ts's
-        // real export surface — same shape as #1248 (AIKIT_COMPONENTS missing
-        // VideoPlayer/StreamingText/MediaGallery). A model using any of these
-        // without an explicit import sailed through this safety net unfixed.
-        'ui/popover': ['Popover', 'PopoverTrigger', 'PopoverContent'],
-        'ui/switch': ['Switch'],
-        'ui/textarea': ['Textarea'],
-        'ui/tooltip': ['Tooltip', 'TooltipProvider', 'TooltipTrigger', 'TooltipContent'],
-        'ui/dropdown-menu': ['DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuLabel', 'DropdownMenuSeparator'],
-        'ui/scroll-area': ['ScrollArea', 'ScrollBar'],
-        'ui/skeleton': ['Skeleton'],
-        'ui/slider': ['Slider'],
-        'ui/toast': ['Toast', 'ToastDescription', 'ToastTitle'],
-      }
       const imports: string[] = []
+      // #2016: same wrong-bundle-import blind spot as the AIKit guard above
+      // — detach a used component from any import whose path isn't a bundle
+      // that really exports it, so an import of the right name from the
+      // wrong shadcn submodule doesn't defeat the correction below.
+      for (const components of Object.values(shadcnMap)) {
+        for (const c of components) {
+          if (new RegExp(`<${c}[\\s/>]`).test(maskCommentsAndStrings(fixed))) {
+            fixed = detachFromWrongPathImport(fixed, c, bundlePathsByComponent[c])
+          }
+        }
+      }
       const fixedNoComments = maskCommentsAndStrings(fixed)
       for (const [mod, components] of Object.entries(shadcnMap)) {
         const used = components.filter(c =>
