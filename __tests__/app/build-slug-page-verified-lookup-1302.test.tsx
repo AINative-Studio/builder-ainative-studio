@@ -78,3 +78,73 @@ describe('/build/[slug] page — verified vs. unverified registry miss (#1302)',
     expect(text).not.toContain("couldn't load this preview")
   })
 })
+
+/**
+ * #1956 — real bug found live (company "younova", chatId yWuTbfQZXCWH_-HEYhHDK):
+ * this page checked only entry.chatId, never entry.lifecycleStatus, so a
+ * company the founder took offline via Danger Zone (lifecycleStatus
+ * 'offline' — see danger-zone.ts's own doc comment) still fell through to
+ * render StandalonePreviewFrame, which iframes /api/preview/{chatId}. With no
+ * generation content behind an offline app, that endpoint's own internal
+ * retry loop never resolves — confirmed live via direct browser reproduction:
+ * a permanent "Preparing your preview…" spinner, 15+ consecutive polls over
+ * 2+ minutes with zero console errors, never reaching either a real preview
+ * or the route's own terminal "Preview Unavailable" page. A visitor hitting
+ * the public URL of an intentionally offline (or soft-deleted) company
+ * deserves an honest, immediate message instead of an indefinite unexplained
+ * loading state.
+ */
+describe('/build/[slug] page — an offline or deleted company shows a clear message instead of an indefinite preview spinner (#1956)', () => {
+  const baseEntry = {
+    chatId: 'chat-1',
+    name: 'Younova',
+    color: '#2f6d86',
+    idea: 'an idea',
+    track: 'app' as const,
+    slug: 'younova',
+    createdAt: new Date().toISOString(),
+  }
+
+  it('shows "this app is currently offline" instead of rendering the preview when lifecycleStatus is offline', async () => {
+    resolveAppVerified.mockResolvedValueOnce({
+      entry: { ...baseEntry, lifecycleStatus: 'offline' as const },
+      verified: true,
+    })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'younova' }) })
+    const text = renderToText(tree)
+    expect(text).toContain('currently offline')
+    expect(text).not.toContain('still being built')
+  })
+
+  it('gives the same offline treatment to a soft-deleted company (resolveAppVerified still returns its chatId)', async () => {
+    resolveAppVerified.mockResolvedValueOnce({
+      entry: { ...baseEntry, lifecycleStatus: 'deleted' as const },
+      verified: true,
+    })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'younova' }) })
+    const text = renderToText(tree)
+    expect(text).toContain('currently offline')
+  })
+
+  it('still renders the real preview for an active company (lifecycleStatus "active")', async () => {
+    resolveAppVerified.mockResolvedValueOnce({
+      entry: { ...baseEntry, lifecycleStatus: 'active' as const },
+      verified: true,
+    })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'younova' }) })
+    const text = renderToText(tree)
+    expect(text).not.toContain('currently offline')
+    expect(text).not.toContain('still being built')
+  })
+
+  it('still renders the real preview when lifecycleStatus is entirely absent (legacy rows, defaults to active)', async () => {
+    resolveAppVerified.mockResolvedValueOnce({
+      entry: { ...baseEntry },
+      verified: true,
+    })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'younova' }) })
+    const text = renderToText(tree)
+    expect(text).not.toContain('currently offline')
+    expect(text).not.toContain('still being built')
+  })
+})
