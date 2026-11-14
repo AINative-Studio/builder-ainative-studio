@@ -259,4 +259,94 @@ describe('findDuplicateLandmarkElements', () => {
     ].join('\n')
     expect(findDuplicateLandmarkElements(code)).toEqual([])
   })
+
+  /**
+   * Real bug, overnight render-integrity sweep — confirmed live on real
+   * companies "pathfnd" and "verify803prod". A footer/nav with several
+   * individually agent-tagged LINKS (data-agent-role="link", the
+   * documented AX convention for interactive children — lib/professional-
+   * prompt.ts, obedience-gate.ts) whose own data-agent-context values
+   * happen to use the landmark's name as a namespace prefix
+   * ("footer-features", "footer-pricing", "features-nav", ...) used to
+   * read as N DUPLICATE <footer>/<nav> LANDMARKS — hard-failing
+   * checkAppReady on a page with exactly one real footer and one real nav.
+   */
+  it('does not flag footer NAV LINKS (data-agent-role="link") sharing the footer namespace as duplicate footers', () => {
+    const code = `
+      export default function App() {
+        return (
+          <footer data-agent-context="footer-section" className="p-8">
+            <a href="#features" data-agent-role="link" data-agent-context="footer-features">Features</a>
+            <a href="#pricing" data-agent-role="link" data-agent-context="footer-pricing">Pricing</a>
+            <a href="/privacy" data-agent-role="link" data-agent-context="footer-privacy">Privacy</a>
+          </footer>
+        )
+      }
+    `
+    expect(findDuplicateLandmarkElements(code)).toEqual([])
+  })
+
+  it('does not flag nav LINKS (data-agent-role="link") sharing the nav namespace as duplicate navs', () => {
+    const code = `
+      export default function App() {
+        return (
+          <nav data-agent-context="primary-nav" className="flex gap-8">
+            <a href="#features" data-agent-role="link" data-agent-context="features-nav">Features</a>
+            <a href="#pricing" data-agent-role="link" data-agent-context="pricing-nav">Pricing</a>
+          </nav>
+        )
+      }
+    `
+    expect(findDuplicateLandmarkElements(code)).toEqual([])
+  })
+
+  it('still flags a real duplicate footer even when one is followed by individually-tagged links', () => {
+    const code = `
+      export default function App() {
+        return (
+          <div>
+            <footer data-agent-context="footer-section" className="p-8">
+              <a data-agent-role="link" data-agent-context="footer-features">Features</a>
+            </footer>
+            <footer data-agent-context="footer-other" className="p-8">duplicate real footer</footer>
+          </div>
+        )
+      }
+    `
+    const problems = findDuplicateLandmarkElements(code)
+    expect(problems).toHaveLength(1)
+    expect(problems[0].role).toBe('footer')
+    expect(problems[0].contextValues).toEqual(['footer-section', 'footer-other'])
+  })
+
+  /**
+   * Real bug, same sweep — confirmed live on real company "connects-
+   * volunteer-firefighters...". A `<script type="application/json"
+   * dangerouslySetInnerHTML={{ __html: JSON.stringify({ ... }) }}>` agent-
+   * manifest payload commonly documents OTHER elements' selectors as plain
+   * text, e.g. `selector: '[data-agent-context="app-header"]'`. That text
+   * has no literal `<`/`>`, so the tag-matching regex never terminates
+   * until the script tag's own real closing `>`, swallowing the whole JSON
+   * blob into the "opening tag" — and the extraction regex then finds
+   * that JSON STRING's `data-agent-context="app-header"` and misreads it
+   * as a second real `app-header` landmark, even though only one real
+   * `<div data-agent-context="app-header">` exists on the page.
+   */
+  it('does not misread a data-agent-context selector string inside a <script> JSON manifest payload as a real landmark instance', () => {
+    const code = `
+      export default function App() {
+        return (
+          <div>
+            <script type="application/json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
+              sections: [
+                { id: "header", selector: '[data-agent-context="app-header"]', description: "App header" }
+              ]
+            }) }} />
+            <div className="bg-black" data-agent-context="app-header">real header</div>
+          </div>
+        )
+      }
+    `
+    expect(findDuplicateLandmarkElements(code)).toEqual([])
+  })
 })

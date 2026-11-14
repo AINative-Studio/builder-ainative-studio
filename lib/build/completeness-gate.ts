@@ -712,10 +712,40 @@ function findLandmarkElements(content: string): LandmarkMatch[] {
   const tagRe = /<[A-Za-z][\w.]*(?:\s[^<>]*)?>/g
   for (const m of masked.matchAll(tagRe)) {
     const tag = content.slice(m.index, m.index + m[0].length)
+    // Real bug (overnight render-integrity sweep, confirmed live on real
+    // companies — e.g. "pathfnd" and "verify803prod"): a `<script>` element's
+    // opening tag can swallow a WHOLE embedded `dangerouslySetInnerHTML={{
+    // __html: JSON.stringify({...}) }}` agent-manifest payload — that JSON
+    // commonly documents other elements' selectors as plain text, e.g.
+    // `selector: '[data-agent-context="app-header"]'` — and since that text
+    // contains no literal `<`/`>`, it never ends this regex's own match, so
+    // the extraction below finds `data-agent-context="app-header"` inside
+    // the JSON STRING and misreads it as a real attribute on the `<script>`
+    // tag itself, a non-landmark element that was never actually duplicated.
+    // A `<script>` tag can never legitimately BE a structural landmark
+    // region, so exclude it outright rather than trying to out-regex JSON.
+    if (/^<script\b/i.test(tag)) continue
     const ctx = tag.match(/data-agent-context\s*=\s*(?:["']([^"']*)["']|\{['"`]([^'"`]*)['"`]\})/)
     if (!ctx) continue
     const value = ctx[1] ?? ctx[2] ?? ''
     if (!value) continue
+    // Real bug (same sweep — repro'd live on "pathfnd": a `footer-features`
+    // / `footer-pricing` / `footer-privacy` nav LINK inside the footer, each
+    // one individually tagged `data-agent-role="link"` per this codebase's
+    // own documented AX convention (lib/professional-prompt.ts, obedience-
+    // gate.ts: `<a data-agent-role="link" data-agent-context="settings">`).
+    // baseLandmarkRole() below groups any context value containing "footer"
+    // (or "nav") as a hyphen segment under that landmark role, so a footer
+    // with 3+ individually-tagged links reads as 3+ duplicate <footer>
+    // landmarks and hard-fails checkAppReady on a page with exactly one real
+    // footer. A landmark REGION is never itself tagged data-agent-role="link"
+    // or "button" (those roles are reserved for interactive children, per
+    // the same convention) — only an actual container can legitimately be
+    // the thing this detector means to count, so skip any match carrying
+    // one of those roles rather than trying to special-case every possible
+    // child-naming scheme.
+    const roleAttr = tag.match(/data-agent-role\s*=\s*["']([^"']*)["']/)
+    if (roleAttr && (roleAttr[1] === 'link' || roleAttr[1] === 'button')) continue
     out.push({ value, openingTag: tag })
   }
   return out
