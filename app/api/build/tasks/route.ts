@@ -58,6 +58,7 @@ import {
 import { isEnrolled, getLastRun } from '@/lib/build/loop-enrollment'
 import { resolveApp } from '@/lib/build/app-registry'
 import { issueWebUrl } from '@/lib/git/gitea-client'
+import { openIssueForNewTask } from '@/lib/build/task-resolver'
 
 export const runtime = 'nodejs'
 
@@ -112,6 +113,14 @@ export async function GET(request: NextRequest) {
 /**
  * POST — create a task. `title` is required; `stage` defaults to 'todo'. The
  * source is normalized ('cody' unless a trusted caller sets 'swarm'/'recurring').
+ *
+ * Opens the task's real Gitea issue right away when the company is git-
+ * provisioned (#1928's fix, missed here — this is the AX "machine surface"
+ * call site itself: a task created through this endpoint had no nightly
+ * resolveTask() pass guaranteed to ever reach it under a tier's daily cap,
+ * so without this it could stay `giteaIssueNumber: null` — invisible on the
+ * founder's own Gitea issue list — indefinitely). Best-effort: never fails
+ * the response if the issue can't be opened.
  */
 export async function POST(request: NextRequest) {
   const body = await request.json().catch(() => null)
@@ -136,7 +145,10 @@ export async function POST(request: NextRequest) {
     taskId: body?.taskId ?? null,
   })
   if (!task) return Response.json({ error: 'could not create task' }, { status: 502 })
-  return Response.json({ task })
+
+  const app = await resolveApp(companyId).catch(() => null)
+  const withIssue = await openIssueForNewTask(scopeKey, app?.gitOrg, companyId, task).catch(() => task)
+  return Response.json({ task: withIssue })
 }
 
 /**

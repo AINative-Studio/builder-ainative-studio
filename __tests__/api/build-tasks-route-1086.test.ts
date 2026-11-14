@@ -19,7 +19,8 @@ const h = vi.hoisted(() => ({
   updateTask: vi.fn(),
   isEnrolled: vi.fn(async () => false),
   getLastRun: vi.fn(async () => null),
-  resolveApp: vi.fn(async (): Promise<{ gitRepoUrl?: string } | null> => null),
+  resolveApp: vi.fn(async (): Promise<{ gitRepoUrl?: string; gitOrg?: string } | null> => null),
+  openIssueForNewTask: vi.fn(async (_scopeKey: string, _gitOrg: unknown, _slug: string, task: unknown) => task),
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
@@ -28,6 +29,7 @@ vi.mock('@/lib/build/loop-enrollment', () => ({
   getLastRun: h.getLastRun,
 }))
 vi.mock('@/lib/build/app-registry', () => ({ resolveApp: h.resolveApp }))
+vi.mock('@/lib/build/task-resolver', () => ({ openIssueForNewTask: h.openIssueForNewTask }))
 vi.mock('@/lib/build/task-store', async () => {
   const actual = await vi.importActual<typeof import('@/lib/build/task-store')>('@/lib/build/task-store')
   return {
@@ -172,6 +174,8 @@ describe('POST /api/build/tasks (#1086 regression — writes stay owner-scoped)'
   beforeEach(() => {
     h.auth.mockReset().mockResolvedValue({ user: { email: 'founderA@x.com' } })
     h.createTask.mockReset().mockResolvedValue(mkTask({ id: 'new-1' }))
+    h.resolveApp.mockReset().mockResolvedValue(null)
+    h.openIssueForNewTask.mockReset().mockImplementation(async (_s: string, _g: unknown, _slug: string, task: unknown) => task)
   })
 
   it('still creates under the viewing session\'s own {owner}::{company} scope key', async () => {
@@ -182,6 +186,55 @@ describe('POST /api/build/tasks (#1086 regression — writes stay owner-scoped)'
       'foundera@x.com::acme',
       expect.objectContaining({ title: 'New task' }),
     )
+  })
+
+  it('#2036 — opens a real Gitea issue for the newly created task when the company is git-provisioned', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'acme-org' })
+    h.createTask.mockResolvedValue(mkTask({ id: 'new-1', title: 'New task' }))
+    h.openIssueForNewTask.mockResolvedValue(mkTask({ id: 'new-1', title: 'New task', giteaIssueNumber: 7 }))
+
+    const res = await POST(postReq({ companyId: 'acme', title: 'New task' }))
+    const json = await res.json()
+
+    expect(h.resolveApp).toHaveBeenCalledWith('acme')
+    expect(h.openIssueForNewTask).toHaveBeenCalledWith(
+      'foundera@x.com::acme',
+      'acme-org',
+      'acme',
+      expect.objectContaining({ id: 'new-1' }),
+    )
+    expect(json.task.giteaIssueNumber).toBe(7)
+  })
+
+  it('#2036 — still opens (gitOrg undefined) when the company is not git-provisioned yet — openIssueForNewTask no-ops internally', async () => {
+    h.resolveApp.mockResolvedValue(null)
+    await POST(postReq({ companyId: 'acme', title: 'New task' }))
+
+    expect(h.openIssueForNewTask).toHaveBeenCalledWith(
+      'foundera@x.com::acme',
+      undefined,
+      'acme',
+      expect.objectContaining({ id: 'new-1' }),
+    )
+  })
+
+  it('#2036 — never 500s when resolveApp or openIssueForNewTask rejects, and still returns the created task', async () => {
+    h.resolveApp.mockRejectedValue(new Error('registry down'))
+    h.openIssueForNewTask.mockRejectedValue(new Error('gitea down'))
+
+    const res = await POST(postReq({ companyId: 'acme', title: 'New task' }))
+    const json = await res.json()
+
+    expect(res.status).toBe(200)
+    expect(json.task.id).toBe('new-1')
+  })
+
+  it('#2036 — never calls openIssueForNewTask when createTask itself returned nothing', async () => {
+    h.createTask.mockResolvedValue(null)
+    const res = await POST(postReq({ companyId: 'acme', title: 'New task' }))
+
+    expect(res.status).toBe(502)
+    expect(h.openIssueForNewTask).not.toHaveBeenCalled()
   })
 })
 
