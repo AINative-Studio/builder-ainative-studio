@@ -82,6 +82,39 @@ export default async function AppSubdirPage({ params }: Props) {
     )
   }
 
+  // #1956 — real bug found live (company "younova"): this page checked only
+  // entry.chatId, never entry.lifecycleStatus, so a company the founder took
+  // offline via Danger Zone (lifecycleStatus 'offline' — see danger-zone.ts's
+  // own doc comment: "offline → set app lifecycle 'offline' (kept, not
+  // served)") still fell through to render StandalonePreviewFrame below. That
+  // component iframes /api/preview/{chatId}, which — with no generation
+  // content behind an offline app — polls its own internal retry loop
+  // (MAX_RETRIES in app/api/preview/[id]/route.ts) and shows a permanent
+  // "Preparing your preview…" spinner with no indication anything is wrong,
+  // confirmed live for over a minute with zero errors anywhere. A visitor
+  // (or the founder themselves) hitting the public URL of an intentionally
+  // offline company deserves a clear, honest message instead of an
+  // indefinite, unexplained loading state. 'deleted' gets the identical
+  // treatment here — resolveAppVerified() deliberately still returns a
+  // deleted entry's chatId (unlike the registry-list filtering in
+  // listAllAppsWithStatus(), see its own #1106 doc comment), so this is the
+  // one place that must do its own check rather than relying on an upstream
+  // filter to have already excluded it.
+  if (entry.lifecycleStatus === 'offline' || entry.lifecycleStatus === 'deleted') {
+    return (
+      <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', fontFamily: 'system-ui', background: '#f3f2f2' }}>
+        <div style={{ textAlign: 'center', maxWidth: 460, padding: 24 }}>
+          <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 12, color: '#7d7979' }}>AINATIVE BUILDER</div>
+          <h1 style={{ fontSize: 28, margin: '10px 0' }}>This app is currently offline.</h1>
+          <p style={{ color: '#444' }}>
+            <strong>{entry.name || slug}</strong>&apos;s founder has taken this preview offline. Build your own at{' '}
+            <a href="/build" style={{ color }}>builder.ainative.studio/build</a>.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   // #1561 — mint the SAME per-company data token the single-file preview's
   // dbTokenShim attaches, server-side, right here: this Server Component
   // already has slug+chatId resolved from the verified registry entry, so
