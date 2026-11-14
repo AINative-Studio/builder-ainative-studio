@@ -85,4 +85,69 @@ describe('loadGeneration picks the newest row for a multi-turn chat (younova-cla
     const gen = await loadGeneration('chat-no-rows')
     expect(gen).toBeNull()
   })
+
+  // Real gap found live (2026-11-14, a day after the fix above deployed):
+  // #2000's own repro chat_ids (younova, me-vC5htD, candor, graintrack) were
+  // STILL 404ing on GET /api/generation/{id}/files after #2001 shipped.
+  // saveGeneration() has no "skip on failure" guard, so a later turn can
+  // append an empty row for the same chat_id (an aborted edit, a retry after
+  // an API error) — the newest-by-created_at row is then empty, and the
+  // prior fix's "always take the newest" picks it over the real, older
+  // generation, reproducing the exact permanent-blank-preview symptom this
+  // whole fix was meant to close.
+  it('skips a newer but empty row and falls back to an older row with real content', async () => {
+    fetchMock.mockResolvedValueOnce(
+      okResponse({
+        data: [
+          {
+            row_data: {
+              chat_id: 'chat-later-turn-failed',
+              created_at: '2026-11-10T00:00:00.000Z',
+              prompt: 'build a landing page',
+              generated_code: 'export default function App(){ return <div>Real app</div> }',
+              code_length: 60,
+            },
+          },
+          {
+            row_data: {
+              chat_id: 'chat-later-turn-failed',
+              created_at: '2026-11-13T00:00:00.000Z',
+              prompt: 'add a pricing section',
+              generated_code: '',
+              code_length: 0,
+            },
+          },
+        ],
+      }),
+    )
+    const gen = await loadGeneration('chat-later-turn-failed')
+    expect(gen?.generatedCode).toBe('export default function App(){ return <div>Real app</div> }')
+  })
+
+  it('still returns the newest row when every row for the chat is empty (no regression)', async () => {
+    fetchMock.mockResolvedValueOnce(
+      okResponse({
+        data: [
+          {
+            row_data: {
+              chat_id: 'chat-all-empty',
+              created_at: '2026-11-10T00:00:00.000Z',
+              generated_code: '',
+              code_length: 0,
+            },
+          },
+          {
+            row_data: {
+              chat_id: 'chat-all-empty',
+              created_at: '2026-11-13T00:00:00.000Z',
+              generated_code: '   ',
+              code_length: 3,
+            },
+          },
+        ],
+      }),
+    )
+    const gen = await loadGeneration('chat-all-empty')
+    expect(gen?.generatedCode).toBe('   ')
+  })
 })
