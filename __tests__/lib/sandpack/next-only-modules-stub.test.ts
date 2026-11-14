@@ -101,4 +101,26 @@ describe('fixJsxErrors — stubs remaining Next.js-only module specifiers (#1154
     expect(fixed).not.toMatch(/^const Roboto/m)
     expect(fixed).toContain('const x = 1')
   })
+
+  // #2048: #1879 only guarded this file's multi-line stub-map branches,
+  // reasoning a single-line replacement (next/dynamic, next/script) "can't
+  // escape" a leading `//` comment. That missed the regex's trailing `\s*`
+  // also swallowing the newline after the import — so when the import is
+  // already commented out, the REAL next source line gets dragged onto the
+  // same (still commented) line and silently disappears.
+  it('does not swallow the next real line when a commented-out next/dynamic import precedes it', () => {
+    const code = "// import dynamic from 'next/dynamic'\nexport default function App(){ return <div>hi</div> }"
+    const fixed = fixJsxErrors(code)
+    expect(fixed).toContain("// import dynamic from 'next/dynamic'")
+    expect(fixed).not.toMatch(/^\/\/.*export default function App/m)
+    expect(fixed).toMatch(/^export default function App/m)
+  })
+
+  it('does not swallow the next real line when a commented-out next/script import precedes it', () => {
+    const code = "// import Script from 'next/script'\nexport default function App(){ return <div>hi</div> }"
+    const fixed = fixJsxErrors(code)
+    expect(fixed).toContain("// import Script from 'next/script'")
+    expect(fixed).not.toMatch(/^\/\/.*export default function App/m)
+    expect(fixed).toMatch(/^export default function App/m)
+  })
 })
