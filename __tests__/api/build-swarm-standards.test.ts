@@ -24,6 +24,8 @@ const h = vi.hoisted(() => ({
   deriveOwnerKey: vi.fn(() => 'owner'),
   chatScopeKey: vi.fn(() => 'scope'),
   fetch: vi.fn(),
+  resolveAppVerified: vi.fn(),
+  openIssueForNewTask: vi.fn(),
 }))
 
 vi.mock('@/app/(auth)/auth', () => ({ auth: h.auth }))
@@ -36,6 +38,8 @@ vi.mock('@/lib/build/chat-store', () => ({
   deriveOwnerKey: h.deriveOwnerKey,
   chatScopeKey: h.chatScopeKey,
 }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: h.resolveAppVerified }))
+vi.mock('@/lib/build/task-resolver', () => ({ openIssueForNewTask: h.openIssueForNewTask }))
 
 import { POST } from '@/app/api/build/swarm/route'
 
@@ -43,11 +47,18 @@ function req(body: unknown) {
   return { json: async () => body } as any
 }
 
+/** Flushes the microtask queue so the fire-and-forget
+ * resolveAppVerified().then(createTask).then(openIssueForNewTask) chain
+ * (#2036-series follow-up) has had a chance to run before assertions check it. */
+const flush = () => new Promise((r) => setTimeout(r, 0))
+
 beforeEach(() => {
   h.auth.mockReset()
   h.getPlanStatus.mockReset()
   h.createTask.mockReset().mockResolvedValue(undefined)
   h.fetch.mockReset()
+  h.resolveAppVerified.mockReset().mockResolvedValue({ entry: null, verified: false })
+  h.openIssueForNewTask.mockReset().mockResolvedValue(undefined)
   vi.stubGlobal('fetch', h.fetch)
 })
 
@@ -113,5 +124,80 @@ describe('POST /api/build/swarm — standards injection (#71)', () => {
     expect(data.real).toBe(false)
     expect(data.reason).toBe('tier')
     expect(h.fetch).not.toHaveBeenCalled()
+  })
+})
+
+describe('POST /api/build/swarm — real Gitea issue for the dispatched task (#2036-series follow-up)', () => {
+  it('opens a real Gitea issue for the task once the company is git-provisioned', async () => {
+    h.auth.mockResolvedValue({ accessToken: 'tok' })
+    h.getPlanStatus.mockResolvedValue({ tier: 'enterprise' })
+    h.fetch.mockResolvedValue({ ok: true, json: async () => ({ task_id: 't1', status: 'queued' }) })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'acme-org' }, verified: true })
+    h.createTask.mockResolvedValue({ id: 'task-1', title: 'Ship the dashboard' })
+
+    const res = await POST(req({ description: 'Ship the dashboard', companyId: 'acme' }))
+    await res.json()
+    await flush()
+
+    expect(h.resolveAppVerified).toHaveBeenCalledWith('acme')
+    expect(h.openIssueForNewTask).toHaveBeenCalledTimes(1)
+    const [scopeKey, gitOrg, slug, task] = h.openIssueForNewTask.mock.calls[0]
+    expect(scopeKey).toBe('scope')
+    expect(gitOrg).toBe('acme-org')
+    expect(slug).toBe('acme')
+    expect(task).toMatchObject({ id: 'task-1' })
+  })
+
+  it('never opens an issue when the company has no gitOrg yet (openIssueForNewTask itself no-ops, but still safe to call)', async () => {
+    h.auth.mockResolvedValue({ accessToken: 'tok' })
+    h.getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    h.fetch.mockResolvedValue({ ok: true, json: async () => ({ task_id: 't1', status: 'queued' }) })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: null }, verified: true })
+    h.createTask.mockResolvedValue({ id: 'task-1', title: 'Ship the dashboard' })
+
+    await POST(req({ description: 'Ship the dashboard', companyId: 'acme' }))
+    await flush()
+
+    expect(h.openIssueForNewTask).toHaveBeenCalledWith('scope', null, 'acme', { id: 'task-1', title: 'Ship the dashboard' })
+  })
+
+  it('never opens an issue when createTask itself returned nothing (no real task to attach one to)', async () => {
+    h.auth.mockResolvedValue({ accessToken: 'tok' })
+    h.getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    h.fetch.mockResolvedValue({ ok: true, json: async () => ({ task_id: 't1', status: 'queued' }) })
+    h.resolveAppVerified.mockResolvedValue({ entry: { gitOrg: 'acme-org' }, verified: true })
+    h.createTask.mockResolvedValue(null)
+
+    await POST(req({ description: 'Ship the dashboard', companyId: 'acme' }))
+    await flush()
+
+    expect(h.openIssueForNewTask).not.toHaveBeenCalled()
+  })
+
+  it('never calls resolveAppVerified or createTask when no companyId/chatId is given', async () => {
+    h.auth.mockResolvedValue({ accessToken: 'tok' })
+    h.getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    h.fetch.mockResolvedValue({ ok: true, json: async () => ({ task_id: 't1', status: 'queued' }) })
+
+    await POST(req({ description: 'Ship the dashboard' }))
+    await flush()
+
+    expect(h.resolveAppVerified).not.toHaveBeenCalled()
+    expect(h.createTask).not.toHaveBeenCalled()
+    expect(h.openIssueForNewTask).not.toHaveBeenCalled()
+  })
+
+  it('a resolveAppVerified failure never breaks the swarm dispatch response itself', async () => {
+    h.auth.mockResolvedValue({ accessToken: 'tok' })
+    h.getPlanStatus.mockResolvedValue({ tier: 'pro' })
+    h.fetch.mockResolvedValue({ ok: true, json: async () => ({ task_id: 't1', status: 'queued' }) })
+    h.resolveAppVerified.mockRejectedValue(new Error('zerodb hiccup'))
+
+    const res = await POST(req({ description: 'Ship the dashboard', companyId: 'acme' }))
+    const data = await res.json()
+    await flush()
+
+    expect(data.real).toBe(true)
+    expect(h.openIssueForNewTask).not.toHaveBeenCalled()
   })
 })
