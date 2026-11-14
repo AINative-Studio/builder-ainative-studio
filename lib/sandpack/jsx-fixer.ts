@@ -907,7 +907,26 @@ function stubNextOnlyImports(code: string): string {
 function stubUnsupportedIconLibraries(code: string): string {
   const masked = maskPreservingOffsets(code)
   return code.replace(
-    /import\s*\{([^}]*)\}\s*from\s*['"]react-icons\/[\w-]+['"]\s*;?/g,
+    // Found this run (bug class twin to #1879/#1887): the trailing `\s*;?`
+    // this regex used to end with is NOT "an optional semicolon, maybe with
+    // some space before it" -- `\s` matches `\n` too, so with no semicolon
+    // present (common in semicolon-free generated code) `\s*` greedily eats
+    // every following newline/blank line up to the next non-whitespace
+    // token, right up against this file's own comment-ending replacement
+    // (every stub line below ends in a bare trailing `//` comment with no
+    // `\n` of its own). Confirmed live by direct repro: a react-icons import
+    // immediately followed by `export default function App(){...}` on the
+    // next line gets stubbed into
+    // `const X = (...) => null // Auto-stubbed...export default function App(){...}`
+    // -- the ENTIRE rest of the component silently vanishes into that one
+    // comment, leaving a file with no export at all (a "zero export, cut
+    // off mid-generation" false truncation signal one layer removed from
+    // this file's own real generation -- the stubber truncated it, not the
+    // model). `[ \t]*` only eats same-line horizontal whitespace before an
+    // optional semicolon, never a newline, so whatever followed the import
+    // on its own line(s) is always left intact for the `\n`-joined stub
+    // declarations below to precede, not swallow.
+    /import\s*\{([^}]*)\}\s*from\s*['"]react-icons\/[\w-]+['"][ \t]*;?/g,
     (match, names: string, offset: number) => {
       // A commented-out multi-icon import (e.g. `// import { FaIcon, FaStar }
       // from 'react-icons/fa'`) would otherwise resurrect every icon after
