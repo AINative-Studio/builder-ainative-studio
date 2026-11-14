@@ -192,6 +192,17 @@ function hasUnresolvableBareImport(code: string): boolean {
  * exported by both the aikit and the shadcn bundle, so either path is
  * legitimate and neither should be rewritten to the other.
  */
+/**
+ * Global/ambient identifiers a generated component may reference as a JSX
+ * tag without ever importing or declaring them — same list as
+ * completeness-gate.ts's own `KNOWN_GLOBAL_JSX` (kept in sync by hand; this
+ * file doesn't import that one to avoid coupling the Sandpack-preview build
+ * pipeline to the generation-time completeness gate). Used by the
+ * undeclared-JSX catch-all stub (#2026) below so it never "fixes" one of
+ * these by injecting a redundant local declaration.
+ */
+const KNOWN_GLOBAL_JSX_NAMES = new Set(['React', 'Fragment', 'Suspense', 'ErrorBoundary'])
+
 function detachFromWrongPathImport(code: string, name: string, acceptableModules: string[]): string {
   const importLineRe = /^import\s*\{([^}]*)\}\s*from\s*(['"])([^'"]+)\2\s*;?\s*$/gm
   return code.replace(importLineRe, (fullLine, specifiers: string, quote: string, modulePath: string) => {
@@ -830,6 +841,81 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
           ([rel, names]) => `import { ${names.join(', ')} } from '${rel}'`
         )
         fixed = importLines.join('\n') + '\n' + fixed
+      }
+    }
+
+    // Catch-all (#2026): a bare capitalized JSX tag with NO import statement
+    // for it anywhere in the file and no local declaration, that survived
+    // every name-specific safety net above (AIKit/shadcn/lucide icons/local
+    // siblings) because it isn't a real AIKit/shadcn/lucide/sibling name at
+    // all — a wholly invented identifier the model hallucinated. Confirmed
+    // live: company 'revela', Navbar.tsx's `<MenuIcon/>`/`<XIcon/>` (the
+    // DEFAULT branch of a ternary, rendered unconditionally — not a
+    // conditional-only path) and HowItWorks.tsx's `<LoginIcon/>`/
+    // `<AnalyticsIcon/>`/`<LightningIcon/>`. None of these exist in
+    // lucide-react (whose real names for the same concepts are `X`, `Menu`,
+    // `LogIn`, etc., with no `Icon` suffix) or any other known-name list
+    // this file maintains, so every net above correctly declines to touch
+    // them — each one only reacts to a name it specifically recognizes.
+    // Left alone, this throws "X is not defined" the instant React renders
+    // the component, crashing the whole preview exactly like the missing-
+    // sibling-FILE case `stubMissingLocalComponents()` already guards
+    // against below — this is the same gap one level up, for a missing
+    // sibling IDENTIFIER with no import line at all to anchor a path-based
+    // fix to. Mirrors that function's "degrade to an inert stub, never take
+    // down the whole preview" philosophy: synthesize a trivial local inert
+    // declaration right in this file for any such name, so the component
+    // simply renders nothing instead of throwing.
+    //
+    // Deliberately conservative — never fires for a name this pass can't be
+    // sure is genuinely undeclared:
+    //  - Only bare tags (`<Name` followed by whitespace/`/`/`>`), never a
+    //    member-expression tag (`<Foo.Bar>`) — `Foo` there is very likely a
+    //    namespace import/object already handled (or not) by other logic,
+    //    not this shape.
+    //  - Checked against a loose `import\s+.*\bName\b.*from\s+` test (same
+    //    "already imported" pattern the AIKit/shadcn/lucide/sibling nets
+    //    above already use) — ANY import statement mentioning the name at
+    //    all is enough to skip it, so this only ever fires on a name with
+    //    truly zero import line.
+    //  - Checked against a local-declaration test covering function/class/
+    //    const/let/var declarations AND destructuring (`const { Name }`,
+    //    function-parameter destructuring `({ Name }) =>`) and import-like
+    //    aliasing — matching completeness-gate.ts's own
+    //    collectKnownIdentifiers()'s declaration shapes plus destructuring,
+    //    deliberately erring toward treating more things as "already
+    //    declared" (and skipping) rather than risking a duplicate
+    //    declaration, which would introduce a real
+    //    "has already been declared" SyntaxError strictly worse than the
+    //    original bug.
+    //  - Runs against a comment/string-masked view throughout (same
+    //    `maskCommentsAndStrings` used by every other injector in this
+    //    function) so a merely-mentioned name inside a comment/string can
+    //    never trigger or suppress this.
+    {
+      const fixedNoComments = maskCommentsAndStrings(fixed)
+      const tagNames = new Set<string>()
+      for (const m of fixedNoComments.matchAll(/<([A-Z][\w$]*)(?=[\s/>])/g)) {
+        tagNames.add(m[1])
+      }
+      const toDeclare: string[] = []
+      for (const name of tagNames) {
+        if (KNOWN_GLOBAL_JSX_NAMES.has(name)) continue
+        const alreadyImported = new RegExp(`import\\s+.*\\b${name}\\b.*from\\s+`).test(fixedNoComments)
+        if (alreadyImported) continue
+        const locallyDeclared = new RegExp(
+          `(?:^|[\\n;{(\\s])(?:export\\s+(?:default\\s+)?)?(?:async\\s+)?(?:function|class)\\s+${name}\\b` +
+            `|(?:^|[\\n;{(\\s])(?:export\\s+)?(?:const|let|var)\\s+${name}\\b` +
+            `|[{,]\\s*${name}\\s*(?:[,}:]|\\s+as\\b)`,
+        ).test(fixedNoComments)
+        if (locallyDeclared) continue
+        toDeclare.push(name)
+      }
+      if (toDeclare.length > 0) {
+        const decls = toDeclare.map(
+          (name) => `const ${name} = (props) => (props && props.children) || null;`,
+        )
+        fixed = decls.join('\n') + '\n' + fixed
       }
     }
 
