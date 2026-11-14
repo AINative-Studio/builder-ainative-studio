@@ -1025,3 +1025,121 @@ describe('buildSandpackFiles — undeclared-JSX catch-all stub for a wholly hall
     expect(built['/App.tsx'].match(/^const Ghost = /gm)?.length).toBe(1)
   })
 })
+
+/**
+ * Real production bug (#2029, root-caused via static analysis + local
+ * reproduction, company 'younova'): buildLocalExportMap() only recognizes a
+ * NAMED export (`export const/function/class Name`), so a sibling
+ * default-exported in either common shape — inline `export default function
+ * Name() {}`, or the equally common two-step `function Name() {}` ...
+ * `export default Name;` (younova's real TaskList.tsx uses the two-step
+ * shape) — was invisible to the sibling-import injector. Before #2026's
+ * catch-all existed this crashed outright ("Name is not defined"); after
+ * #2026 it's silently and more dangerously masked — the catch-all can't
+ * tell a real default-exported sibling apart from a truly-hallucinated
+ * name, so it stubbed the real, working component to an inert no-op
+ * instead of ever importing it.
+ */
+describe('buildSandpackFiles — sibling-import injector recognizes a default-exported component (#2029)', () => {
+  it('imports a sibling exported via the two-step shape (declare, then a separate `export default Name;`) — the exact younova/TaskList repro', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "export default function App(){ return <TaskList projectId={1} tasks={[]} updateTasks={()=>{}} /> }",
+      '/components/TaskList.tsx': [
+        'function TaskList({ projectId, tasks, updateTasks }) {',
+        '  return <ul>{tasks.length}</ul>',
+        '}',
+        'export default TaskList;',
+      ].join('\n'),
+    })
+    expect(built['/App.tsx']).toContain("import TaskList from './components/TaskList'")
+    // Must NOT fall through to #2026's catch-all stub for the same name.
+    expect(built['/App.tsx']).not.toMatch(/^const TaskList = \(props\)/m)
+  })
+
+  it('imports a sibling exported via the inline shape (`export default function Name() {}`)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <PriceTag/> }",
+      '/components/PriceTag.tsx': 'export default function PriceTag() { return <span>new</span> }',
+    })
+    expect(built['/App.tsx']).toContain("import PriceTag from './components/PriceTag'")
+    expect(built['/App.tsx']).not.toMatch(/^const PriceTag = \(props\)/m)
+  })
+
+  it('imports a sibling exported via the inline shape for a class component', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Boundary/> }",
+      '/components/Boundary.tsx': 'export default class Boundary extends React.Component { render() { return null } }',
+    })
+    expect(built['/App.tsx']).toContain("import Boundary from './components/Boundary'")
+  })
+
+  it('does NOT emit a named import for a default-exported sibling — that would itself crash with "does not provide an export named"', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <PriceTag/> }",
+      '/components/PriceTag.tsx': 'export default function PriceTag() { return <span>new</span> }',
+    })
+    expect(built['/App.tsx']).not.toContain("import { PriceTag }")
+  })
+
+  it('does not claim a name for a bare `export default Name;` when Name has no actual local declaration in that file (re-exporting some other expression, not a real local component)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Wrapped/> }",
+      '/components/Wrapped.tsx': [
+        "import Wrapped from 'some-external-lib'",
+        'export default Wrapped;',
+      ].join('\n'),
+    })
+    expect(built['/App.tsx']).not.toContain("import Wrapped from './components/Wrapped'")
+  })
+
+  it('leaves an anonymous default export (no name to offer) alone — falls through to #2026 catch-all instead of crashing', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Anon/> }",
+      '/components/Anon.tsx': 'export default function() { return null }',
+    })
+    expect(built['/App.tsx']).not.toContain("import Anon from")
+    expect(built['/App.tsx']).toMatch(/^const Anon = \(props\)/m)
+  })
+
+  it('drops an ambiguous default-export name claimed by two different files, same safety as the named-export map', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Widget/> }",
+      '/components/WidgetA.tsx': 'export default function Widget() { return <div>a</div> }',
+      '/components/WidgetB.tsx': 'export default function Widget() { return <div>b</div> }',
+    })
+    expect(built['/App.tsx']).not.toContain("import Widget from './components/WidgetA'")
+    expect(built['/App.tsx']).not.toContain("import Widget from './components/WidgetB'")
+  })
+
+  it('prefers a real named export over a same-named default export elsewhere (named map wins, no double-import)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Panel/> }",
+      '/components/Panel.tsx': 'export function Panel() { return <div>named</div> }',
+    })
+    const importLines = (built['/App.tsx'].match(/^import .*Panel.*$/gm) || [])
+    expect(importLines).toHaveLength(1)
+    expect(importLines[0]).toContain("import { Panel } from './components/Panel'")
+  })
+
+  it('is comment-blind to a merely-mentioned `export default Name;` (#1900-class safety, same as buildLocalExportMap)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Old/> }",
+      '/components/Old.tsx': [
+        '// Previously: export default Old (removed)',
+        'function Old() { return null }',
+      ].join('\n'),
+    })
+    expect(built['/App.tsx']).not.toContain("import Old from")
+  })
+
+  it('does not inject a self-import when the default-exporting file is the consuming file itself', () => {
+    const built = buildSandpackFiles({
+      '/components/Self.tsx': [
+        'function Self() { return <div><Self/></div> }',
+        'export default Self;',
+      ].join('\n'),
+    })
+    expect(built['/components/Self.tsx']).not.toContain("import Self from")
+  })
+})

@@ -465,6 +465,21 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
   // from each file's original generated source.
   const localExportMap = buildLocalExportMap(sandpackFiles, builtinPaths)
 
+  // #2029: a sibling component default-exported (either shape — inline
+  // `export default function Name() {}`, or the equally common two-step
+  // `function Name() {}` ... `export default Name;`) is invisible to
+  // buildLocalExportMap()'s named-export-only regex, so the sibling-import
+  // injector below never offered it — leaving a real, correctly-written
+  // component's JSX usage with no import. Before #2026's catch-all existed
+  // this crashed outright ("Name is not defined", confirmed live for
+  // company younova's TaskList — #2021); after #2026 it's silently and
+  // more dangerously masked: the catch-all can't tell this apart from a
+  // truly-hallucinated name, so it stubs the real, working component to an
+  // inert no-op instead of importing it. Built from each file's ORIGINAL
+  // source for the same reason localExportMap is (above) — before any
+  // injection pass below mutates file content.
+  const localDefaultExportMap = buildLocalDefaultExportMap(sandpackFiles, builtinPaths)
+
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (!path.endsWith('.tsx')) continue
     if (builtinPaths.has(path)) continue
@@ -841,6 +856,28 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
           ([rel, names]) => `import { ${names.join(', ')} } from '${rel}'`
         )
         fixed = importLines.join('\n') + '\n' + fixed
+      }
+
+      // #2029: same injection, for a sibling used in JSX but only
+      // DEFAULT-exported — a plain named `import { Name }` would itself
+      // crash ("does not provide an export named 'Name'"), so this needs
+      // its own default-import line, kept one-per-file since a default
+      // export is exactly one binding (unlike the named case above, which
+      // can group several names from the same file onto one line).
+      const defaultImportLines: string[] = []
+      for (const [name, exportingPath] of localDefaultExportMap) {
+        if (exportingPath === selfPath) continue
+        if (localExportMap.has(name)) continue // named export already wins above
+        if (!new RegExp(`<${name}[\\s/>]`).test(fixedNoComments)) continue
+        if (
+          new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`).test(fixedNoComments) ||
+          new RegExp(`import\\s+${name}\\b`).test(fixedNoComments)
+        ) continue
+        const rel = relativeImportPath(path, exportingPath)
+        defaultImportLines.push(`import ${name} from '${rel}'`)
+      }
+      if (defaultImportLines.length > 0) {
+        fixed = defaultImportLines.join('\n') + '\n' + fixed
       }
     }
 
@@ -1458,6 +1495,71 @@ function buildLocalExportMap(sandpackFiles: Record<string, string>, builtinPaths
       }
       map.set(name, normalized)
     }
+  }
+  for (const name of ambiguous) map.delete(name)
+  return map
+}
+
+/**
+ * #2029: companion to buildLocalExportMap() above, for a sibling component
+ * that's DEFAULT-exported rather than named — invisible to that function's
+ * named-export-only regex, so the sibling-import injector never offered it,
+ * leaving real JSX usage of a real, correctly-written component with no
+ * import at all (then, after #2026, silently stubbed to an inert no-op by
+ * that catch-all instead of crashing outright — see this function's call
+ * site for the full incident). Recognizes both default-export shapes an LLM
+ * is equally likely to produce:
+ *   - inline: `export default function Name() {}` / `export default class
+ *     Name {}`
+ *   - two-step (confirmed live for company younova's TaskList.tsx):
+ *     `function Name() {}` / `const Name = () => {}` ... later, anywhere
+ *     else in the file, a bare `export default Name;`
+ * A file with an ANONYMOUS default export (`export default function() {}`,
+ * `export default () => {}`) has no name to offer here at all — correctly
+ * left alone, same as buildLocalExportMap() leaves a name it can't resolve
+ * unambiguously. Same ambiguity-drops-the-name safety as that function.
+ * Scanned comment/string-masked for the same reason #1900 masks
+ * buildLocalExportMap()'s scan: a comment merely MENTIONING an old
+ * `export default Name;` line must never register as a real export.
+ */
+function buildLocalDefaultExportMap(sandpackFiles: Record<string, string>, builtinPaths: Set<string>): Map<string, string> {
+  const inlineDefaultRe = /export\s+default\s+(?:async\s+)?(?:function|class)\s+([A-Z]\w*)/
+  const bareDefaultRe = /export\s+default\s+([A-Za-z_$][\w$]*)\s*;?/
+  const localDeclRe = (name: string) =>
+    new RegExp(
+      `(?:^|[\\n;{(])\\s*(?:export\\s+)?(?:async\\s+)?(?:function|class)\\s+${name}\\b` +
+        `|(?:^|[\\n;{(])\\s*(?:export\\s+)?(?:const|let|var)\\s+${name}\\b`,
+    )
+  const map = new Map<string, string>()
+  const ambiguous = new Set<string>()
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
+    const normalized = normalizeForRelative(path)
+    const masked = maskCommentsAndStrings(code)
+    let name: string | null = null
+
+    const inlineMatch = masked.match(inlineDefaultRe)
+    if (inlineMatch) {
+      name = inlineMatch[1]
+    } else {
+      const bareMatch = masked.match(bareDefaultRe)
+      // Only trust a bare `export default Name;` as naming a REAL local
+      // component if that exact name also has its own local declaration
+      // somewhere in the file — otherwise this is re-exporting some other
+      // expression entirely (`export default someVar`, `export default
+      // connect(Comp)`, etc.), which this map must not claim to resolve.
+      if (bareMatch && /^[A-Z]\w*$/.test(bareMatch[1]) && localDeclRe(bareMatch[1]).test(masked)) {
+        name = bareMatch[1]
+      }
+    }
+    if (!name) continue
+
+    const existing = map.get(name)
+    if (existing !== undefined && existing !== normalized) {
+      ambiguous.add(name)
+      continue
+    }
+    map.set(name, normalized)
   }
   for (const name of ambiguous) map.delete(name)
   return map
