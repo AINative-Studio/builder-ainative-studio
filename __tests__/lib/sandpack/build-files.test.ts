@@ -879,3 +879,149 @@ describe('buildSandpackFiles — lucide "already imported" and local-sibling-imp
     expect(built['/src/components/Dash.tsx']).not.toMatch(/from\s*['"]\.\/Hero['"]/)
   })
 })
+
+/**
+ * Real production bug (#2026, found live, company 'revela'): a model-
+ * invented identifier used as a JSX tag with NO import statement anywhere
+ * and no local declaration — not a path/subpath mistake on a REAL AIKit/
+ * shadcn/lucide/sibling name (every other injector above already handles
+ * that), but a wholly hallucinated name none of those lists recognize at
+ * all (e.g. `MenuIcon`/`XIcon`/`LoginIcon` — lucide's real exports for the
+ * same concepts are `Menu`/`X`/`LogIn`, no `Icon` suffix). Left alone this
+ * throws "X is not defined" on render, crashing the whole preview. This
+ * catch-all synthesizes a trivial local inert declaration so it renders
+ * nothing instead.
+ */
+describe('buildSandpackFiles — undeclared-JSX catch-all stub for a wholly hallucinated identifier (#2026)', () => {
+  it('reproduces the real revela shape: MenuIcon/XIcon used in a ternary (default branch unconditionally rendered), no import anywhere', () => {
+    const built = buildSandpackFiles({
+      '/src/components/Navbar.tsx':
+        "import React, { useState } from 'react'\nexport default function Navbar(){ const [open] = useState(false); return <nav>{open ? <XIcon size={24}/> : <MenuIcon size={24}/>}</nav> }",
+    })
+    expect(built['/src/components/Navbar.tsx']).toMatch(/^const XIcon = /m)
+    expect(built['/src/components/Navbar.tsx']).toMatch(/^const MenuIcon = /m)
+  })
+
+  it('reproduces the real revela shape: three hallucinated icon names inside an object-literal `icon:` property, not just a bare JSX tag', () => {
+    const built = buildSandpackFiles({
+      '/src/components/HowItWorks.tsx':
+        "import React from 'react'\nconst steps = [{ icon: <LoginIcon size={28}/> }, { icon: <AnalyticsIcon size={28}/> }, { icon: <LightningIcon size={28}/> }]\nexport default function HowItWorks(){ return <div>{steps.map((s,i) => <div key={i}>{s.icon}</div>)}</div> }",
+    })
+    for (const name of ['LoginIcon', 'AnalyticsIcon', 'LightningIcon']) {
+      expect(built['/src/components/HowItWorks.tsx']).toMatch(new RegExp(`^const ${name} = `, 'm'))
+    }
+  })
+
+  it('the synthesized stub is a real, valid component: renders its children (or null) and never throws when called', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <div><Ghost>hi</Ghost><Ghost/></div> }",
+    })
+    const match = built['/App.tsx'].match(/^const Ghost = (.+);$/m)
+    expect(match).toBeTruthy()
+    // eslint-disable-next-line no-eval
+    const Ghost = eval(match![1])
+    expect(Ghost({ children: 'hi' })).toBe('hi')
+    expect(Ghost({})).toBeNull()
+    expect(Ghost()).toBeNull()
+  })
+
+  it('does NOT stub a real shadcn name — the existing shadcn injector already resolves it with a real import, so this catch-all never fires for it', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Separator/> }",
+    })
+    expect(built['/App.tsx']).toMatch(/from\s*['"]\.\/components\/ui\/separator['"]/)
+    expect(built['/App.tsx']).not.toMatch(/^const Separator = /m)
+  })
+
+  it('does NOT stub a real AIKit name — the existing AIKit injector already resolves it with a real import', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <MetricCard/> }",
+    })
+    expect(built['/App.tsx']).toMatch(/from\s*['"]\.\/components\/aikit['"]/)
+    expect(built['/App.tsx']).not.toMatch(/^const MetricCard = /m)
+  })
+
+  it('does NOT stub a real lucide-react icon — the existing lucide injector already resolves it with a real import', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <Zap/> }",
+    })
+    expect(built['/App.tsx']).toMatch(/from\s*['"]lucide-react['"]/)
+    expect(built['/App.tsx']).not.toMatch(/^const Zap = /m)
+  })
+
+  it('does NOT ALSO stub a name that already has a real import statement — an unresolvable npm import is left to the existing stubUnresolvableBareImports net (its own, differently-shaped Proxy stub), not duplicated by this catch-all', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { WeirdThing } from 'some-npm-package'\nexport default function App(){ return <WeirdThing/> }",
+    })
+    // Exactly one declaration of WeirdThing (the pre-existing unresolvable-
+    // import net's own Proxy stub) — this catch-all must not add a second,
+    // conflicting one (which would be a real "already declared" SyntaxError).
+    expect(built['/App.tsx'].match(/\bWeirdThing\s*=\s*new Proxy\(/g)?.length).toBe(1)
+    expect(built['/App.tsx']).not.toMatch(/^const WeirdThing = \(props\) =>/m)
+  })
+
+  it('does NOT stub a name that is locally declared as a function in the same file', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "function Badge2(){ return <span>hi</span> }\nexport default function App(){ return <Badge2/> }",
+    })
+    expect(built['/App.tsx']).not.toMatch(/^const Badge2 = /m)
+  })
+
+  it('does NOT stub a name that is locally declared as a const arrow component in the same file', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "const Thing = () => <span>hi</span>\nexport default function App(){ return <Thing/> }",
+    })
+    expect(built['/App.tsx'].match(/^const Thing\b/gm)?.length).toBe(1)
+  })
+
+  it('does NOT stub a name destructured from props/params in the same file (dynamic component reference, not a missing import)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "export default function App({ Icon }){ return <Icon/> }",
+    })
+    expect(built['/App.tsx']).not.toMatch(/^const Icon = /m)
+  })
+
+  it('does NOT stub React or Fragment — known ambient globals a component may use without any import', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App(){ return <React.Fragment><Fragment/></React.Fragment> }",
+    })
+    expect(built['/App.tsx']).not.toMatch(/^const React = /m)
+    expect(built['/App.tsx']).not.toMatch(/^const Fragment = /m)
+  })
+
+  it('is comment-blind: a hallucinated name only MENTIONED as a JSX tag inside a comment is never stubbed', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "// example: <GhostWidget/>\nexport default function App(){ return <div>hi</div> }",
+    })
+    expect(built['/App.tsx']).not.toMatch(/^const GhostWidget = /m)
+  })
+
+  it('still stubs a real, genuinely-undeclared usage even when an unrelated comment mentions a different hallucinated name', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "// example: <GhostWidget/>\nexport default function App(){ return <RealGhost/> }",
+    })
+    expect(built['/App.tsx']).not.toMatch(/^const GhostWidget = /m)
+    expect(built['/App.tsx']).toMatch(/^const RealGhost = /m)
+  })
+
+  it('does NOT stub a member-expression JSX tag (`<Foo.Bar>`) — only a bare tag is this catch-all\'s shape', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "export default function App(){ return <ns.Thing/> }",
+    })
+    expect(built['/App.tsx']).not.toMatch(/^const ns = /m)
+  })
+
+  it('declares each undeclared name only once even when used as a JSX tag multiple times', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "export default function App(){ return <div><Ghost/><Ghost/><Ghost>x</Ghost></div> }",
+    })
+    expect(built['/App.tsx'].match(/^const Ghost = /gm)?.length).toBe(1)
+  })
+})
