@@ -487,15 +487,29 @@ describe('buildSandpackFiles — fixMissingExports injects a real export onto a 
     expect(matches.length).toBe(1)
   })
 
-  it('never fabricates an export for an identifier the target file genuinely does not define — leaves it for stubMissingLocalComponents/left alone', () => {
+  it('never fabricates a same-named export for an identifier the target file genuinely does not define', () => {
     const built = buildSandpackFiles({
       '/App.tsx':
         "import Unrelated from './components/Footer'\nexport default function App(){ return <Unrelated/> }",
       '/components/Footer.tsx': 'function Footer() { return <footer/> }',
     })
     // "Unrelated" isn't defined in Footer.tsx at all -- fixMissingExports
-    // must not invent an export for an identifier that was never declared.
-    expect(built['/components/Footer.tsx']).not.toContain('export')
+    // must not invent an export under that name.
+    expect(built['/components/Footer.tsx']).not.toContain('export function Footer')
+    expect(built['/components/Footer.tsx']).not.toContain('export const Footer')
+    // #2022 follow-up: fixMissingExports correctly declines to touch this
+    // file (nothing named "Unrelated" is declared in it), which previously
+    // left Footer.tsx as a component-shaped file with ZERO export anywhere
+    // -- findTruncatedFiles()'s own signal for a cut-off generation. Left
+    // fully alone (the old behavior this test used to assert), the default
+    // import `Unrelated` would resolve to `undefined` at runtime and crash
+    // the WHOLE preview with "Element type is invalid", not just leave one
+    // section blank -- stubMissingLocalComponents() never helps here either,
+    // since the path already exists. stubTruncatedFiles() now classifies
+    // this exportless file the same way the generation-time gate would and
+    // gives it a real (if inert) default export, so `Unrelated` resolves to
+    // a valid, if blank, component instead of crashing.
+    expect(built['/components/Footer.tsx']).toContain('export default function Footer')
   })
 
   it('exports multiple identifiers requested from the same unexported target in one pass', () => {
