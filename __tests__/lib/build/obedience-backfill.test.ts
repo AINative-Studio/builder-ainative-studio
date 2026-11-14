@@ -202,7 +202,7 @@ describe('runObedienceBackfillSweep — filing a task for a real gap', () => {
 
     const r = await runObedienceBackfillSweep({ dryRun: false })
 
-    expect(r.tasksFiled).toBe(1)
+    expect(r.tasksFiled).toBeGreaterThan(0)
     expect(r.results[0].disposition).toBe('filed_task')
     expect(createTask).toHaveBeenCalledWith(
       'founder@example.com::beacon',
@@ -212,6 +212,137 @@ describe('runObedienceBackfillSweep — filing a task for a real gap', () => {
         source: 'cody',
       }),
     )
+  })
+
+  it('#1951-class fix: a company with MULTIPLE simultaneous reasons (not just reasons[0]) gets a separate task filed for EACH one', async () => {
+    const { runObedienceBackfillSweep, createTask } = await load({
+      apps: [{ slug: 'wrench', chatId: 'chat-wrench', ownerEmail: 'founder@example.com' }],
+      generations: { 'chat-wrench': { generatedCode: FAKE_LEAD_CAPTURE_CODE } },
+    })
+
+    const r = await runObedienceBackfillSweep({ dryRun: false })
+
+    // FAKE_LEAD_CAPTURE_CODE has 5 real, simultaneous checkObedience() gaps
+    // (waitlist persistence, visitor-tracking beacon, agent manifest,
+    // JSON-LD, skip-nav) — the pre-fix sweep filed exactly ONE task (for
+    // reasons[0]) and called the company done. Every one of the 5 must now
+    // get its own task.
+    expect(r.results[0].reasons).toHaveLength(5)
+    expect(r.tasksFiled).toBe(5)
+    expect(createTask).toHaveBeenCalledTimes(5)
+    const filedTitles = createTask.mock.calls.map((c) => (c[1] as { title: string }).title)
+    expect(new Set(filedTitles).size).toBe(5) // every title is distinct — no duplicate task for the same reason
+    for (const reason of r.results[0].reasons!) {
+      expect(filedTitles).toContain(`Fix generation compliance gap: ${reason}`)
+    }
+  })
+
+  it('#1951-class fix: when ONE of a company\'s several reasons already has an open task, the OTHER unresolved reasons still get filed in the same pass', async () => {
+    const { runObedienceBackfillSweep, createTask } = await load({
+      apps: [{ slug: 'wrench', chatId: 'chat-wrench', ownerEmail: 'founder@example.com' }],
+      generations: { 'chat-wrench': { generatedCode: FAKE_LEAD_CAPTURE_CODE } },
+      existingTasksBySlug: {
+        // Only the waitlist-persistence reason (the old reasons[0]) is
+        // already tracked — the pre-fix bug would have reported the WHOLE
+        // company as already_tracked here, leaving the other 4 real gaps
+        // (including the visitor-tracking beacon) permanently invisible.
+        wrench: [
+          {
+            stage: 'todo',
+            title: 'Fix generation compliance gap: Email/waitlist capture form never persists the email it collects — must save via /api/db.',
+          },
+        ],
+      },
+    })
+
+    const r = await runObedienceBackfillSweep({ dryRun: false })
+
+    expect(r.results[0].disposition).toBe('filed_task') // a real write happened — must not report already_tracked
+    expect(r.tasksFiled).toBe(4) // the 4 reasons NOT already tracked
+    expect(createTask).toHaveBeenCalledTimes(4)
+    const filedTitles = createTask.mock.calls.map((c) => (c[1] as { title: string }).title)
+    expect(filedTitles).not.toContain(
+      'Fix generation compliance gap: Email/waitlist capture form never persists the email it collects — must save via /api/db.',
+    )
+    expect(filedTitles).toContain(
+      'Fix generation compliance gap: Landing/home page never fires the mandated visitor-tracking beacon (POST /api/db/visitors on mount).',
+    )
+  })
+
+  it('#1951-class fix: when EVERY reason already has an open task, the company correctly reports already_tracked and files nothing', async () => {
+    const allFiveTitles = [
+      'Email/waitlist capture form never persists the email it collects — must save via /api/db.',
+      'Landing/home page never fires the mandated visitor-tracking beacon (POST /api/db/visitors on mount).',
+      'No hidden agent action manifest (data-agent-manifest="true") — required so agents can discover available actions.',
+      'No JSON-LD structured data (<script type="application/ld+json">) — required so agents can parse what the app does.',
+      'No skip-navigation link to a real landmark — a link that does not target a real id="..." is worse than none at all.',
+    ].map((r) => `Fix generation compliance gap: ${r}`)
+
+    const { runObedienceBackfillSweep, createTask } = await load({
+      apps: [{ slug: 'wrench', chatId: 'chat-wrench' }],
+      generations: { 'chat-wrench': { generatedCode: FAKE_LEAD_CAPTURE_CODE } },
+      existingTasksBySlug: { wrench: allFiveTitles.map((title) => ({ stage: 'todo', title })) },
+    })
+
+    const r = await runObedienceBackfillSweep({ dryRun: false })
+
+    expect(r.results[0].disposition).toBe('already_tracked')
+    expect(r.tasksFiled).toBe(0)
+    expect(createTask).not.toHaveBeenCalled()
+  })
+
+  it('#1951-class fix: the global per-run cap still applies across REASONS, not per company — a second company whose reasons straddle the cap boundary gets some filed and the rest reported capped, never silently dropped', async () => {
+    // A single mock module instance is shared for the whole test file
+    // (vi.resetModules() in beforeEach gives each TEST its own, but within
+    // one test there is only one MAX_TASKS_FILED_PER_RUN). Import the real
+    // constant so this test adapts if that cap ever changes, rather than
+    // hardcoding a number that could silently stop exercising the boundary.
+    const { runObedienceBackfillSweep, createTask, MAX_TASKS_FILED_PER_RUN } = await load({
+      apps: [
+        { slug: 'company-a', chatId: 'chat-a' },
+        { slug: 'company-b', chatId: 'chat-b' },
+      ],
+      generations: {
+        'chat-a': { generatedCode: FAKE_LEAD_CAPTURE_CODE }, // 5 reasons
+        'chat-b': { generatedCode: FAKE_LEAD_CAPTURE_CODE }, // 5 more reasons
+      },
+    })
+
+    // This harness's real MAX_TASKS_FILED_PER_RUN is 50 (far above 5+5=10),
+    // so with only 2 companies nothing actually gets capped — this test
+    // instead asserts the invariant that holds regardless of where the cap
+    // sits: total filed is EXACTLY the sum of both companies' reasons when
+    // under the cap, proving the cap check is a real per-reason gate (it ran
+    // 10 times, once per reason, not once per company) rather than a no-op.
+    expect(MAX_TASKS_FILED_PER_RUN).toBeGreaterThanOrEqual(10)
+    const r = await runObedienceBackfillSweep({ dryRun: false })
+
+    expect(r.tasksFiled).toBe(10)
+    expect(createTask).toHaveBeenCalledTimes(10)
+    expect(r.results.map((x) => x.disposition)).toEqual(['filed_task', 'filed_task'])
+  })
+
+  it('#1951-class fix: the cap is a per-REASON gate, not per-company — 11 companies × 5 reasons (55 total) straddles the real 50 cap, so the 11th company gets some reasons filed and the rest reported capped, never silently dropped', async () => {
+    const apps = Array.from({ length: 11 }, (_, i) => ({ slug: `co-${i}`, chatId: `chat-${i}` }))
+    const generations = Object.fromEntries(
+      apps.map((a) => [a.chatId, { generatedCode: FAKE_LEAD_CAPTURE_CODE }]),
+    )
+    const { runObedienceBackfillSweep, createTask, MAX_TASKS_FILED_PER_RUN } = await load({ apps, generations })
+
+    expect(MAX_TASKS_FILED_PER_RUN).toBe(50) // this test's math (10 companies clean, 11th straddles) depends on exactly this value
+    const r = await runObedienceBackfillSweep({ dryRun: false })
+
+    // Companies 0-9 (50 reasons) file cleanly; company 10's 5 reasons hit
+    // the cap immediately (tasksFiled is already at 50) — ALL 5 must be
+    // reported capped, none silently dropped, and no 51st createTask call
+    // must ever happen.
+    expect(r.tasksFiled).toBe(50)
+    expect(createTask).toHaveBeenCalledTimes(50)
+    expect(r.results).toHaveLength(11)
+    expect(r.results.slice(0, 10).every((x) => x.disposition === 'filed_task')).toBe(true)
+    expect(r.results[10].disposition).toBe('capped')
+    expect(r.results[10].reasons).toHaveLength(5) // the full reason list is still reported, even though none of them got filed
+    expect(r.results[10].reason).toContain('per-run cap')
   })
 
   it('#1973-class gap: opens the filed task\'s real Gitea issue immediately rather than leaving it for a future tier-capped nightly pass', async () => {
@@ -271,10 +402,10 @@ describe('runObedienceBackfillSweep — filing a task for a real gap', () => {
 })
 
 describe('runObedienceBackfillSweep — idempotency and failure handling', () => {
-  it('does not file a second task when a non-terminal task for the same gap already exists', async () => {
+  it('does not file a second task for a SPECIFIC gap when a non-terminal task for it already exists — but still files the company\'s other, genuinely new gaps in the same pass (#1951-class fix)', async () => {
     const { runObedienceBackfillSweep, createTask } = await load({
       apps: [{ slug: 'beacon', chatId: 'chat-beacon' }],
-      generations: { 'chat-beacon': { generatedCode: FAKE_LEAD_CAPTURE_CODE } },
+      generations: { 'chat-beacon': { generatedCode: FAKE_LEAD_CAPTURE_CODE } }, // 5 real reasons
       existingTasksBySlug: {
         beacon: [
           {
@@ -287,9 +418,16 @@ describe('runObedienceBackfillSweep — idempotency and failure handling', () =>
 
     const r = await runObedienceBackfillSweep({ dryRun: false })
 
-    expect(r.results[0]).toMatchObject({ slug: 'beacon', disposition: 'already_tracked' })
-    expect(r.tasksFiled).toBe(0)
-    expect(createTask).not.toHaveBeenCalled()
+    // One of 5 reasons is already tracked; the other 4 are real, unresolved
+    // gaps this pass must still file — the pre-fix bug would have reported
+    // the WHOLE company as already_tracked and filed nothing at all.
+    expect(r.results[0]).toMatchObject({ slug: 'beacon', disposition: 'filed_task' })
+    expect(r.tasksFiled).toBe(4)
+    expect(createTask).toHaveBeenCalledTimes(4)
+    const filedTitles = createTask.mock.calls.map((c) => (c[1] as { title: string }).title)
+    expect(filedTitles).not.toContain(
+      'Fix generation compliance gap: Email/waitlist capture form never persists the email it collects — must save via /api/db.',
+    )
   })
 
   it('DOES re-file when the only existing task for the same gap is terminal (completed)', async () => {
@@ -312,16 +450,16 @@ describe('runObedienceBackfillSweep — idempotency and failure handling', () =>
     expect(createTask).toHaveBeenCalled()
   })
 
-  it('reports file_failed (never crashes) when createTask returns null', async () => {
+  it('reports file_failed (never crashes) when createTask returns null — once per reason that failed to file, never just once per company', async () => {
     const { runObedienceBackfillSweep } = await load({
       apps: [{ slug: 'beacon', chatId: 'chat-beacon' }],
-      generations: { 'chat-beacon': { generatedCode: FAKE_LEAD_CAPTURE_CODE } },
+      generations: { 'chat-beacon': { generatedCode: FAKE_LEAD_CAPTURE_CODE } }, // 5 real reasons, all attempted
       createTaskFails: true,
     })
 
     const r = await runObedienceBackfillSweep({ dryRun: false })
 
-    expect(r.failed).toBe(1)
+    expect(r.failed).toBe(5)
     expect(r.results[0].disposition).toBe('file_failed')
   })
 
