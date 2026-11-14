@@ -19,6 +19,7 @@ import { getBuiltinFiles } from './setup'
 import { sanitizeForSandpack } from '../code-validator'
 import { sandpackDbTokenShim } from './db-token-shim'
 import { detectRootComponent, hasDefaultExport } from '../component-detector'
+import { findTruncatedFiles } from '../build/completeness-gate'
 
 /**
  * #1561 — when provided, injects the db-token-shim module (see that file's
@@ -993,6 +994,26 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
 
   fixMissingExports(sandpackFiles)
   fixExportShapeMismatches(sandpackFiles)
+  // #2022: a syntactically truncated generated file (mid-token cutoff, e.g.
+  // an unterminated string, an unbalanced brace, or a component file that
+  // never reached its own `export`) reaches Sandpack's bundler as-is and
+  // fails to parse/transpile the WHOLE compile -- unlike a missing import or
+  // undeclared JSX tag (softened by stubMissingLocalComponents() right below
+  // / the catch-all declare-inline patch above), there was no render-time
+  // net for this specific class before now, so a company whose durable
+  // files predate (or otherwise bypassed) ready-gate.ts's generation-time
+  // findTruncatedFiles() check (#2013/#2023) stayed broken forever with no
+  // path to self-heal at render time, same as every other safety net in
+  // this file. Deliberately runs AFTER fixMissingExports/
+  // fixExportShapeMismatches, not before: a file merely missing its
+  // `export` keyword on an otherwise-finished declaration is exactly
+  // findTruncatedFiles()'s "component-shaped file, zero export" signal too
+  // (confirmed live via #1539's own test fixtures regressing when this ran
+  // first) — those two real repairs must get first chance at a file so a
+  // genuinely-finished-but-unexported component is fixed properly, not
+  // discarded as truncated. Only what's still exportless (or still a strict
+  // parse failure) after both repairs is a real truncation.
+  stubTruncatedFiles(sandpackFiles, builtinPaths)
   stubMissingLocalComponents(sandpackFiles)
   fixNativeDialogCalls(sandpackFiles)
 
@@ -1346,6 +1367,82 @@ function defaultExportIsSuitableSingleTarget(defaultRhs: string | null, exported
   const bareRef = defaultRhs.match(/^([A-Za-z_$][\w$]*)\s*;?\s*$/)
   if (bareRef && bareRef[1] !== exported) return false
   return true
+}
+
+/**
+ * #2022: reuses completeness-gate.ts's own findTruncatedFiles() detector --
+ * the same strict-parse-failure / component-file-with-zero-export check that
+ * already gates NEW generations via ready-gate.ts's checkAppReady
+ * (#2013/#2023) -- against the files actually about to be sent to Sandpack,
+ * so a company whose durable files were persisted before that gate existed
+ * (or otherwise slipped past it) still gets the same protection every time
+ * its preview renders, not just at generation time.
+ *
+ * Wholly replaces each broken file's content with a trivial, always-
+ * parseable component. Rather than guessing, it scans every OTHER file for a
+ * relative import resolving to the broken path and reuses
+ * parseMissingImportClause() -- the exact same clause parser
+ * stubMissingLocalComponents() below uses for a genuinely MISSING file -- so
+ * the stub exports exactly the default/named bindings something else in the
+ * set actually needs from it. Every importer still resolves, the rest of the
+ * app still renders, and the only visible gap is that one section rendering
+ * nothing, instead of the whole compile failing to parse.
+ *
+ * Must run before any other fixer in this pipeline: the broken file's
+ * original content is never valid JS/TSX, so leaving it in place for a
+ * regex-based pass below to touch first risks that pass itself producing
+ * nonsense from content it was never designed to see.
+ */
+function stubTruncatedFiles(sandpackFiles: Record<string, string>, builtinPaths: Set<string>): void {
+  const candidates: Record<string, string> = {}
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (builtinPaths.has(path)) continue
+    if (!/\.(t|j)sx?$/.test(path)) continue
+    candidates[path] = code
+  }
+  const broken = findTruncatedFiles(candidates)
+  if (broken.length === 0) return
+  const brokenSet = new Set(broken)
+
+  const needsByPath = new Map<string, { needsDefault: boolean; namedExports: Set<string> }>()
+  const importRe = /^[ \t]*import\s+(?:type\s+)?([^'";]*?)\s*from\s*['"](\.\.?\/[^'"]+)['"]/gm
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (brokenSet.has(path)) continue // its own imports don't matter -- it's about to be replaced wholesale
+    const dir = path.slice(0, path.lastIndexOf('/')) || ''
+    let match: RegExpExecArray | null
+    importRe.lastIndex = 0
+    while ((match = importRe.exec(code))) {
+      const resolved = resolveRelativeImport(dir, match[2])
+      if (!resolved) continue
+      const resolvedCandidates = [resolved, `${resolved}.tsx`, `${resolved}.ts`, `${resolved}/index.tsx`, `${resolved}/index.ts`]
+      const hit = resolvedCandidates.find((c) => brokenSet.has(c))
+      if (!hit) continue
+      const needs = needsByPath.get(hit) ?? { needsDefault: false, namedExports: new Set<string>() }
+      const { needsDefault, named } = parseMissingImportClause(match[1])
+      needs.needsDefault ||= needsDefault
+      for (const n of named) needs.namedExports.add(n)
+      needsByPath.set(hit, needs)
+    }
+  }
+
+  for (const path of broken) {
+    const rawName = (path.split('/').pop() || 'Broken').replace(/\.(t|j)sx?$/, '')
+    const name = /^[A-Za-z_$][\w$]*$/.test(rawName) ? rawName : 'Broken'
+    const needs = needsByPath.get(path) ?? { needsDefault: false, namedExports: new Set<string>() }
+
+    const lines = [
+      `import React from 'react'`,
+      `// Auto-stubbed (#2022): this generated file was cut off mid-generation and failed to parse.`,
+    ]
+    if (needs.needsDefault || needs.namedExports.size === 0) {
+      lines.push(`export default function ${name}() { return null }`)
+    }
+    for (const named of needs.namedExports) {
+      if (!/^[A-Za-z_$][\w$]*$/.test(named)) continue
+      lines.push(`export const ${named} = () => null`)
+    }
+    sandpackFiles[path] = lines.join('\n') + '\n'
+  }
 }
 
 /**
