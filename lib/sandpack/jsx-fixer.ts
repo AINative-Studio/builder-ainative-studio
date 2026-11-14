@@ -797,7 +797,14 @@ function rewriteBarrelImports(code: string): string {
       // Unknown components — still import from aikit as best guess
       if (unknown.length > 0) imports.push(`import { ${unknown.join(', ')} } from './components/aikit'`)
 
-      return imports.join('\n')
+      // Trailing newline so whatever followed the original import on the
+      // same source line (another import with no blank line between them,
+      // or the component code itself when there's no trailing semicolon —
+      // the regex's `\s*` consumes that separator along with the match)
+      // doesn't concatenate directly onto our last generated import line,
+      // which is a parse error (#2043). Same precedent as
+      // fixWrongShadcnSubpaths/rewriteUiBarrelImports above.
+      return imports.join('\n') + '\n'
     }
   )
 }
