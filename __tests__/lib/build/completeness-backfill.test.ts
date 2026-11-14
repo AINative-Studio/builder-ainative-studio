@@ -44,6 +44,7 @@ interface FakeApp {
   ownerEmail?: string
   idea?: string
   lifecycleStatus?: string
+  gitOrg?: string
 }
 
 interface FakeGeneration {
@@ -100,14 +101,16 @@ async function load(opts: {
     return (opts.existingTasksBySlug || {})[slug] || []
   })
   const chatScopeKey = (ownerKey: string, companySlug: string) => `${ownerKey}::${companySlug}`
+  const openIssueForNewTask = vi.fn(async (_scopeKey: string, _gitOrg: unknown, _slug: string, task: unknown) => task)
 
   vi.doMock('@/lib/build/app-registry', () => ({ listAllAppsWithStatus }))
   vi.doMock('@/lib/zerodb-store', () => ({ loadGeneration }))
   vi.doMock('@/lib/build/task-store', () => ({ createTask, listTasksForCompany }))
+  vi.doMock('@/lib/build/task-resolver', () => ({ openIssueForNewTask }))
   vi.doMock('@/lib/build/chat-store', () => ({ chatScopeKey }))
 
   const mod = await import('@/lib/build/completeness-backfill')
-  return { ...mod, listAllAppsWithStatus, loadGeneration, createTask, listTasksForCompany }
+  return { ...mod, listAllAppsWithStatus, loadGeneration, createTask, listTasksForCompany, openIssueForNewTask }
 }
 
 describe('runCompletenessBackfillSweep — leaving clean companies alone', () => {
@@ -200,6 +203,30 @@ describe('runCompletenessBackfillSweep — filing a task for a real gap', () => 
         source: 'cody',
       }),
     )
+  })
+
+  it('#2032 (#1973-class gap): opens the filed task\'s real Gitea issue immediately rather than leaving it for a future tier-capped nightly pass', async () => {
+    const { runCompletenessBackfillSweep, createTask, openIssueForNewTask } = await load({
+      apps: [{ slug: 'agentive', chatId: 'chat-agentive', ownerEmail: 'founder@example.com', gitOrg: 'agentive-org' }],
+      generations: { 'chat-agentive': { generatedCode: MISSING_IMPORT_CODE } },
+    })
+
+    await runCompletenessBackfillSweep({ dryRun: false })
+
+    expect(createTask).toHaveBeenCalled()
+    const filedTask = await createTask.mock.results[0].value
+    expect(openIssueForNewTask).toHaveBeenCalledWith('founder@example.com::agentive', 'agentive-org', 'agentive', filedTask)
+  })
+
+  it('#2032: a dry run never opens a Gitea issue (nothing was filed to open one for)', async () => {
+    const { runCompletenessBackfillSweep, openIssueForNewTask } = await load({
+      apps: [{ slug: 'agentive', chatId: 'chat-agentive', ownerEmail: 'founder@example.com', gitOrg: 'agentive-org' }],
+      generations: { 'chat-agentive': { generatedCode: MISSING_IMPORT_CODE } },
+    })
+
+    await runCompletenessBackfillSweep({ dryRun: true })
+
+    expect(openIssueForNewTask).not.toHaveBeenCalled()
   })
 
   it('falls back to guest:anon scope when the company has no ownerEmail', async () => {

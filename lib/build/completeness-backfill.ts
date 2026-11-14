@@ -61,6 +61,16 @@
  *  - CAPPED per run — each filed task is a real write plus the resolver
  *    pipeline's own real Gitea issue creation downstream, so an unbounded
  *    run is not an acceptable failure mode for a filter bug.
+ *
+ * #2032: a filed task's real Gitea issue is opened HERE, immediately, via
+ * openIssueForNewTask() — not left to a future nightly resolveTask() pass.
+ * That pass is tier-capped (maxTasksForTier()), so for most hobbyist/pro-tier
+ * companies "later" means "never," the same gap #1928 fixed for 3 other
+ * createTask() call sites and #1973 then fixed for 2 more
+ * (chat-ws/route.ts's obFinal block, obedience-backfill.ts's own sweep) —
+ * this sweep was the one remaining createTask() site still relying on the
+ * stale "the resolver pipeline picks it up the same way" assumption #1973
+ * disproved.
  */
 
 import { listAllAppsWithStatus, type AppEntry } from '@/lib/build/app-registry'
@@ -71,6 +81,7 @@ import {
   findTruncatedFiles,
 } from '@/lib/build/completeness-gate'
 import { createTask, listTasksForCompany } from '@/lib/build/task-store'
+import { openIssueForNewTask } from '@/lib/build/task-resolver'
 import { chatScopeKey } from '@/lib/build/chat-store'
 
 /** Same posture as MAX_TASKS_FILED_PER_RUN in obedience-backfill.ts. */
@@ -292,6 +303,13 @@ export async function runCompletenessBackfillSweep(
       })
       continue
     }
+
+    // #2032: open this task's real Gitea issue now rather than leaving it to
+    // a future tier-capped nightly resolveTask() pass — same fix #1973
+    // already applied to obedience-backfill.ts's sibling sweep. Best-effort;
+    // a filed task is still a real win even if this fails or the company has
+    // no gitOrg yet.
+    void openIssueForNewTask(scopeKey, app.gitOrg, slug, task)
 
     tasksFiled++
     record({
