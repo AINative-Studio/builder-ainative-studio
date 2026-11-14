@@ -20,6 +20,8 @@ import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus } from '@/lib/ainative/plan'
 import { deriveOwnerKey, chatScopeKey } from '@/lib/build/chat-store'
 import { createTask, stageFromSwarmStatus } from '@/lib/build/task-store'
+import { openIssueForNewTask } from '@/lib/build/task-resolver'
+import { resolveAppVerified } from '@/lib/build/app-registry'
 import { codingStandardsContextBlock } from '@/lib/build/coding-standards'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 
@@ -97,15 +99,35 @@ export async function POST(request: NextRequest) {
     // Surface the REAL dispatched task on the company's backlog (#55) so the
     // Live Tasks panel shows it and tracks its stage. Best-effort — a persistence
     // hiccup must not fail the swarm dispatch itself.
+    //
+    // #2036-series follow-up: stageFromSwarmStatus() virtually never returns
+    // 'todo' (dispatched/queued/running all map to 'in_progress'; only a
+    // terminal platform status maps elsewhere) — and runTaskResolutions()
+    // (the real nightly loop) only ever selects `stage === 'todo'` tasks
+    // (task-resolution-loop.ts:236). So unlike the other 5 createTask() call
+    // sites this series already fixed (#1928/#1973/#2032/#2036), where a task
+    // left without a Gitea issue would still reach resolveTask()'s own
+    // createIssue() call once the nightly loop's tier cap eventually got to
+    // it, a swarm-dispatched task is structurally EXCLUDED from that path
+    // forever — it has no other route to ever get a Gitea issue. Open one
+    // directly, right here, same best-effort/idempotent contract as every
+    // other call site (openIssueForNewTask no-ops without a gitOrg or once
+    // the task already has an issue number).
     if (companyId) {
       const scopeKey = chatScopeKey(deriveOwnerKey(session as any), companyId)
-      void createTask(scopeKey, {
+      const taskPromise = createTask(scopeKey, {
         title: taskTitle,
         detail: rawDescription,
         stage: stageFromSwarmStatus(status),
         source: 'swarm',
         taskId,
-      }).catch(() => {})
+      }).catch(() => null)
+      void Promise.all([
+        taskPromise,
+        resolveAppVerified(companyId).catch(() => ({ entry: null, verified: false })),
+      ]).then(([created, { entry }]) => {
+        if (created) void openIssueForNewTask(scopeKey, entry?.gitOrg, companyId, created)
+      })
     }
 
     return Response.json({
