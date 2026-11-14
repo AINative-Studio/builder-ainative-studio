@@ -61,9 +61,21 @@ export function extractAppMetadata(prompt: string, code: string): AppMetadata {
   const name = quotedForMatch?.[1] || calledMatch?.[1] || ideaLeadMatch?.[1] || looseForName || nameMatch?.[1] || 'AINativeApp'
 
   // Detect type
+  //
+  // Real incident (2026-11-14, sampled ~23/40 live companies via the public
+  // generation-files API): nearly every generated app's layout.tsx metadata
+  // and JSON-LD applicationCategory read "Ecommerce Application"/"Store"
+  // regardless of actual business (a roofing-contractor CRM, a field-service
+  // platform, a financial-coaching app, ...). Root cause: EVERY generated
+  // prompt carries the landing-page wrapper's own boilerplate
+  // "production-quality" phrase, and the old `lower.includes('product')`
+  // check matches that substring inside "production" every single time —
+  // so this branch fires on essentially 100% of prompts that don't already
+  // match the earlier dashboard check. Fixed with a word-boundary check so
+  // "production"/"productivity" can no longer be mistaken for "product".
   let type: AppMetadata['type'] = 'saas'
   if (lower.includes('dashboard') || lower.includes('analytics') || lower.includes('monitor')) type = 'dashboard'
-  else if (lower.includes('ecommerce') || lower.includes('store') || lower.includes('shop') || lower.includes('product')) type = 'ecommerce'
+  else if (lower.includes('ecommerce') || lower.includes('store') || lower.includes('shop') || /\bproducts?\b/.test(lower)) type = 'ecommerce'
   else if (lower.includes('marketplace') || lower.includes('hub')) type = 'marketplace'
   else if (lower.includes('chat') || lower.includes('assistant') || lower.includes('conversation')) type = 'chat'
   else if (lower.includes('docs') || lower.includes('documentation') || lower.includes('api')) type = 'docs'

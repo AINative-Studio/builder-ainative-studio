@@ -111,4 +111,23 @@ describe('extractAppMetadata', () => {
     const meta = extractAppMetadata('build me an app called Beacon for tracking leads', 'export default function App(){}')
     expect(meta.name).toBe('Beacon')
   })
+
+  it('does not mistake the boilerplate "production-quality" phrase for a "product" keyword and misclassify as ecommerce', () => {
+    const prompts = [
+      'Build a polished, production-quality single-page marketing LANDING PAGE for "Gable" (tagline: "Close more roofs, less chaos.") — a real company for this idea: A B2B sales CRM for roofing contractors (helps manage leads, bids, and crews).',
+      'Build a polished, production-quality single-page marketing LANDING PAGE for "Dispatch" (tagline: "Your mobile workforce, perfectly orchestrated.") — a real company for this idea: A field service management platform for small businesses.',
+    ]
+    for (const prompt of prompts) {
+      const meta = extractAppMetadata(prompt, 'export default function App(){}')
+      expect(meta.type).not.toBe('ecommerce')
+    }
+  })
+
+  it('still detects a genuinely ecommerce idea even through the "production-quality" boilerplate', () => {
+    const meta = extractAppMetadata(
+      'Build a polished, production-quality single-page marketing LANDING PAGE for "Crate" — a real company for this idea: an online store selling handmade furniture, with a product catalog and shopping cart.',
+      'export default function App(){}',
+    )
+    expect(meta.type).toBe('ecommerce')
+  })
 })
