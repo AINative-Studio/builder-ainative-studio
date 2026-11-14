@@ -151,15 +151,31 @@ function stubNextOnlyModules(code: string): string {
   // next/dynamic — default import, e.g. `import dynamic from 'next/dynamic'`.
   // Dropping lazy-loading for an inert placeholder avoids both the
   // missing-module crash and a React.lazy-without-Suspense crash.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /import\s+(\w+)\s+from\s+['"]next\/dynamic['"]\s*;?/g,
-    (_match, name: string) => `const ${name} = (..._args) => () => null;`,
+    (match: string, name: string, offset: number) => {
+      // The regex's trailing `\s*` is greedy about swallowing newlines when
+      // the import has no semicolon. #1879 only guarded the multi-line
+      // stub-map branches in this file, reasoning a single-line replacement
+      // "can't escape" a leading `//` — but it can: if this import was
+      // already commented out, the swallowed newline drags the REAL next
+      // source line onto this same (still commented) line, deleting it
+      // (#2048). Skip entirely rather than resurrect a disabled import as
+      // real code, same guard as the next/navigation branch above.
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return `const ${name} = (..._args) => () => null;`
+    },
   )
 
   // next/script — default import, e.g. `import Script from 'next/script'`.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /import\s+(\w+)\s+from\s+['"]next\/script['"]\s*;?/g,
-    (_match, name: string) => `const ${name} = (_props) => null;`,
+    (match: string, name: string, offset: number) => {
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return `const ${name} = (_props) => null;`
+    },
   )
 
   return fixed
@@ -248,17 +264,28 @@ function stubLegacyPagesRouterImports(code: string): string {
     }
   )
   // Rare default/namespace usage of the deprecated `Router` singleton.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /import\s+Router\s+from\s+['"]next\/router['"]\s*;?/g,
-    `const Router = ${NEXT_ROUTER_STUB};`
+    (match: string, offset: number) => {
+      // Same newline-swallow-into-a-disabled-comment risk as next/dynamic/
+      // next/script above (#2048) — #1879 only guarded this file's
+      // multi-line stub-map branches, not this single-name one.
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return `const Router = ${NEXT_ROUTER_STUB};`
+    }
   )
 
   // next/head — default-imported per-page <Head> component, used only for
   // side-effect-free <title>/<meta> tags with no equivalent in a Sandpack
   // iframe preview.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /import\s+(\w+)\s+from\s+['"]next\/head['"]\s*;?/g,
-    (_match, name: string) => `const ${name} = (_props: any) => null;`
+    (match: string, name: string, offset: number) => {
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return `const ${name} = (_props: any) => null;`
+    }
   )
 
   // next/document — only ever imported from a _document.tsx, which Sandpack

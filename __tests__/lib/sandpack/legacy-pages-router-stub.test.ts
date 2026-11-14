@@ -97,4 +97,28 @@ describe('fixJsxErrors — stubs legacy Pages Router module specifiers (#1174)',
     expect(fixed).not.toMatch(/^\/\/.*export default function App/m)
     expect(fixed).toMatch(/^export default function App/m)
   })
+
+  // #2048: #1879 only guarded this file's multi-line stub-map branches
+  // (next/router named-import, next/document), reasoning the single-name
+  // Router-default and next/head branches "can't escape" a leading `//`
+  // comment since their own replacement is always exactly one line. That
+  // missed the regex's trailing `\s*` also swallowing the newline after the
+  // import — so when the import is already commented out, the REAL next
+  // source line gets dragged onto the same (still commented) line and
+  // silently disappears, deleting the file's default export.
+  it('does not swallow the next real line when a commented-out default Router import precedes it', () => {
+    const code = "// import Router from 'next/router'\nexport default function App(){ return <div>hi</div> }"
+    const fixed = fixJsxErrors(code)
+    expect(fixed).toContain("// import Router from 'next/router'")
+    expect(fixed).not.toMatch(/^\/\/.*export default function App/m)
+    expect(fixed).toMatch(/^export default function App/m)
+  })
+
+  it('does not swallow the next real line when a commented-out next/head import precedes it', () => {
+    const code = "// import Head from 'next/head'\nexport default function App(){ return <div>hi</div> }"
+    const fixed = fixJsxErrors(code)
+    expect(fixed).toContain("// import Head from 'next/head'")
+    expect(fixed).not.toMatch(/^\/\/.*export default function App/m)
+    expect(fixed).toMatch(/^export default function App/m)
+  })
 })
