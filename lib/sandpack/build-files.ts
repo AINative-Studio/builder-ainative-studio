@@ -465,6 +465,27 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
   // from each file's original generated source.
   const localExportMap = buildLocalExportMap(sandpackFiles, builtinPaths)
 
+  // Real bug found live (#2021, company "younova"): buildLocalExportMap()
+  // above only recognizes a NAMED local export (`export const/function/class
+  // Name`, or a bare `export { Name }` list) — a sibling component declared
+  // as `function Name(...) { ... }` and exported two steps later via
+  // `export default Name;` (younova's real TaskList.tsx: a bare function
+  // declaration, no inline `export`, then a trailing `export default
+  // TaskList;`) — or the equally common inline `export default function
+  // Name(...) { ... }` — is invisible to that map, so the sibling-import
+  // injector below never offers it. Before the #2026 catch-all fix existed
+  // this produced a hard "TaskList is not defined" crash; after #2026 it's
+  // silently caught by the catch-all's "undeclared identifier" check instead
+  // and stubbed to an inert no-op — no crash, but a real, correctly-written,
+  // fully functional sibling component quietly stops doing anything, which
+  // is a worse regression than a missing import for every founder whose app
+  // uses the (extremely common) default-export style for a sub-component.
+  // Tracked separately from localExportMap because every entry here needs a
+  // DEFAULT import (`import Name from '...'`), never a named one — merging
+  // the two maps would make the named-import injector below emit a broken
+  // `import { Name } from '...'` for a file with no matching named export.
+  const localDefaultExportMap = buildLocalDefaultExportMap(sandpackFiles, builtinPaths)
+
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (!path.endsWith('.tsx')) continue
     if (builtinPaths.has(path)) continue
@@ -825,6 +846,7 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
       const selfPath = normalizeForRelative(path)
       const fixedNoComments = maskCommentsAndStrings(fixed)
       const byFile = new Map<string, string[]>()
+      const handledNames = new Set<string>()
       for (const [name, exportingPath] of localExportMap) {
         if (exportingPath === selfPath) continue
         if (!new RegExp(`<${name}[\\s/>]`).test(fixedNoComments)) continue
@@ -835,12 +857,33 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
         const rel = relativeImportPath(path, exportingPath)
         if (!byFile.has(rel)) byFile.set(rel, [])
         byFile.get(rel)!.push(name)
+        handledNames.add(name)
       }
       if (byFile.size > 0) {
         const importLines = Array.from(byFile.entries()).map(
           ([rel, names]) => `import { ${names.join(', ')} } from '${rel}'`
         )
         fixed = importLines.join('\n') + '\n' + fixed
+      }
+
+      // #2021: same injection, but for a sibling whose export is a DEFAULT
+      // export (see localDefaultExportMap comment above) — these need their
+      // own `import Name from '...'` line, never a named `{ Name }` one, so
+      // they can't be merged into byFile above.
+      const defaultImportLines: string[] = []
+      for (const [name, exportingPath] of localDefaultExportMap) {
+        if (handledNames.has(name)) continue
+        if (exportingPath === selfPath) continue
+        if (!new RegExp(`<${name}[\\s/>]`).test(fixedNoComments)) continue
+        if (
+          new RegExp(`import\\s*\\{[^}]*\\b${name}\\b[^}]*\\}\\s*from`).test(fixedNoComments) ||
+          new RegExp(`import\\s+${name}\\b`).test(fixedNoComments)
+        ) continue
+        const rel = relativeImportPath(path, exportingPath)
+        defaultImportLines.push(`import ${name} from '${rel}'`)
+      }
+      if (defaultImportLines.length > 0) {
+        fixed = defaultImportLines.join('\n') + '\n' + fixed
       }
     }
 
@@ -1458,6 +1501,63 @@ function buildLocalExportMap(sandpackFiles: Record<string, string>, builtinPaths
       }
       map.set(name, normalized)
     }
+  }
+  for (const name of ambiguous) map.delete(name)
+  return map
+}
+
+/**
+ * #2021: companion to buildLocalExportMap() above, for the one export shape
+ * it deliberately doesn't recognize — a DEFAULT export. Two real shapes,
+ * both confirmed live:
+ *  1. Inline: `export default function Name(...) { ... }` or
+ *     `export default class Name { ... }`.
+ *  2. Two-step (younova's real TaskList.tsx): `function Name(...) { ... }`
+ *     (or `const`/`let`/`var Name = ...`) declared with no inline `export`
+ *     at all, then a later bare `export default Name;` referencing it.
+ *
+ * Scans a comment/string-masked view throughout (same technique and same
+ * reason as buildLocalExportMap()/#1900 above) — a comment merely
+ * mentioning an old `export default Name` line must never register as a
+ * real export, or the sibling-import injection this feeds wires a default
+ * import to a component that doesn't actually exist at runtime.
+ *
+ * Deliberately excludes a bare `export default someName` that ISN'T
+ * declared locally via function/class/const/let/var in this same file
+ * (e.g. re-exporting an imported name) — same "only reads what a file
+ * exports of its own local declarations" scope extractBareExportListNames
+ * documents above, and the same reasoning: an unresolved case is strictly
+ * safer than wiring a default import to the wrong place.
+ */
+function buildLocalDefaultExportMap(sandpackFiles: Record<string, string>, builtinPaths: Set<string>): Map<string, string> {
+  const map = new Map<string, string>()
+  const ambiguous = new Set<string>()
+  for (const [path, code] of Object.entries(sandpackFiles)) {
+    if (builtinPaths.has(path) || !/\.(t|j)sx?$/.test(path)) continue
+    const normalized = normalizeForRelative(path)
+    const masked = maskCommentsAndStrings(code)
+    let name: string | undefined
+    const inlineMatch = masked.match(/export\s+default\s+(?:function|class)\s+([A-Z]\w*)/)
+    if (inlineMatch) {
+      name = inlineMatch[1]
+    } else {
+      const bareMatch = masked.match(/export\s+default\s+([A-Z]\w*)\s*;?\s*(?:\n|$)/)
+      if (bareMatch) {
+        const candidate = bareMatch[1]
+        const declaredLocally = new RegExp(
+          `(?:^|[\\n;{(\\s])(?:function|class)\\s+${candidate}\\b` +
+            `|(?:^|[\\n;{(\\s])(?:const|let|var)\\s+${candidate}\\b`,
+        ).test(masked)
+        if (declaredLocally) name = candidate
+      }
+    }
+    if (!name) continue
+    const existing = map.get(name)
+    if (existing !== undefined && existing !== normalized) {
+      ambiguous.add(name)
+      continue
+    }
+    map.set(name, normalized)
   }
   for (const name of ambiguous) map.delete(name)
   return map

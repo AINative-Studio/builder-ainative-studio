@@ -571,6 +571,64 @@ describe('buildSandpackFiles — buildLocalExportMap is comment-blind to a merel
 })
 
 /**
+ * Real bug found live (#2021, company "younova"): buildLocalExportMap()'s
+ * sibling-import injector only recognizes a NAMED export. A sibling
+ * component declared `function Name(...) { ... }` with no inline `export`,
+ * exported two steps later via a bare `export default Name;` (younova's
+ * real TaskList.tsx) — or the equally common inline `export default
+ * function Name(...) { ... }` — was invisible to it, so no import ever got
+ * injected. Before #2026's catch-all existed this crashed with
+ * "TaskList is not defined"; after #2026 it was silently stubbed to an
+ * inert no-op instead — a real, working sibling component quietly stops
+ * doing anything. buildLocalDefaultExportMap() closes this for both default
+ * shapes, injecting the correct `import Name from '...'` (never a named
+ * `{ Name }`, which would itself crash with "does not provide an export
+ * named 'Name'" since the file only has a default export).
+ */
+describe('buildSandpackFiles — default-exported sibling used in JSX without an import (#2021)', () => {
+  it('injects a default import for a two-step declare-then-export-default sibling (TaskList.tsx shape)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App() { return <div><TaskList tasks={[]} /></div> }",
+      '/components/TaskList.tsx': [
+        "function TaskList({ tasks }) { return <div>{tasks.length}</div> }",
+        'export default TaskList;',
+      ].join('\n'),
+    })
+    expect(built['/App.tsx']).toContain("import TaskList from './components/TaskList'")
+    expect(built['/App.tsx']).not.toContain('const TaskList = (props)')
+  })
+
+  it('injects a default import for an inline `export default function Name` sibling', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App() { return <div><AppSidebar /></div> }",
+      '/components/AppSidebar.tsx': 'export default function AppSidebar() { return <nav/> }',
+    })
+    expect(built['/App.tsx']).toContain("import AppSidebar from './components/AppSidebar'")
+    expect(built['/App.tsx']).not.toContain('const AppSidebar = (props)')
+  })
+
+  it('never injects a default import for an export default mentioned only in a comment', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App() { return <div><Widget /></div> }",
+      '/components/Widget.tsx': [
+        '// old draft: export default Widget',
+        'function Widget() { return <div>new</div> }',
+      ].join('\n'),
+    })
+    expect(built['/App.tsx']).not.toContain("import Widget from './components/Widget'")
+  })
+
+  it('prefers the named-export path and never double-imports when a name is ambiguous across a default and named export', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx': "export default function App() { return <div><InfoPanel /></div> }",
+      '/components/InfoPanel.tsx': 'export function InfoPanel() { return <div>named</div> }',
+    })
+    expect(built['/App.tsx']).toContain("import { InfoPanel } from './components/InfoPanel'")
+    expect(built['/App.tsx']).not.toContain("import InfoPanel from './components/InfoPanel'")
+  })
+})
+
+/**
  * Real bug found this run (#1919): fixMissingExports' alreadyExportedRe and
  * declRe both scanned the target file's RAW, unmasked text — same bug class
  * as #1900 (buildLocalExportMap), just in this sibling function. A comment
