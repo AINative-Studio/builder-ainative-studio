@@ -1143,3 +1143,70 @@ describe('buildSandpackFiles — sibling-import injector recognizes a default-ex
     expect(built['/components/Self.tsx']).not.toContain("import Self from")
   })
 })
+
+/**
+ * Real bug found live this run (younova's StudyStats.tsx: "Cards you're
+ * struggling with"; a letterpress-idea company's Configurator.tsx: "We'll
+ * be in touch"; shutter's Footer.tsx: "who'd rather shoot"): an apostrophe
+ * inside plain JSX TEXT content (a contraction — ordinary in marketing
+ * copy) is not a JS string-literal delimiter, but maskCommentsAndStrings()
+ * always treated a bare `'` as opening one and scanned forward for the next
+ * `'` to close it. That next `'` is normally a REAL string literal's own
+ * opening quote elsewhere in the file, so the mask inverted from that point
+ * on — real code masked as if it were string content, and real string
+ * content left visible as if it were code — for the rest of the file. Every
+ * shadcn/AIKit/lucide/sibling-import "already imported"/"is used" check
+ * below runs against this masked view, so a real shadcn/AIKit/lucide/local-
+ * sibling JSX usage anywhere AFTER the contraction silently failed every
+ * one of those checks and got no import injected at all — confirmed live
+ * for 3 real companies (`<Badge>`, 10 different shadcn components in one
+ * file, `<Separator>` respectively), each previously reported as a false
+ * "still broken" result until this fix landed.
+ */
+describe('buildSandpackFiles — apostrophe in JSX text content does not desync string masking', () => {
+  it('still injects a shadcn import for a component used AFTER a contraction in JSX text', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "export default function App(){ return <div><p>Cards you're struggling with</p><Badge>New</Badge></div> }",
+    })
+    expect(built['/App.tsx']).toContain("from './components/ui/badge'")
+  })
+
+  it('still injects a shadcn import after multiple different contractions in JSX text', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "export default function App(){ return <div><p>We'll be in touch. Built for creatives who'd rather shoot than admin.</p><Separator/></div> }",
+    })
+    expect(built['/App.tsx']).toContain("from './components/ui/separator'")
+  })
+
+  it('still injects every shadcn import used after a contraction, even many components deep', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "export default function App(){ return <div><p>It's ready</p><Card><CardHeader><CardTitle>Hi</CardTitle></CardHeader><CardContent><Button/><Input/><Label/></CardContent></Card></div> }",
+    })
+    const app = built['/App.tsx']
+    expect(app).toContain("from './components/ui/card'")
+    expect(app).toContain("from './components/ui/button'")
+    expect(app).toContain("from './components/ui/input'")
+    expect(app).toContain("from './components/ui/label'")
+  })
+
+  it('does not break masking of a genuine string literal elsewhere in the same file', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "import { Tag } from 'lucide-react'\nexport default function App(){ const label = 'don\\'t skip this'; return <div><Tag/><Badge/></div> }",
+    })
+    expect(built['/App.tsx']).toContain("from './components/ui/badge'")
+    // the real import is untouched, and the genuine string content survives
+    expect(built['/App.tsx']).toContain("from 'lucide-react'")
+  })
+
+  it('still treats a real string literal opened after an operator/bracket as a real string (not prose)', () => {
+    const built = buildSandpackFiles({
+      '/App.tsx':
+        "export default function App(){ const items = ['a', 'b']; return <div>{items[0]}<Badge/></div> }",
+    })
+    expect(built['/App.tsx']).toContain("from './components/ui/badge'")
+  })
+})

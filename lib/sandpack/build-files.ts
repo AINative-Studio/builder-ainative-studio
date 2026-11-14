@@ -107,6 +107,36 @@ function maskCommentsAndStrings(code: string): string {
   while (i < code.length) {
     const ch = code[i]
     const next = code[i + 1]
+    // Real bug found live (this run — company 'younova's StudyStats.tsx
+    // "Cards you're struggling with", 'letterpress'-idea Configurator.tsx
+    // "We'll be in touch", 'shutter's Footer.tsx "who'd rather shoot"): a
+    // `'` can legitimately be an apostrophe inside plain JSX TEXT content
+    // (a contraction in marketing copy, which this entire .tsx file is full
+    // of), not the start of a JS string literal — this function has no
+    // notion of JSX text vs. JS expression context, so it always treated a
+    // bare `'` as opening a string and searched forward for the next `'`
+    // to close it, desyncing the mask for everything that followed (the
+    // next unrelated `'...'` string literal got blanked-then-unblanked
+    // INVERTED — visible where it should be masked and vice versa — right
+    // through the rest of the file). Every shadcn/AIKit/lucide/sibling-
+    // import "already imported"/"is used" check below runs against this
+    // masked view, so a real `<Badge>`/`<Separator>`/etc. JSX usage AFTER
+    // the contraction silently failed every one of those checks, leaving a
+    // real, existing shadcn component with no import injected at all.
+    //
+    // A `'` that opens a genuine JS string/char literal is never written
+    // with no separator directly after an identifier/number character —
+    // `foo'bar'` isn't valid JS, so a `'` immediately preceded by a word
+    // character (letter/digit/_/$) can only be a contraction inside prose,
+    // never a real opening quote. Treating it as ordinary text (not a
+    // string delimiter) is therefore safe for real code and fixes the
+    // JSX-text case. Only `'` needs this — English contractions never use
+    // `"`.
+    if (ch === "'" && i > 0 && /[A-Za-z0-9_$]/.test(code[i - 1])) {
+      out += ch
+      i++
+      continue
+    }
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
       const realEnd = end === -1 ? code.length - 1 : end
