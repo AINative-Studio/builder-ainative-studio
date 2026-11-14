@@ -848,13 +848,44 @@ describe('listTasksForCompany (#1086)', () => {
     expect(tasks.map((t) => t.id).sort()).toEqual(['a', 'b'])
   })
 
-  it('calls the plain rows endpoint (not /query) with no filters, matching the app-registry full-scan convention', async () => {
+  it('calls the /query endpoint with a scope_key $regex suffix filter (#2026 — a plain 1000-row scan missed this company entirely once the table grew past one page)', async () => {
     const fn = mockFetch(() => ({ ok: true, json: () => ({ data: [] }) }))
     await listTasksForCompany('acme')
     const [url, init] = fn.mock.calls[0]
-    expect(url).toContain('/database/tables/build_tasks/rows')
-    expect(url).not.toContain('/query')
-    expect(init?.method ?? 'GET').toBe('GET')
+    expect(url).toContain('/database/tables/build_tasks/query')
+    expect(init?.method).toBe('POST')
+    const body = JSON.parse(init.body)
+    expect(body.filters).toEqual({ scope_key: { $regex: '::acme$' } })
+  })
+
+  it('falls back to a single-page scan if the /query call itself throws, still returning an honest result from that page', async () => {
+    // listTasksForCompany's own /query attempt passes { retries: 1 } to
+    // zerodbRequest, so a thrown fetch error is retried ONCE internally
+    // before zerodbRequest itself re-throws out to listTasksForCompany's
+    // outer catch — the fallback scan is call #3, not call #2.
+    let call = 0
+    const fn = vi.fn(async (url: string) => {
+      call++
+      if (call <= 2) throw new Error('query endpoint down')
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [{ row_data: { id: 'a', title: 'fallback task', scope_key: 'founder@x.com::acme' } }],
+        }),
+      }
+    })
+    vi.stubGlobal('fetch', fn)
+    const tasks = await listTasksForCompany('acme')
+    expect(tasks.map((t) => t.id)).toEqual(['a'])
+    expect(fn).toHaveBeenCalledTimes(3)
+    const [fallbackUrl] = fn.mock.calls[2]
+    expect(String(fallbackUrl)).toContain('/database/tables/build_tasks/rows')
+  })
+
+  it('returns [] when both the /query call AND the fallback scan fail', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('boom') }))
+    expect(await listTasksForCompany('acme')).toEqual([])
   })
 
   it('includes the Gitea synthetic sentinel rows for the company', async () => {

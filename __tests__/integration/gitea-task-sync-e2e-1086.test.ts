@@ -106,11 +106,22 @@ function mockZeroDb(initialRows: Array<{ row_id: string; row_data: any }>) {
       if (idx >= 0) rows[idx] = { row_id: putMatch[1], row_data: body.row_data }
       return { ok: true, status: 200, json: async () => ({ ok: true }), text: async () => '' } as any
     }
-    // task-store's own /query endpoint (used by updateTask to find the row
-    // by scope_key before the PUT) — filter by scope_key like the real API.
+    // task-store's own /query endpoint — used by BOTH updateTask (an exact
+    // scope_key string match, to find the row by scope_key before the PUT)
+    // and listTasksForCompany (#2026 — a MongoDB-style { $regex } filter on
+    // scope_key, matching every owner's rows for one company). Handle both
+    // filter shapes like the real API does.
     if (u.includes('/database/tables/build_tasks/query') && method === 'POST') {
       const body = JSON.parse(init.body)
-      const filtered = rows.filter((r) => r.row_data.scope_key === body.filters?.scope_key)
+      const scopeKeyFilter = body.filters?.scope_key
+      const filtered = rows.filter((r) => {
+        const scopeKey = String(r.row_data.scope_key || '')
+        if (typeof scopeKeyFilter === 'string') return scopeKey === scopeKeyFilter
+        if (scopeKeyFilter && typeof scopeKeyFilter.$regex === 'string') {
+          return new RegExp(scopeKeyFilter.$regex).test(scopeKey)
+        }
+        return false
+      })
       return { ok: true, status: 200, json: async () => ({ data: filtered }), text: async () => '' } as any
     }
     return { ok: false, status: 404, json: async () => ({}), text: async () => 'not mocked: ' + u } as any

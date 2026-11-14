@@ -593,16 +593,29 @@ export async function listTasks(
  * writes (unchanged provenance for the swarm/nightly/resolver/splitter
  * pipelines that already depend on `{owner}::{company}` scope keys).
  *
- * QUERY STRATEGY: `build_tasks` is normally read via the `/query` endpoint's
- * `filters: { scope_key }` — but that only matches an EXACT scope_key, and
- * there is no server-side "ends with" / suffix operator to match every
- * owner's rows for one company in a single filtered call. Rather than risk
- * a silent-empty-result failure mode against an unconfirmed filter key
- * (`app-registry.ts`'s `resolveAppByZeroVoiceNumber` hit exactly that
- * failure mode once already), this reuses the same real, already-working
- * full-scan-then-filter-client-side approach `listAllAppsWithStatus` uses for
- * `builder_app_registry` — fetch the plain rows endpoint capped at 1000, then
- * keep only rows whose `scope_key` belongs to this company.
+ * QUERY STRATEGY (#2026 rewrite): this used to fetch the plain rows endpoint
+ * capped at a single `limit=1000` page and filter client-side — the ONLY
+ * approach the original author trusted, having previously been burned by an
+ * unconfirmed server-side filter key silently returning an empty result
+ * (`app-registry.ts`'s `resolveAppByZeroVoiceNumber`). That caution was sound
+ * at the time, but `build_tasks` has since grown to 280k+ rows (confirmed
+ * live), so a single 1000-row page almost never contains a given company's
+ * actual rows — `hasOpenTaskForReason()`'s idempotency check in
+ * obedience-backfill.ts/completeness-backfill.ts silently saw an empty list
+ * on most calls and re-filed duplicate backlog tasks for the same company
+ * across repeated --apply runs (confirmed live: "axiom" ended up with 2
+ * identical "Fix generation compliance gap" rows after two runs).
+ *
+ * Now uses the real `/query` endpoint's MongoDB-style `$regex` operator on
+ * `scope_key` (confirmed working live: a direct `{"scope_key": {"$regex":
+ * "::<slug>$"}}` filter against this exact table returns the correct,
+ * complete row set with its own accurate `total`/`has_more`), matching the
+ * same `/query` convention `updateTask()` below already uses for an exact
+ * scope-key match. Falls back to the old full-scan-first-page behavior (same
+ * honest-empty-on-failure posture as before) if the query call itself
+ * throws or returns a non-ok response, so a real outage still fails safe
+ * rather than crashing a caller — it just can't claim the behavior above was
+ * confirmed in that fallback path.
  *
  * Returns [] on empty / failure — an honest empty state, never fabricated.
  */
@@ -611,9 +624,9 @@ export async function listTasksForCompany(companySlug: string): Promise<BuildTas
   if (!slug) return []
   try {
     const result = await zerodbRequest(
-      'GET',
-      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows?limit=1000`,
-      undefined,
+      'POST',
+      `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
+      { filters: { scope_key: { $regex: `::${slug}$` } }, limit: MAX_LOAD_TASKS },
       { retries: 1 },
     )
     const rows: any[] = Array.isArray(result) ? result : result?.data || result?.rows || []
@@ -623,8 +636,24 @@ export async function listTasksForCompany(companySlug: string): Promise<BuildTas
       .filter((t): t is BuildTask => t !== null)
     return sortTasks(mergeGiteaTasks(tasks)).slice(0, MAX_LOAD_TASKS)
   } catch (e) {
-    console.warn('[task-store] listTasksForCompany failed:', (e as Error)?.name || e)
-    return []
+    console.warn('[task-store] listTasksForCompany /query failed, falling back to a single-page scan:', (e as Error)?.name || e)
+    try {
+      const result = await zerodbRequest(
+        'GET',
+        `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/rows?limit=1000`,
+        undefined,
+        { retries: 1 },
+      )
+      const rows: any[] = Array.isArray(result) ? result : result?.data || result?.rows || []
+      const tasks = rows
+        .filter((r) => scopeKeyBelongsToCompany(String(r?.row_data?.scope_key || ''), slug))
+        .map((r) => coerceTask(r))
+        .filter((t): t is BuildTask => t !== null)
+      return sortTasks(mergeGiteaTasks(tasks)).slice(0, MAX_LOAD_TASKS)
+    } catch (e2) {
+      console.warn('[task-store] listTasksForCompany fallback scan also failed:', (e2 as Error)?.name || e2)
+      return []
+    }
   }
 }
 
