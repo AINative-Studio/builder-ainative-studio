@@ -29,4 +29,51 @@ describe('stubUnsupportedIconLibraries comment safety', () => {
     expect(out).toMatch(/const FaStar = \(_props: any\) => null/)
     expect(out).not.toMatch(/from ['"]react-icons\//)
   })
+
+  /**
+   * Overnight loop, 2026-11-14 (#2022 follow-up, found while adding a
+   * render-time truncated-file safety net): the regex itself ended in
+   * `\s*;?` — "optional whitespace, then an optional semicolon" — but `\s`
+   * matches `\n` too. With NO trailing semicolon (common in semicolon-free
+   * generated code), `\s*` greedily ate every following newline/blank line
+   * right up to the next non-whitespace token, landing the WHOLE rest of
+   * the component on the same line as the stub's own trailing `//`
+   * comment — silently deleting it. Confirmed live by direct repro: a
+   * one-icon import immediately followed on the next line by
+   * `export default function App(){...}` lost that entire line into the
+   * comment, leaving the file with no export at all. Fixed by narrowing the
+   * optional-whitespace-before-a-semicolon match to `[ \t]*` (same line
+   * only) so a trailing newline is never consumed.
+   */
+  it('does not swallow the next real line into its own trailing comment when the import has no trailing semicolon', () => {
+    const code = [
+      "import { FaRegCircle } from 'react-icons/fa'",
+      'export default function App(){ return <FaRegCircle/> }',
+    ].join('\n')
+    const out = fixJsxErrors(code)
+    expect(out).toContain('const FaRegCircle = (_props: any) => null')
+    // The real component declaration must survive on its own line, not get
+    // appended to the stub's `//` comment.
+    expect(out).toMatch(/^export default function App/m)
+  })
+
+  it('does not swallow a blank line + the next real line either (import followed by a blank line, as real generated code typically formats it)', () => {
+    const code = [
+      "import { FaRegCircle } from 'react-icons/fa'",
+      '',
+      'export default function App(){ return <FaRegCircle/> }',
+    ].join('\n')
+    const out = fixJsxErrors(code)
+    expect(out).toMatch(/^export default function App/m)
+  })
+
+  it('still consumes a real trailing semicolon on the same line (no behavior change for that case)', () => {
+    const code = [
+      "import { FaRegCircle } from 'react-icons/fa';",
+      'export default function App(){ return <FaRegCircle/> }',
+    ].join('\n')
+    const out = fixJsxErrors(code)
+    expect(out).not.toContain(';;')
+    expect(out).toMatch(/^export default function App/m)
+  })
 })
