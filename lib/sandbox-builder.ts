@@ -56,6 +56,16 @@ const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
  * class — this is that same bug class, found in this file's own
  * FILE_MARKER scan and import-strip scan, which neither of those fixes
  * covers).
+ *
+ * #2034/#2053/#2077-class guard: a `'`/`"` that isn't really opening a
+ * string — a contraction right after a word character, or one whose only
+ * candidate same-quote close sits on a LATER line (a real single/double-
+ * quoted JS string can never contain a raw newline) — must be treated as
+ * an ordinary character, not skipped to a bogus later close. Otherwise a
+ * real multi-line backtick/comment construct starting inside that bogus
+ * span is jumped straight over without ever calling `markSpan` on it, so
+ * its own embedded `// --- FILE: ... ---`-shaped / `import`-shaped lines
+ * never get flagged as hidden (#2081).
  */
 function linesInsideMultilineConstruct(code: string): Set<number> {
   const inside = new Set<number>()
@@ -70,8 +80,19 @@ function linesInsideMultilineConstruct(code: string): Set<number> {
     const next = code[i + 1]
     if (ch === '\\') { i += 2; continue }
     if (ch === '"' || ch === "'") {
+      const prevCh = code[i - 1]
+      if (ch === "'" && prevCh !== undefined && /[A-Za-z0-9_$]/.test(prevCh)) {
+        i++
+        continue
+      }
       let j = i + 1
       while (j < code.length && code[j] !== ch) { if (code[j] === '\\') j++; j++ }
+      const end = j < code.length ? j : -1
+      const nl = code.indexOf('\n', i)
+      if (nl !== -1 && (end === -1 || nl < end)) {
+        i++
+        continue
+      }
       i = j + 1
       continue
     }
@@ -108,6 +129,15 @@ function linesInsideMultilineConstruct(code: string): Set<number> {
  * string, template literal, or comment apart from a real one, using
  * bracket-scanner.ts's shared, already-proven string/backtick-end finders
  * rather than a fresh hand-rolled scanner.
+ *
+ * #2034/#2053/#2077-class guard: calls the RAW `findStringEnd` directly
+ * (not the already-guarded `resolveStringOpen`/`maskComments` wrapper in
+ * bracket-scanner.ts), so a `'`/`"` that isn't really opening a string — a
+ * contraction, or one whose only candidate same-quote close sits on a
+ * LATER line — must be ruled out here too, or everything up to that bogus
+ * later close gets blanked as if it were string content, hiding a real
+ * demo `export default`/`import` decoy from `replaceOutsideMask()` below
+ * (#2081).
  */
 function maskStringsAndComments(code: string): string {
   let out = ''
@@ -116,7 +146,19 @@ function maskStringsAndComments(code: string): string {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
+      const prevCh = code[i - 1]
+      if (ch === "'" && prevCh !== undefined && /[A-Za-z0-9_$]/.test(prevCh)) {
+        out += ch
+        i++
+        continue
+      }
       const end = findStringEnd(code, i, ch)
+      const nl = code.indexOf('\n', i)
+      if (nl !== -1 && (end === -1 || nl < end)) {
+        out += ch
+        i++
+        continue
+      }
       const realEnd = end === -1 ? code.length - 1 : end
       out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1

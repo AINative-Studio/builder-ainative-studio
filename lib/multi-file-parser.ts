@@ -110,6 +110,16 @@ function bracesBalance(code: string): boolean {
  * ordinary thing for a generated docs/API-product page) had that embedded
  * line mistaken for a real file boundary, splitting the real file
  * mid-content and clobbering whatever followed under the reused name.
+ *
+ * #2034/#2053/#2077-class guard: a `'`/`"` that isn't really opening a
+ * string — a contraction right after a word character, or one whose only
+ * candidate same-quote close sits on a LATER line (a real single/double-
+ * quoted JS string can never contain a raw newline) — must be treated as
+ * an ordinary character, not skipped to a bogus later close. Otherwise a
+ * real multi-line backtick/comment construct starting inside that bogus
+ * span is jumped straight over without ever calling `markSpan` on it, so
+ * its own embedded `// --- FILE: ... ---`-shaped lines never get flagged
+ * as hidden (#2081).
  */
 function linesInsideMultilineConstruct(code: string): Set<number> {
   const inside = new Set<number>()
@@ -124,8 +134,19 @@ function linesInsideMultilineConstruct(code: string): Set<number> {
     const next = code[i + 1]
     if (ch === '\\') { i += 2; continue }
     if (ch === '"' || ch === "'") {
+      const prevCh = code[i - 1]
+      if (ch === "'" && prevCh !== undefined && /[A-Za-z0-9_$]/.test(prevCh)) {
+        i++
+        continue
+      }
       let j = i + 1
       while (j < code.length && code[j] !== ch) { if (code[j] === '\\') j++; j++ }
+      const end = j < code.length ? j : -1
+      const nl = code.indexOf('\n', i)
+      if (nl !== -1 && (end === -1 || nl < end)) {
+        i++
+        continue
+      }
       i = j + 1
       continue
     }
