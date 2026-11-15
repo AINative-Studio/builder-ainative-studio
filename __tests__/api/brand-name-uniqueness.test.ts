@@ -132,6 +132,33 @@ describe('POST /api/build/brand — name uniqueness', () => {
     expect(json.slug).toBeTruthy()
   })
 
+  // Real bug found via live E2E testing (issue #2067): an idea starting with a
+  // bracketed tag (e.g. a tracking/test prefix) made the last-resort fallback
+  // grab the tag's own first token as the "name" — "[LOOP-TEST 2026-11-15] A
+  // simple customer feedback board..." became just "[LOOP-TEST", dropping the
+  // closing bracket and the entire rest of the idea.
+  it('strips a leading bracketed tag before deriving the fallback name (#2067)', async () => {
+    h.getClaudeCompletion.mockReturnValue(fakeClaude([null, null, null, null]))
+    h.resolveApp.mockResolvedValue(null)
+    const res = await POST(req({
+      idea: '[LOOP-TEST 2026-11-15] A simple customer feedback board for a small cafe',
+      track: 'app',
+    }))
+    const json = await res.json()
+    expect(json.name).not.toContain('[')
+    expect(json.name).not.toMatch(/^LOOP-TEST/i)
+    expect(json.name).toBe('Simple')
+  })
+
+  it('strips a leading parenthesized tag the same way (#2067)', async () => {
+    h.getClaudeCompletion.mockReturnValue(fakeClaude([null, null, null, null]))
+    h.resolveApp.mockResolvedValue(null)
+    const res = await POST(req({ idea: '(internal test) A scheduling assistant for dentists', track: 'app' }))
+    const json = await res.json()
+    expect(json.name).not.toContain('(')
+    expect(json.name).toBe('Scheduling')
+  })
+
   it('never fails the request when the registry check itself errors — fail-open', async () => {
     h.getClaudeCompletion.mockReturnValue(fakeClaude(['Wisplane']))
     h.resolveApp.mockRejectedValue(new Error('zerodb timeout'))
