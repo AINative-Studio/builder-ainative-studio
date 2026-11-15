@@ -29,7 +29,7 @@ vi.mock('@/lib/build/e2b-sandbox', async () => {
   }
 })
 
-import { runCoverage } from '@/lib/build/coverage-runner'
+import { runCoverage, runBuildCheck } from '@/lib/build/coverage-runner'
 
 const PKG_JSON = JSON.stringify({
   scripts: { test: 'vitest run' },
@@ -141,5 +141,118 @@ describe('runCoverage — fail-closed when E2B is unconfigured (#917)', () => {
     )
     expect(result.testable).toBe(false)
     expect(result.reason).toBe('E2B not configured — sandboxed execution required for untrusted code')
+  })
+})
+
+/**
+ * #1914 — runBuildCheck() is the new sibling of runCoverage() that gates the
+ * no-test-suite case on a real `npm run build`. Same fail-closed posture as
+ * #917 established for runCoverage(): a missing E2B_API_KEY must never
+ * silently fall through to an unsandboxed local spawn() of founder-generated
+ * build code, and the explicit ALLOW_UNSANDBOXED_COVERAGE opt-in (reused,
+ * not duplicated with a second flag for the same risk) must log loudly.
+ */
+describe('runBuildCheck — fail-closed when E2B is unconfigured (#1914)', () => {
+  const BUILD_PKG_JSON = JSON.stringify({ scripts: { build: 'next build' } })
+
+  let errorSpy: ReturnType<typeof vi.spyOn>
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    errorSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+  })
+
+  afterEach(() => {
+    errorSpy.mockRestore()
+  })
+
+  it('returns an honest refusal (not a fabricated pass) when E2B_API_KEY is absent and no opt-in is set', async () => {
+    const result = await runBuildCheck({ 'package.json': BUILD_PKG_JSON }, { env: {} as any })
+    expect(result).toEqual({
+      passed: false,
+      reason: 'E2B not configured — sandboxed execution required for untrusted code',
+      sandboxRefused: true,
+    })
+  })
+
+  it('never touches the local spawn() path or the E2B path when refusing', async () => {
+    await runBuildCheck({ 'package.json': BUILD_PKG_JSON }, { env: {} as any })
+    expect(mockRunSequence).not.toHaveBeenCalled()
+  })
+
+  it('logs a loud, searchable warning before refusing', async () => {
+    await runBuildCheck({ 'package.json': BUILD_PKG_JSON }, { env: {} as any })
+    expect(errorSpy).toHaveBeenCalled()
+    const logged = errorSpy.mock.calls.map((args) => args.join(' ')).join('\n')
+    expect(logged).toMatch(/E2B/i)
+    expect(logged).toMatch(/unsandboxed|not configured/i)
+  })
+
+  it('returns an honest "no build script" result — not a refusal — when the app has no build script at all, regardless of E2B config', async () => {
+    const result = await runBuildCheck(
+      { 'package.json': JSON.stringify({ scripts: { dev: 'next dev' } }) },
+      { env: {} as any },
+    )
+    expect(result.sandboxRefused).toBeUndefined()
+    expect(result.passed).toBe(false)
+    expect(result.reason).toMatch(/no build script/i)
+  })
+
+  it('still routes to the real E2B path, unchanged, when E2B_API_KEY IS set', async () => {
+    mockRunSequence.mockResolvedValue({
+      commandResults: [
+        { exitCode: 0, stdout: '', stderr: '' },
+        { exitCode: 0, stdout: '', stderr: '' },
+      ],
+      files: {},
+    })
+
+    const result = await runBuildCheck(
+      { 'package.json': BUILD_PKG_JSON },
+      { env: { E2B_API_KEY: 'test-key' } as any },
+    )
+
+    expect(mockRunSequence).toHaveBeenCalledOnce()
+    expect(result.passed).toBe(true)
+    expect(errorSpy).not.toHaveBeenCalled()
+  })
+
+  it('reports a failed build exit code via the E2B path honestly', async () => {
+    mockRunSequence.mockResolvedValue({
+      commandResults: [
+        { exitCode: 0, stdout: '', stderr: '' },
+        { exitCode: 1, stdout: '', stderr: 'Type error' },
+      ],
+      files: {},
+    })
+
+    const result = await runBuildCheck(
+      { 'package.json': BUILD_PKG_JSON },
+      { env: { E2B_API_KEY: 'test-key' } as any },
+    )
+
+    expect(result.passed).toBe(false)
+    expect(result.reason).toMatch(/exited with code 1/)
+  })
+
+  it('falls back to the real local spawn() path ONLY when the explicit opt-in is set, and logs a loud warning when it does', async () => {
+    const result = await runBuildCheck(
+      { 'package.json': BUILD_PKG_JSON },
+      { env: { ALLOW_UNSANDBOXED_COVERAGE: 'true' } as any, timeoutMs: 100 },
+    )
+    expect(result.reason).not.toBe('E2B not configured — sandboxed execution required for untrusted code')
+    expect(mockRunSequence).not.toHaveBeenCalled()
+    expect(errorSpy).toHaveBeenCalled()
+    const logged = errorSpy.mock.calls.map((args) => args.join(' ')).join('\n')
+    expect(logged).toMatch(/unsandboxed/i)
+  })
+
+  it('treats any non-"true" value for the opt-in as not opted in (refuses)', async () => {
+    const result = await runBuildCheck(
+      { 'package.json': BUILD_PKG_JSON },
+      { env: { ALLOW_UNSANDBOXED_COVERAGE: '0' } as any },
+    )
+    expect(result.passed).toBe(false)
+    expect(result.sandboxRefused).toBe(true)
   })
 })

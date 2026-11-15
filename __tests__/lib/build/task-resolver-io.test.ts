@@ -26,6 +26,7 @@ const h = vi.hoisted(() => ({
   setAppRailwayService: vi.fn(),
   implementTask: vi.fn(),
   runCoverage: vi.fn(),
+  runBuildCheck: vi.fn(),
   updateTask: vi.fn(),
   deployCompanyFromGitea: vi.fn(),
   companyDeployEnabled: vi.fn(),
@@ -43,7 +44,7 @@ vi.mock('@/lib/build/app-registry', () => ({
   setAppRailwayService: h.setAppRailwayService,
 }))
 vi.mock('@/lib/build/task-implementer', () => ({ implementTask: h.implementTask }))
-vi.mock('@/lib/build/coverage-runner', () => ({ runCoverage: h.runCoverage }))
+vi.mock('@/lib/build/coverage-runner', () => ({ runCoverage: h.runCoverage, runBuildCheck: h.runBuildCheck }))
 vi.mock('@/lib/build/task-store', () => ({ updateTask: h.updateTask }))
 vi.mock('@/lib/build/company-deploy', () => ({
   deployCompanyFromGitea: h.deployCompanyFromGitea,
@@ -496,19 +497,59 @@ describe('resolveTask — end-to-end orchestration', () => {
     expect(coverageArg['changed.ts']).toBe('new') // the CHANGED version, not the old one
   })
 
-  it('accepts a genuinely untestable app on implementation alone (matches core issue_resolution_loop.py principle)', async () => {
+  it('accepts a genuinely untestable app on implementation alone, but only once its build check passes (#1914)', async () => {
     h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
     h.fetchRepoFiles.mockResolvedValue({})
     h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
     h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
     h.runCoverage.mockResolvedValue({ coveragePercent: null, testable: false, passed: false })
+    h.runBuildCheck.mockResolvedValue({ passed: true })
 
     const result = await resolveTask('owner::slug', TASK, 'slug')
     expect(result.ok).toBe(true)
     expect(result.stage).toBe('completed')
+    expect(h.runBuildCheck).toHaveBeenCalled()
     // #1914 — this is exactly the case the nightly-loop aggregate must be
     // able to tell apart from a real coverage-verified completion.
     expect(result.testable).toBe(false)
+  })
+
+  it('#1914 — a no-test-suite app whose build check FAILS is reported failed, never auto-completed on faith', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({})
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
+    h.runCoverage.mockResolvedValue({ coveragePercent: null, testable: false, passed: false })
+    h.runBuildCheck.mockResolvedValue({ passed: false, reason: 'Build exited with code 1' })
+
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+    expect(result.stage).toBe('failed')
+    expect(result.reason).toContain('build check failed')
+    expect(h.mergeTaskPR).not.toHaveBeenCalled()
+  })
+
+  it('#1914 — does not run the build check at all for a genuinely coverage-verified (testable) app', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({})
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
+    h.runCoverage.mockResolvedValue({ coveragePercent: 90, testable: true, passed: true })
+
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+    expect(result.stage).toBe('completed')
+    expect(h.runBuildCheck).not.toHaveBeenCalled()
+  })
+
+  it('#1914 — does not run the build check when coverage was refused for sandboxing reasons (that failure already fails the task on its own)', async () => {
+    h.resolveApp.mockResolvedValue({ gitOrg: 'ws-1' })
+    h.fetchRepoFiles.mockResolvedValue({})
+    h.implementTask.mockResolvedValue({ ok: true, files: { 'a.ts': 'x' } })
+    h.commitTaskWithPR.mockResolvedValue({ ok: true, prUrl: 'https://git.ainative.studio/pr/1' })
+    h.runCoverage.mockResolvedValue({ coveragePercent: null, testable: false, passed: false, sandboxRefused: true })
+
+    const result = await resolveTask('owner::slug', TASK, 'slug')
+    expect(result.stage).toBe('failed')
+    expect(h.runBuildCheck).not.toHaveBeenCalled()
   })
 
   // #1914 — the counterpart to the untestable case above: a real,
