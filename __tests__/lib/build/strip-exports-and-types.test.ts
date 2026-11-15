@@ -72,4 +72,32 @@ describe('stripExportsAndBasicTypes', () => {
     expect(out).toContain('export default example') // decoy preserved
     expect(out).toMatch(/^function App\(\)/m) // real export default stripped
   })
+
+  // #2034/#2053/#2057/#2059/#2061/#2063/#2064-class bug ported to this
+  // file's own local findStringEnd()-based maskStringsCommentsAndTemplates,
+  // which never got the contraction/newline-boundary guard every other
+  // masking helper in this bug class now has.
+  it('still strips a real top-level "export default" that appears after a JSX-text contraction earlier in the file', () => {
+    const code = [
+      "function Hero() { return <p>We're building something great.</p> }",
+      'export default function App() {',
+      '  return <Hero />',
+      '}',
+    ].join('\n')
+    const out = stripExportsAndBasicTypes(code)
+    expect(out).not.toMatch(/export/)
+    expect(out).toContain('function App()')
+  })
+
+  it('still strips a real top-level "export default" that appears after a decade-style apostrophe earlier in the file', () => {
+    const code = [
+      "function Hero() { return <p>Retro styles from the '90s are back.</p> }",
+      'export default function App() {',
+      '  return <Hero />',
+      '}',
+    ].join('\n')
+    const out = stripExportsAndBasicTypes(code)
+    expect(out).not.toMatch(/export/)
+    expect(out).toContain('function App()')
+  })
 })
