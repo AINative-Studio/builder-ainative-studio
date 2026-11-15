@@ -38,7 +38,7 @@
  */
 
 import { parse } from '@babel/parser'
-import { maskComments, findStringEnd, findBacktickEnd } from './bracket-scanner'
+import { maskComments, findBacktickEnd, resolveStringOpen } from './bracket-scanner'
 
 /** One parsed import statement with its local specifier and local bindings. */
 interface LocalImport {
@@ -254,8 +254,16 @@ function linesInsideMultilineConstruct(code: string): Set<number> {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      i = end === -1 ? code.length : end + 1
+      // #2034/#2053-class guard: a contraction apostrophe, or a quote whose
+      // only candidate close sits on a LATER line, was never a real string
+      // open. Without this, `i` jumps past every real line in between
+      // without `line` ever being advanced for them (the branch below never
+      // calls markSpan for quoted-string content, since a real string can't
+      // contain a newline) — silently desyncing this function's line
+      // counter for the rest of the file, not just misjudging this one span.
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { i++; continue }
+      i = resolved.end === -1 ? code.length : resolved.end + 1
       continue
     }
     if (ch === '/' && next === '/') {

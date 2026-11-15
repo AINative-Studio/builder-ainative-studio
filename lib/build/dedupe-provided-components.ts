@@ -30,8 +30,8 @@
 import {
   findMatchingBracket as sharedFindMatchingBracket,
   maskComments,
-  findStringEnd,
   findBacktickEnd,
+  resolveStringOpen,
 } from './bracket-scanner'
 
 export const SCAFFOLD_PROVIDED_COMPONENTS = [
@@ -147,9 +147,15 @@ function isInsideStringLiteral(code: string, idx: number): boolean {
   while (i < idx && i < code.length) {
     const ch = code[i]
     if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      if (end === -1 || end >= idx) return true
-      i = end + 1
+      // #2034/#2053/.../#2083-class guard: a contraction apostrophe, or a
+      // quote whose only candidate close sits on a LATER line, was never a
+      // real string open — treat it as an ordinary character instead of
+      // reporting a REAL hint match as "inside a string" just because some
+      // unrelated earlier decade-apostrophe happened to land before it.
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { i++; continue }
+      if (resolved.end === -1 || resolved.end >= idx) return true
+      i = resolved.end + 1
       continue
     }
     if (ch === '`') {
