@@ -260,6 +260,45 @@ describe('Preview — live-status chip + banners (render)', () => {
     expect(host.textContent).toContain("couldn't build the live preview")
   })
 
+  // #2066: the error-state copy said "the app build can be retried" with no
+  // actual button to retry it — found via live E2E testing, where a failed
+  // preview build left the founder with no real way forward short of starting
+  // over, and a company that never got registered (orphaned, invisible in the
+  // dashboard). Preview.tsx now wires useRealPreview's retry() to a real button.
+  it('status error renders a real retry button wired to useRealPreview\'s retry()', async () => {
+    const retrySpy = vi.fn()
+    h.state = { ...baseState }
+    h.previewReturn = { previewUrl: null, status: 'error', chatId: null, files: null, designConformance: null, refreshKey: 0, retry: retrySpy }
+    fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    await flush()
+
+    const button = host.querySelector('[data-testid="preview-retry-button"]') as HTMLButtonElement
+    expect(button).toBeTruthy()
+    act(() => { button.click() })
+    expect(retrySpy).toHaveBeenCalledTimes(1)
+  })
+
+  // #2066: the "Your MVP is live in the sandbox" banner used to show at the
+  // exact same time as the "PREVIEW UNAVAILABLE" error above it on the same
+  // screen — a real, confirmed contradiction found via live E2E testing.
+  it('the builtMVP fallback banner never claims the MVP is "live" when the preview actually errored', async () => {
+    h.state = { ...baseState, builtMVP: true, sawPreview: true }
+    h.previewReturn = { previewUrl: null, status: 'error', chatId: null, files: null, designConformance: null, refreshKey: 0, retry: vi.fn() }
+    fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    await flush()
+
+    expect(host.textContent).not.toContain('Your MVP is live in the sandbox')
+    expect(host.textContent).toContain("didn't render")
+  })
+
   // #1802: when chat-ws sent an honest, specific reason (upstream capacity
   // limit, account quota), Preview must show THAT instead of the generic
   // "Cody couldn't build the live preview" copy — a founder hitting a

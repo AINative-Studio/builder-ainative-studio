@@ -220,6 +220,31 @@ export function useRealPreview(idea: string, enabled: boolean, dataModel?: unkno
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [enabled, idea, g])
 
+  // #2066: Preview.tsx's error-state copy has always said "the app build can
+  // be retried," but nothing ever wired that up — status==='error' had no way
+  // back to 'idle', so a failed live-preview build left the founder stuck with
+  // a promise the UI couldn't keep (and, found via live E2E testing, an
+  // orphaned company that never got registered since registerApp() only ever
+  // fires once status reaches 'ready'). Reset this idea's generation state
+  // back to 'idle' and let the effect above's existing idle-kicks-off-a-run
+  // path restart it for real — same re-attach semantics as a remount.
+  const retry = () => {
+    if (g.status !== 'error') return
+    g.chatId = null
+    g.status = 'idle'
+    g.files = null
+    g.refreshKey = 0
+    g.designConformance = null
+    g.errorMessage = null
+    g.errorCode = null
+    notify(g)
+    if (enabled && idea) {
+      g.status = 'generating'
+      notify(g)
+      void runGeneration(idea, g, dataModel, designSystemId)
+    }
+  }
+
   const previewUrl = g.chatId && g.status === 'ready' ? `/api/preview/${g.chatId}?r=${g.refreshKey}` : null
   // `files` is exposed so Preview.tsx can route a multi-file app to Sandpack (#291).
   // `refreshKey` is exposed too (#1255): it's the one REAL backend-activity signal
@@ -236,6 +261,7 @@ export function useRealPreview(idea: string, enabled: boolean, dataModel?: unkno
     refreshKey: g.refreshKey,
     errorMessage: g.errorMessage,
     errorCode: g.errorCode,
+    retry,
   }
 }
 
