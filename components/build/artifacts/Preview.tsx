@@ -521,9 +521,16 @@ export function Preview() {
           in-flight generation (useRealPreview cleanup). Make-it-real only
           exists once generation has actually settled (ready → upsell above;
           error → this fallback). */}
+      {/* #2066: this used to claim "Your MVP is live in the sandbox" — directly
+          contradicting the "Cody couldn't build the live preview this time"
+          error shown in the same screen (both render whenever status ===
+          'error'). Say what's actually true instead: the build artifacts are
+          done even though THIS preview render failed; the forward path stays
+          open (CRITICAL GATE above explains why it must), but the copy no
+          longer asserts a live preview that isn't there. */}
       {state.builtMVP && !showUpsell && status === 'error' && (
         <div className="m-cody-banner">
-          <p><span className="m-glyph">◇</span> Your MVP is live in the sandbox. Ready to put it in front of real users and build the company?</p>
+          <p><span className="m-glyph">◇</span> Your build artifacts are done, even though this preview didn&apos;t render. Ready to move forward and build the company anyway?</p>
           <button className="btn-primary" onClick={() => dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })}>Make it real →</button>
         </div>
       )}

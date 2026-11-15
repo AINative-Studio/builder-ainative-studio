@@ -346,6 +346,24 @@ describe('Preview — live-status chip + banners (render)', () => {
     expect(host.textContent).toContain('Make it real →')
   })
 
+  // #2066: this banner used to claim "Your MVP is live in the sandbox" at the
+  // exact same time the preview body below shows "Cody couldn't build the
+  // live preview this time" — a contradictory pair of claims on one screen.
+  it('the no-cost "Make it real" fallback never claims the preview is live when status is error (#2066)', async () => {
+    h.state = { ...baseState, builtMVP: true }
+    h.previewReturn = { previewUrl: null, status: 'error', chatId: null, files: null, designConformance: null, refreshKey: 0 }
+    fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) })
+    vi.stubGlobal('fetch', fetchMock)
+
+    const Preview = await importPreview()
+    render(React.createElement(Preview))
+    await flush()
+
+    expect(host.textContent).toContain("Cody couldn't build the live preview this time")
+    expect(host.textContent).not.toContain('Your MVP is live in the sandbox')
+    expect(host.textContent).toContain('Make it real →')
+  })
+
   it('a ready multi-file app routes to the Sandpack mount, not the iframe', async () => {
     h.state = { ...baseState }
     h.previewReturn = {
