@@ -3,8 +3,8 @@ import { detectRootComponent } from './component-detector'
 import {
   findMatchingParen,
   findMatchingBrace as sharedFindMatchingBrace,
-  findStringEnd,
   findBacktickEnd,
+  resolveStringOpen,
 } from './build/bracket-scanner'
 import { extractSingleFencedCode } from './build/extract-single-fenced-code'
 
@@ -1103,9 +1103,15 @@ function linesInsideMultilineConstructForDuplicateDeclScan(code: string): Set<nu
     const next = code[i + 1]
     if (ch === '\\') { i += 2; continue }
     if (ch === '"' || ch === "'") {
-      let j = i + 1
-      while (j < code.length && code[j] !== ch) { if (code[j] === '\\') j++; j++ }
-      i = j + 1
+      // #2034/#2053-class guard: a contraction's apostrophe (or a lone
+      // decade-style `'` with no same-line close) is never a real string
+      // open — without this, the raw scan below would treat it as one and
+      // skip to whatever quote character happens to appear next, crossing
+      // real newlines without ever advancing `line`/`inside`, desyncing
+      // every subsequent line number for the rest of the file.
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { i++; continue }
+      i = (resolved.end === -1 ? code.length - 1 : resolved.end) + 1
       continue
     }
     if (ch === '/' && next === '/') {
@@ -1298,20 +1304,6 @@ const KNOWN_AVAILABLE_COMPONENTS = new Set<string>([
  * never lowercase HTML tags or dotted members (Foo.Bar), and treats any name
  * that appears anywhere as defined/imported as resolved.
  */
-/** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. Scoped to findUnresolvedComponents' destructuring check below. */
-function findStringEndInDestructureCheck(code: string, openIdx: number, quote: string): number {
-  let i = openIdx + 1
-  while (i < code.length) {
-    if (code[i] === '\\') {
-      i += 2
-      continue
-    }
-    if (code[i] === quote) return i
-    i++
-  }
-  return -1
-}
-
 /** Index of the closing `` ` `` that ends the template literal starting at `openIdx`, honoring nested `${}` interpolations. Scoped to findUnresolvedComponents' destructuring check below. */
 function findTemplateLiteralEndInDestructureCheck(code: string, openIdx: number): number {
   let i = openIdx + 1
@@ -1349,8 +1341,15 @@ function maskCommentsPreservingLines(code: string): string {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
-      const end = findStringEndInDestructureCheck(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
+      // #2034/#2053-class guard — see resolveStringOpen's doc. A contraction
+      // apostrophe in JSX text is never a real string open; without this a
+      // decoy `// import { X } from '...'` living after one in the file
+      // never gets blanked, so maskCommentsPreservingLines' import-dedup
+      // caller (#1912) can mistake the decoy for a real duplicate import and
+      // drop the genuine one.
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { out += ch; i++; continue }
+      const realEnd = resolved.end === -1 ? code.length - 1 : resolved.end
       out += code.slice(i, realEnd + 1)
       i = realEnd + 1
       continue
@@ -1421,8 +1420,10 @@ function maskCommentsForUnresolvedScan(code: string): string {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
-      const end = findStringEndInDestructureCheck(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
+      // #2034/#2053-class guard — see resolveStringOpen's doc.
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { out += ch; i++; continue }
+      const realEnd = resolved.end === -1 ? code.length - 1 : resolved.end
       out += code.slice(i, realEnd + 1)
       i = realEnd + 1
       continue
@@ -1483,8 +1484,10 @@ function maskCommentsAndStringsForShadowScan(code: string): string {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
-      const end = findStringEndInDestructureCheck(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
+      // #2034/#2053-class guard — see resolveStringOpen's doc.
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { out += ch; i++; continue }
+      const realEnd = resolved.end === -1 ? code.length - 1 : resolved.end
       out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
       continue
@@ -1694,8 +1697,10 @@ function maskForObjectChildChecks(code: string): string {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      const stop = end === -1 ? code.length : end + 1
+      // #2034/#2053-class guard — see resolveStringOpen's doc.
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { out += ch; i++; continue }
+      const stop = resolved.end === -1 ? code.length : resolved.end + 1
       out += ' '.repeat(stop - i)
       i = stop
       continue
@@ -2445,8 +2450,13 @@ function maskForMarkdownFileMarkerScan(content: string): string {
     }
 
     if (ch === '"' || ch === "'") {
-      const end = findStringEndInDestructureCheck(content, i, ch)
-      const realEnd = end === -1 ? content.length - 1 : end
+      // #2034/#2053-class guard — see resolveStringOpen's doc. Needed even
+      // though prose OUTSIDE a fence is already passed through untouched
+      // above: a generated-app ```tsx fence's JSX text routinely contains
+      // the same contractions, and this branch only runs INSIDE a fence.
+      const resolved = resolveStringOpen(content, i, ch)
+      if (resolved === null) { out += ch; i++; continue }
+      const realEnd = resolved.end === -1 ? content.length - 1 : resolved.end
       out += content.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
       continue
@@ -2681,8 +2691,10 @@ function maskStringsAndBlockCommentsOnly(code: string): string {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
-      const end = findStringEndInDestructureCheck(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
+      // #2034/#2053-class guard — see resolveStringOpen's doc.
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { out += ch; i++; continue }
+      const realEnd = resolved.end === -1 ? code.length - 1 : resolved.end
       out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
       continue

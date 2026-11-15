@@ -120,7 +120,7 @@ function isFakeApostrophe(code: string, idx: number): boolean {
  * one whose only candidate close is on a later line — there's no real
  * string here either way, just no close ever appears to prove it.
  */
-function resolveStringOpen(code: string, idx: number, quote: string): { end: number } | null {
+export function resolveStringOpen(code: string, idx: number, quote: string): { end: number } | null {
   if (isFakeApostrophe(code, idx)) return null
   const end = findStringEnd(code, idx, quote)
   const nl = code.indexOf('\n', idx)
