@@ -214,7 +214,27 @@ export async function loadGeneration(chatId: string): Promise<{
       .map((r: any) => r.row_data || r)
       .sort((a: any, b: any) => String(a.created_at || '').localeCompare(String(b.created_at || '')))
     if (rows.length > 0) {
-      const row = rows[rows.length - 1]
+      // Prefer the newest row that actually has real generated content.
+      // saveGeneration() always APPENDS, even on a failed/aborted turn (no
+      // "don't save if empty" guard) — so a later retry or edit for the same
+      // chat_id can persist an empty/blank row. Blindly trusting the newest
+      // timestamp (the #2001 fix above) would then shadow a real, earlier
+      // generation with that empty later row, reproducing the exact
+      // permanent "Preview Unavailable" symptom #2000 was filed over — live-
+      // confirmed still happening post-#2001 for #2000's own repro chat_ids
+      // (younova, me-vC5htD, candor, graintrack all still 404 on this route
+      // as of 2026-11-14, a day after #2001 deployed). Fall back through
+      // older rows until one has non-empty generated_code; if every row for
+      // this chat_id is empty, keep the prior behavior (use the newest) so
+      // nothing regresses for a chat that genuinely never produced code.
+      const hasContent = (r: any) => typeof r.generated_code === 'string' && r.generated_code.trim().length > 0
+      let row = rows[rows.length - 1]
+      for (let i = rows.length - 1; i >= 0; i--) {
+        if (hasContent(rows[i])) {
+          row = rows[i]
+          break
+        }
+      }
       console.log(`[ZeroDB] Loaded generation ${chatId} (${row.code_length || '?'} chars)`)
       // Rehydrate the durable files map (#333) — tolerate absent/corrupt JSON.
       let files: Record<string, string> | null = null
