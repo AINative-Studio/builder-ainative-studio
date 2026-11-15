@@ -66,6 +66,18 @@ const REPAIR_MODELS = ['qwen-coder-32b', 'gpt-oss-20b', 'ministral-14b']
  * `// --- FILE:` marker IS a line comment, so masking line comments too
  * would blank real markers right along with decoy ones. Same shape as
  * lib/code-validator.ts's extractRenderableCode fix (#1962).
+ *
+ * #2034/#2053/#2057-class guard: a `'` can legitimately be an English-
+ * contraction apostrophe inside JSX text ("We're", "don't") rather than a
+ * real string-literal opener, and `foo'bar'` isn't valid JS — so a `'`
+ * immediately after a word character can only be prose, never a real open.
+ * Likewise, a real single/double-quoted JS string can never contain a raw
+ * newline, so if the only candidate closing quote this scan can find is on
+ * a LATER line (or there's no close at all but more file follows), this
+ * open was never real either. Without this guard, either case blanks
+ * everything up to that bogus "close" as if it were string content —
+ * including a genuine `// --- FILE:` marker in between, which then never
+ * reaches the re-split's own marker scan below.
  */
 function maskStringsAndBlockCommentsForFileMarkerScan(content: string): string {
   let out = ''
@@ -74,12 +86,21 @@ function maskStringsAndBlockCommentsForFileMarkerScan(content: string): string {
     const ch = content[i]
     const next = content[i + 1]
     if (ch === '"' || ch === "'") {
+      const isFakeApostrophe = ch === "'" && i > 0 && /[A-Za-z0-9_$]/.test(content[i - 1])
       let j = i + 1
       while (j < content.length && content[j] !== ch) {
         if (content[j] === '\\') j++
         j++
       }
-      const end = j >= content.length ? content.length - 1 : j
+      const close = j >= content.length ? -1 : j
+      const nl = content.indexOf('\n', i)
+      const isFakeOpen = isFakeApostrophe || (nl !== -1 && (close === -1 || nl < close))
+      if (isFakeOpen) {
+        out += ch
+        i++
+        continue
+      }
+      const end = close === -1 ? content.length - 1 : close
       out += content.slice(i, end + 1).replace(/[^\n]/g, ' ')
       i = end + 1
       continue
