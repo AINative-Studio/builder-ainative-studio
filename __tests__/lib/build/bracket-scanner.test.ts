@@ -277,4 +277,69 @@ describe('bracket-scanner (#1710)', () => {
       expect(masked).not.toContain('// comment'.slice(2))
     })
   })
+
+  /**
+   * #2055 — the #2034/#2053 apostrophe-desync bug class also affects
+   * findMatchingBracket (and thus findMatchingParen/findMatchingBrace/
+   * findMatchingAngleBracket), which never got the guard maskComments did:
+   * ANY bare `'`/`"` is treated as a real string open, so a lone contraction
+   * with no second quote anywhere later in the scanned span makes the whole
+   * bracket match falsely report "unbalanced" (-1) for perfectly valid code.
+   */
+  describe('findMatchingBracket — apostrophe in JSX text does not false-positive "unbalanced" (#2055)', () => {
+    it('a lone contraction with no second quote in the snippet no longer makes findMatchingBrace report unbalanced', () => {
+      const code = ["{", "  cond && <p>We're done here.</p>", "}"].join('\n')
+      expect(findMatchingBrace(code, 0)).toBe(code.length - 1)
+    })
+
+    it('a lone contraction inside a paren-wrapped JSX expression no longer makes findMatchingParen report unbalanced', () => {
+      const code = ["(", "  <p>Don't worry, it's covered.</p>", ")"].join('\n')
+      expect(findMatchingParen(code, 0)).toBe(code.length - 1)
+    })
+
+    it('a real unmatched/unterminated string still reports unbalanced (truncation case unchanged)', () => {
+      const code = "{ const x = 'this string never closes"
+      expect(findMatchingBrace(code, 0)).toBe(-1)
+    })
+  })
+
+  /**
+   * #2055 — a `'`/`"` whose only candidate closing quote is on a LATER LINE
+   * was never a real string open either: a real single/double-quoted JS
+   * string literal can't contain a raw newline (that's a syntax error
+   * outside template literals). A decade reference like "the '90s" with no
+   * closing `'` until some unrelated string many lines later used to make
+   * both findMatchingBracket and maskComments skip everything in between —
+   * including real comments or real bracket characters — as "string
+   * content."
+   */
+  describe('newline-spanning fake quote (decade apostrophe etc.) (#2055)', () => {
+    it('maskComments still blanks a real comment after a decade-style apostrophe with no same-line close', () => {
+      const code = [
+        "<p>Back in the '90s, we built this differently.</p>",
+        '',
+        '// REAL COMMENT should be blanked',
+        "const secret = 'token-xyz'",
+      ].join('\n')
+      const masked = maskComments(code)
+      expect(masked).not.toContain('REAL COMMENT should be blanked')
+      expect(masked).toContain("const secret = 'token-xyz'")
+    })
+
+    it('findMatchingBrace is not desynced by a decade-style apostrophe between the braces', () => {
+      const code = [
+        '{',
+        "  cond && <p>Back in the '90s things were different.</p>",
+        '}',
+      ].join('\n')
+      expect(findMatchingBrace(code, 0)).toBe(code.length - 1)
+    })
+
+    it('a real same-line single-quoted string is unaffected by the newline guard', () => {
+      const code = "const label = 'hello world'; // trailing comment"
+      const masked = maskComments(code)
+      expect(masked).toContain("'hello world'")
+      expect(masked).not.toContain('trailing comment')
+    })
+  })
 })
