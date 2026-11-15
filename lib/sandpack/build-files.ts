@@ -139,7 +139,26 @@ function maskCommentsAndStrings(code: string): string {
       continue
     }
     if (ch === '"' || ch === "'") {
+      // Second half of the same #2034/#2053-class guard as the contraction
+      // check above: a real single/double-quoted JS string can never
+      // contain a raw newline, so if the only candidate closing quote
+      // `findStringEnd` can find is on a LATER line (or there's none at all
+      // but more file follows), this open was never real either — e.g. a
+      // decade reference ("the '90s") or a leading quote-mark ("'tis the
+      // season") that isn't preceded by a word character, so the check
+      // above doesn't catch it. Without this, everything up to that bogus
+      // "close" (often some unrelated LATER string/import's own quote) gets
+      // blanked as if it were string content — hiding real JSX usage
+      // (`<Icon>`, `<Sibling>`) from every shadcn/AIKit/lucide/sibling-
+      // import "already used" check below, the same missing-import crash
+      // class the contraction guard above exists to prevent.
       const end = findStringEnd(code, i, ch)
+      const nl = code.indexOf('\n', i)
+      if (nl !== -1 && (end === -1 || nl < end)) {
+        out += ch
+        i++
+        continue
+      }
       const realEnd = end === -1 ? code.length - 1 : end
       out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
