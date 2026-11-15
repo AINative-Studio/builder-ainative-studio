@@ -6,6 +6,7 @@ import {
   findMatchingAngleBracket,
   findStringEnd,
   findBacktickEnd,
+  maskComments,
 } from '@/lib/build/bracket-scanner'
 
 describe('bracket-scanner (#1710)', () => {
@@ -192,6 +193,88 @@ describe('bracket-scanner (#1710)', () => {
       const code = "function Strip(s) { return s.replace(/[{]/g, ''); }"
       const openIdx = code.indexOf('{')
       expect(findMatchingBrace(code, openIdx)).toBe(code.lastIndexOf('}'))
+    })
+  })
+
+  /**
+   * #2053 — an apostrophe inside plain JSX text (an English contraction like
+   * "We're", "Don't", "Let's") is not a string delimiter at all, but
+   * maskComments() treated ANY bare `'` as opening a real string literal and
+   * scanned forward to the next `'` anywhere later in the file — silently
+   * copying through everything in between, including a real `//`/`/* *\/`
+   * comment this function exists to blank, as unmodified "string" content.
+   * Same root cause PR #2034 fixed in the separate build-files.ts copy; this
+   * is the shared canonical copy completeness-gate.ts and 7+ other files
+   * delegate to.
+   */
+  describe('maskComments — apostrophe in JSX text does not desync the real comment scan (#2053)', () => {
+    it('still blanks a real line comment that comes after a contraction elsewhere in the file', () => {
+      const code = [
+        "const msg = 'We are open';",
+        "// real comment that must be blanked",
+        'const x = 1;',
+      ].join('\n')
+      const masked = maskComments(code)
+      expect(masked).not.toContain('real comment')
+      expect(masked).toContain('const x = 1;')
+    })
+
+    it('the exact repro from #2053: a contraction before a disabled JSX import comment no longer swallows the comment as live code', () => {
+      const code = [
+        "import Header from './components/Header'",
+        'export default function App() {',
+        '  return (',
+        '    <div>',
+        '      <Header />',
+        "      <p>We're open 24/7 for all your needs.</p>",
+        '      {/* <Footer /> */}',
+        "      {/* import Footer from './components/Footer' */}",
+        '    </div>',
+        '  )',
+        '}',
+      ].join('\n')
+      const masked = maskComments(code)
+      // The commented-out import line must be fully blanked (spaces), not
+      // copied through as live text — confirming the real /* */ comment
+      // scan actually ran instead of being skipped over as "string content."
+      expect(masked).not.toContain("import Footer from './components/Footer'")
+      expect(masked).not.toContain('<Footer />')
+      // The genuinely live code around it must be untouched.
+      expect(masked).toContain("import Header from './components/Header'")
+      expect(masked).toContain('<Header />')
+    })
+
+    it('a real string literal is still masked correctly when no contraction is involved', () => {
+      const code = "const label = 'hello world'; // trailing comment"
+      const masked = maskComments(code)
+      expect(masked).toContain("'hello world'")
+      expect(masked).not.toContain('trailing comment')
+    })
+
+    it('does not break a real string that legitimately starts right after a word character via string concatenation', () => {
+      // `x'y'` is not valid JS on its own, but this guards the CHARACTER
+      // immediately before the quote, not the token before it — a real
+      // string following an operator (not a bare identifier char) must
+      // still open normally.
+      const code = "const s = x + 'real string'; // comment"
+      const masked = maskComments(code)
+      expect(masked).toContain("'real string'")
+      expect(masked).not.toContain('comment')
+    })
+
+    it('handles multiple contractions in the same line without losing sync', () => {
+      const code = [
+        "const msg = \"Don't worry, we're here, let's go\";",
+        '// comment after multiple contractions',
+      ].join('\n')
+      const masked = maskComments(code)
+      expect(masked).not.toContain('comment after multiple contractions')
+    })
+
+    it('a double-quoted string is unaffected — the apostrophe guard only applies to the single-quote character', () => {
+      const code = 'const s = "it\'s fine"; // comment'
+      const masked = maskComments(code)
+      expect(masked).not.toContain('// comment'.slice(2))
     })
   })
 })
