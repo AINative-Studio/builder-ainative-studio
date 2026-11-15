@@ -170,4 +170,45 @@ describe('convertTemplateLiteralAttrsToConcat', () => {
     expect(evalClassName(true)).toBe('base a end')
     expect(evalClassName(false)).toBe('base b end')
   })
+
+  it('still converts a real className ternary template literal that appears after JSX text containing an English contraction (#2034/#2053-class apostrophe desync)', () => {
+    // Regression: maskQuotedStringsAndCommentsForAttrScan() used to scan with
+    // the raw findStringEnd() (no apostrophe guard), so the `'` in "Don't"
+    // below got misread as opening a real string, and everything up to the
+    // next unrelated `'` (or end of file, as here — there is no other `'`)
+    // — including the real `className={` + backtick attribute further down
+    // — got blanked out of the masked scan. attrOpenRe then never matches,
+    // so the conversion (and its THE FIX ternary-parenthesization) is
+    // silently skipped: the template literal survives unconverted, which
+    // happens to *evaluate* the same for a plain interpolation but leaves
+    // this exact ternary shape exposed to the file's own operator-precedence
+    // bug one layer up (the `+`-join callers of this function perform), so
+    // the assertion below checks for the conversion itself, not just the
+    // eval result.
+    const code =
+      "<p>Don't miss out!</p>\n" +
+      "className={`fixed ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}"
+    const out = convertTemplateLiteralAttrsToConcat(code)
+    expect(out).toContain("Don't miss out!")
+    expect(out).toContain("+ (sidebarOpen ? 'translate-x-0' : '-translate-x-full')")
+    const match = out.match(/className=\{([^\n]+)\}$/)
+    expect(match).not.toBeNull()
+    // eslint-disable-next-line no-new-func
+    const result = new Function('sidebarOpen', `return ${match![1]}`)(true)
+    expect(result).toBe('fixed translate-x-0')
+  })
+
+  it('still treats a decade-style apostrophe ("the \'90s") in unrelated text as text, not a fake string open that swallows a later real attribute', () => {
+    const code =
+      "<p>Vibes straight out of the '90s.</p>\n" +
+      "style={`color: ${active ? 'red' : 'blue'}`}"
+    const out = convertTemplateLiteralAttrsToConcat(code)
+    expect(out).toContain("Vibes straight out of the '90s.")
+    expect(out).toContain("+ (active ? 'red' : 'blue')")
+    const match = out.match(/style=\{([^\n]+)\}$/)
+    expect(match).not.toBeNull()
+    // eslint-disable-next-line no-new-func
+    const result = new Function('active', `return ${match![1]}`)(true)
+    expect(result).toBe('color: red')
+  })
 })

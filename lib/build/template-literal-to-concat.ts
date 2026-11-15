@@ -73,7 +73,7 @@
  * masked twin of `code` for match POSITIONS only; every actual read/slice
  * below still operates on the real, unmasked `code`.
  */
-import { findMatchingBrace, findBacktickEnd, findStringEnd } from './bracket-scanner'
+import { findMatchingBrace, findBacktickEnd, resolveStringOpen } from './bracket-scanner'
 
 /**
  * Blanks out `"..."`/`'...'` string bodies and `//`/`/* *\/` comments
@@ -81,6 +81,17 @@ import { findMatchingBrace, findBacktickEnd, findStringEnd } from './bracket-sca
  * mistake literal `className={\`...\`}` TEXT sitting inside an unrelated
  * string or comment for a real JSX attribute. Backtick template literals are
  * left untouched — that's exactly what the scan needs to see.
+ *
+ * Uses `resolveStringOpen()` (not the raw `findStringEnd()`) to decide
+ * whether a `'` is a real string opener at all, same #2034/#2053-class guard
+ * every other quote-scanner in this codebase now applies: a generated
+ * landing page's own JSX text routinely contains an English contraction
+ * ("Don't miss out", "we're live") — a bare `'` right after a word
+ * character that `findStringEnd()` alone would misread as opening a string,
+ * scan forward to some unrelated later quote as its "close", and blank out
+ * everything in between (including a real `className={` + backtick`)`
+ * further down the file) — silently skipping the very conversion this file
+ * exists to apply, rather than fixing it.
  */
 function maskQuotedStringsAndCommentsForAttrScan(code: string): string {
   let out = ''
@@ -89,8 +100,13 @@ function maskQuotedStringsAndCommentsForAttrScan(code: string): string {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) {
+        out += ch
+        i++
+        continue
+      }
+      const realEnd = resolved.end === -1 ? code.length - 1 : resolved.end
       out += ' '.repeat(realEnd - i + 1)
       i = realEnd + 1
       continue

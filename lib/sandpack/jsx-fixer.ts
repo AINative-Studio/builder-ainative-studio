@@ -1204,15 +1204,26 @@ function stubUnresolvableBareImports(code: string): string {
   let fixed = code
 
   // Side-effect-only bare imports, e.g. `import 'some-polyfill'`.
+  let masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /^([ \t]*)import\s+['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
-    (match, _indent: string, pkg: string) => (isAllowlistedPackage(pkg) ? match : '')
+    (match: string, _indent: string, pkg: string, offset: number) => {
+      // A decoy import-shaped line sitting inside a template literal or
+      // comment (e.g. example code a docs/SDK landing page renders
+      // verbatim) must not be stubbed as if it were a real top-level
+      // import — same masked-span guard every other stubber in this file
+      // uses before rewriting a match (#2064).
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return isAllowlistedPackage(pkg) ? match : ''
+    }
   )
 
   // Imports with bindings: default, namespace, named, or a mix.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /^([ \t]*)import\s+(type\s+)?([^'";]*?)\s*from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
-    (match, indent: string, typeOnly: string | undefined, clause: string, pkg: string) => {
+    (match: string, indent: string, typeOnly: string | undefined, clause: string, pkg: string, offset: number) => {
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
       if (isAllowlistedPackage(pkg)) return match
       // `import type {...}` bindings have no runtime value — safe to drop entirely.
       if (typeOnly) return ''
@@ -1244,26 +1255,38 @@ function stubUnresolvableReExports(code: string): string {
   // from this file alone, so there's nothing to stub; dropping it entirely
   // is the only safe move (same precedent as dropping a side-effect-only
   // import above).
+  let masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /^([ \t]*)export\s+\*\s+from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
-    (match, _indent: string, pkg: string) => (isAllowlistedPackage(pkg) ? match : '')
+    (match: string, _indent: string, pkg: string, offset: number) => {
+      // Same masked-span guard as stubUnresolvableBareImports above — an
+      // export-shaped decoy line inside a template literal or comment must
+      // not be rewritten as real code (#2064).
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return isAllowlistedPackage(pkg) ? match : ''
+    }
   )
 
   // `export * as Name from 'pkg'` — a namespace re-export; unlike the bare
   // `export *` above, Name IS a real local binding, so it gets the same
   // stub a namespace import would.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /^([ \t]*)export\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
-    (match, indent: string, name: string, pkg: string) =>
-      isAllowlistedPackage(pkg)
+    (match: string, indent: string, name: string, pkg: string, offset: number) => {
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return isAllowlistedPackage(pkg)
         ? match
         : `${indent}export const ${name} = ${genericInertStub(name, isUsedAsJsxTag(code, name))};\n`
+    }
   )
 
   // `export { a, b as c } from 'pkg'` / `export type { ... } from 'pkg'`.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /^([ \t]*)export\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
-    (match, indent: string, typeOnly: string | undefined, names: string, pkg: string) => {
+    (match: string, indent: string, typeOnly: string | undefined, names: string, pkg: string, offset: number) => {
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
       if (isAllowlistedPackage(pkg)) return match
       // `export type { ... } from 'pkg'` has no runtime value — safe to drop.
       if (typeOnly) return ''
