@@ -188,7 +188,19 @@ export function maskComments(code: string): string {
       i += 2
       continue
     }
-    if (ch === '"' || ch === "'") {
+    // #2053: a `'` immediately preceded by a word character can never
+    // legitimately open a real JS string literal (`foo'bar'` isn't valid
+    // JS) — it's an apostrophe inside plain JSX text, almost always an
+    // English contraction ("We're", "Don't", "Let's") in generated
+    // marketing copy. Treating it as a string-open scans forward to the
+    // NEXT real `'` anywhere later in the file (findStringEnd has no way to
+    // know this one was fake) and silently copies everything in between —
+    // including a real `//`/`/* */` comment this function exists to blank —
+    // through unmodified as if it were string content. Only `'` needs this
+    // guard; English contractions never use `"`.
+    const prev = code[i - 1]
+    const isFakeApostrophe = ch === "'" && prev !== undefined && /[A-Za-z0-9_$]/.test(prev)
+    if ((ch === '"' || ch === "'") && !isFakeApostrophe) {
       const end = findStringEnd(code, i, ch)
       const realEnd = end === -1 ? code.length - 1 : end
       out += code.slice(i, realEnd + 1)
