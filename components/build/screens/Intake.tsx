@@ -66,9 +66,10 @@ export function Intake() {
       <div className="m-chat-log">
         <p className="m-chat-cody"><span className="m-glyph">◇</span> Cody · your co-founder</p>
         <p className="m-chat-cody-turn">
-          Tell me your idea in a sentence or two. I&apos;ll ask 3 quick questions, then get to work —
-          I&apos;ll check in with you a few times along the way for a couple of real calls, but you
-          won&apos;t be stuck waiting on me.
+          Tell me your idea in a sentence or two. I&apos;ll ask a few quick questions about the
+          idea, then a few more about how you like to work, and get to work — I&apos;ll check in
+          with you a few times along the way for a couple of real calls, but you won&apos;t be
+          stuck waiting on me.
         </p>
         {tooThin && (
           <p className="m-chat-cody-turn" data-testid="intake-idea-too-thin">
@@ -111,10 +112,13 @@ export function Intake() {
   )
 }
 
-// Fallback name only when brand generation fails — strip the "I want to build a"
-// preamble and take the first meaningful word, so we never show "I Want To".
-function fallbackName(idea: string): string {
-  const cleaned = idea.trim().replace(/^(i\s+want\s+to\s+build|i\s+want\s+to|build|create|make|a|an|the)\s+/gi, '')
+// Fallback name only when brand generation fails — strip a leading bracketed/
+// parenthesized tag (e.g. "[LOOP-TEST 2026-11-15] ") and the "I want to build
+// a" preamble, then take the first meaningful word, so we never show "I Want
+// To" or a truncated tag fragment like "[LOOP-TEST".
+export function fallbackName(idea: string): string {
+  const withoutTag = idea.trim().replace(/^[[(][^\])]*[\])]\s*/, '')
+  const cleaned = withoutTag.replace(/^(i\s+want\s+to\s+build|i\s+want\s+to|build|create|make|a|an|the)\s+/gi, '')
   const w = cleaned.split(/\s+/)[0] || 'Cody'
   return w.charAt(0).toUpperCase() + w.slice(1)
 }
