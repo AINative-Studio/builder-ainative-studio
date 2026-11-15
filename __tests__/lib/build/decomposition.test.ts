@@ -41,6 +41,29 @@ describe('decomposition (#293 · Phase 5)', () => {
     expect(hasFileMarkers(decoy)).toBe(false)
   })
 
+  /**
+   * #2034/#2053/#2057/.../#2074-class bug ported to decomposition.ts's own
+   * copy of linesInsideMultilineConstruct (its doc comment even says it's
+   * "same helper shape as sandbox-builder.ts's/multi-file-parser.ts's"
+   * version — which had this exact bug, fixed separately for those two
+   * files). An apostrophe in JSX text (a contraction) earlier in the file
+   * opens a fake single-quoted string: the scanner then hunts for the next
+   * `'` ANYWHERE later in the file with no newline-boundary check, jumping
+   * `i` straight past the real backtick template literal that hides the
+   * decoy marker below — so the span inside the backtick is never added to
+   * `inside`, and the decoy is wrongly read as a real marker.
+   */
+  it('does not mistake a decoy marker hidden inside a template literal for a real marker, even after an earlier JSX-text apostrophe', () => {
+    const decoy = [
+      "function Hero() { return <p>We're building something great.</p> }",
+      'const docs = `',
+      '// --- FILE: path/to/file.tsx ---',
+      '`',
+      'export default Hero',
+    ].join('\n')
+    expect(hasFileMarkers(decoy)).toBe(false)
+  })
+
   it('decomposes a large single-file complex app', () => {
     expect(shouldDecompose(bigSingleFile, true)).toBe(true)
   })
