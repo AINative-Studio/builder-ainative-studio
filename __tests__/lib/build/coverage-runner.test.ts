@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   detectTestCommand,
+  detectBuildCommand,
   parseCoverageSummary,
 } from '@/lib/build/coverage-runner'
 
@@ -64,6 +65,41 @@ describe('detectTestCommand', () => {
       dependencies: { vitest: '^3.0.0' },
     })
     expect(detectTestCommand(pkg)).not.toBeNull()
+  })
+})
+
+/**
+ * #1914 — a no-test-suite app used to auto-complete (and therefore
+ * auto-merge + auto-deploy) on a successful implement+commit with zero
+ * verification it even builds. detectBuildCommand() is the pure-logic half
+ * of the fix: find the real build script every generated app's
+ * DEFAULT_PACKAGE_JSON (lib/export/project-exporter.ts) declares
+ * (`scripts.build: 'next build'`), so runBuildCheck() can gate on it.
+ */
+describe('detectBuildCommand', () => {
+  it('returns null for a generated app with no package.json at all', () => {
+    expect(detectBuildCommand(undefined)).toBeNull()
+  })
+
+  it('returns null for malformed JSON', () => {
+    expect(detectBuildCommand('{ not json')).toBeNull()
+  })
+
+  it('returns null when there is no build script', () => {
+    const pkg = JSON.stringify({ scripts: { dev: 'next dev', start: 'next start' } })
+    expect(detectBuildCommand(pkg)).toBeNull()
+  })
+
+  it('detects the real build command for the default generated-app shape', () => {
+    const pkg = JSON.stringify({ scripts: { dev: 'next dev', build: 'next build', start: 'next start' } })
+    const result = detectBuildCommand(pkg)
+    expect(result).not.toBeNull()
+    expect(result).toEqual({ command: 'npm', args: ['run', 'build'] })
+  })
+
+  it('does not require any particular dependency (unlike detectTestCommand) — the build script alone is enough', () => {
+    const pkg = JSON.stringify({ scripts: { build: 'next build' }, dependencies: {}, devDependencies: {} })
+    expect(detectBuildCommand(pkg)).not.toBeNull()
   })
 })
 

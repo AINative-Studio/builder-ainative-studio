@@ -72,7 +72,7 @@ import { fetchRepoFiles, mergeTaskPR, createIssue } from '@/lib/git/gitea-client
 import { commitTaskWithPR } from '@/lib/git/task-git-sync'
 import { resolveAppVerified, setAppRailwayService } from '@/lib/build/app-registry'
 import { implementTask } from '@/lib/build/task-implementer'
-import { runCoverage } from '@/lib/build/coverage-runner'
+import { runCoverage, runBuildCheck } from '@/lib/build/coverage-runner'
 import { updateTask, type BuildTask } from '@/lib/build/task-store'
 import { deployCompanyFromGitea, companyDeployEnabled } from '@/lib/build/company-deploy'
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
@@ -122,10 +122,23 @@ export interface ResolveTaskResult {
  * rather than gated on a number that can't exist — never fabricates a
  * coverage pass, but also never blocks a real change just because the
  * generated app has no tests yet. PURE.
+ *
+ * #1914 — "no test suite" no longer means "accept unconditionally." When
+ * `coverage.testable` is false (and sandboxing wasn't itself the reason —
+ * that's still handled below, unchanged), the caller is expected to have run
+ * a real `npm run build` check (lib/build/coverage-runner.ts's
+ * runBuildCheck()) and pass its result here. A no-test-suite app that FAILS
+ * to build is a real, previously-invisible failure this gate now catches
+ * before mergeTaskPR()/deployCompanyFromGitea() ever see it; a no-test-suite
+ * app that builds cleanly is accepted exactly as before. `buildCheck` being
+ * `undefined` (sandboxing unavailable, or caller didn't run it) falls back to
+ * the pre-#1914 unconditional-accept behavior rather than ever blocking a
+ * task on a check this environment couldn't perform.
  */
 export function decideOutcomeFromCoverage(
   coverage: { coveragePercent: number | null; testable: boolean; passed: boolean; reason?: string; sandboxRefused?: boolean },
   floor: number = COVERAGE_FLOOR,
+  buildCheck?: { passed: boolean; reason?: string; sandboxRefused?: boolean },
 ): { stage: 'completed' | 'failed'; reason?: string } {
   if (coverage.sandboxRefused) {
     // #917: testable:false here means "we refused to run untrusted code
@@ -135,9 +148,22 @@ export function decideOutcomeFromCoverage(
     return { stage: 'failed', reason: coverage.reason || 'Coverage could not be verified — sandboxed execution was unavailable.' }
   }
   if (!coverage.testable) {
-    // No test suite for this app yet — not testable via code tests, so this
-    // story is accepted on a successful implement+commit rather than blocked
-    // on a number that can never exist. Matches #372's own contract note.
+    // No test suite for this app yet — not testable via code tests. #1914:
+    // still gated on a real build check when one was actually run (and
+    // sandboxing wasn't itself refused for THAT check either — same
+    // never-silently-merge-unverified-code principle as the branch above).
+    if (buildCheck && !buildCheck.sandboxRefused) {
+      if (!buildCheck.passed) {
+        return {
+          stage: 'failed',
+          reason: `No test suite exists for this app yet, and the build check failed: ${buildCheck.reason || 'build did not succeed'}.`,
+        }
+      }
+      return { stage: 'completed', reason: 'No test suite exists for this app yet — accepted on a passing build check (not coverage-gated).' }
+    }
+    // This story is accepted on a successful implement+commit rather than
+    // blocked on a number that can never exist. Matches #372's own contract
+    // note — unchanged fallback when no build check was performed at all.
     return { stage: 'completed', reason: 'No test suite exists for this app yet — accepted on implementation, not coverage-gated.' }
   }
   if (!coverage.passed) {
@@ -430,7 +456,17 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
   // an unchanged one — the test suite needs the whole picture).
   const fullTree = { ...existingFiles, ...implemented.files }
   const coverage = await runCoverage(fullTree)
-  const outcome = decideOutcomeFromCoverage(coverage)
+
+  // #1914 — a no-test-suite app (the common case) used to auto-complete on a
+  // successful implement+commit with ZERO verification the generated code
+  // even builds, since mergeTaskPR()/deployCompanyFromGitea() unconditionally
+  // act on `completed`. When coverage genuinely can't run because there's no
+  // test suite (NOT because sandboxing was refused — that's its own distinct
+  // failure, handled by decideOutcomeFromCoverage() same as before), run the
+  // app's own `npm run build` as the real gate instead of accepting the
+  // change on faith.
+  const buildCheck = coverage.testable || coverage.sandboxRefused ? undefined : await runBuildCheck(fullTree)
+  const outcome = decideOutcomeFromCoverage(coverage, undefined, buildCheck)
 
   await reportDeploymentHealthStage(
     'builder_company_task',
@@ -438,13 +474,15 @@ export async function resolveTask(scopeKey: string, task: BuildTask, slug: strin
     'coverage',
     outcome.stage === 'completed' ? 'ok' : 'failed',
     outcome.reason,
-    { coveragePercent: coverage.coveragePercent, testable: coverage.testable },
+    { coveragePercent: coverage.coveragePercent, testable: coverage.testable, buildPassed: buildCheck?.passed },
   )
 
   if (traceId) {
     await addTraceStep(
       traceId,
-      `Ran real coverage verification: ${coverage.coveragePercent ?? 'not testable'}${typeof coverage.coveragePercent === 'number' ? '%' : ''} — decided stage '${outcome.stage}'.`,
+      `Ran real coverage verification: ${coverage.coveragePercent ?? 'not testable'}${typeof coverage.coveragePercent === 'number' ? '%' : ''}` +
+        (buildCheck ? `, build check: ${buildCheck.passed ? 'passed' : 'failed'}` : '') +
+        ` — decided stage '${outcome.stage}'.`,
       'verify_coverage',
     )
   }

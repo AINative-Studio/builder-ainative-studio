@@ -64,6 +64,81 @@ describe('decideOutcomeFromCoverage', () => {
 })
 
 /**
+ * #1914 — a no-test-suite app used to auto-complete (triggering real
+ * auto-merge + auto-deploy, see mergeTaskPR()/deployCompanyFromGitea()) with
+ * ZERO verification it even builds. These cases cover the new buildCheck
+ * parameter: a no-test-suite task is now gated on a real `npm run build`
+ * result when the caller provides one.
+ */
+describe('decideOutcomeFromCoverage — build-check gate for no-test-suite apps (#1914)', () => {
+  it('completes a no-test-suite app whose build check passed', () => {
+    const result = decideOutcomeFromCoverage(
+      { coveragePercent: null, testable: false, passed: false },
+      undefined,
+      { passed: true },
+    )
+    expect(result.stage).toBe('completed')
+    expect(result.reason).toMatch(/passing build check/i)
+  })
+
+  it('fails a no-test-suite app whose build check FAILED — never auto-completes on faith', () => {
+    const result = decideOutcomeFromCoverage(
+      { coveragePercent: null, testable: false, passed: false },
+      undefined,
+      { passed: false, reason: 'Build exited with code 1' },
+    )
+    expect(result.stage).toBe('failed')
+    expect(result.reason).toMatch(/build check failed/i)
+    expect(result.reason).toContain('Build exited with code 1')
+  })
+
+  it('falls back to the pre-#1914 unconditional-accept behavior when no buildCheck was provided at all', () => {
+    const result = decideOutcomeFromCoverage({ coveragePercent: null, testable: false, passed: false })
+    expect(result.stage).toBe('completed')
+    expect(result.reason).toMatch(/no test suite/i)
+    expect(result.reason).not.toMatch(/build check/i)
+  })
+
+  it('ignores a buildCheck that was itself sandbox-refused — must not treat a refused check as a passing or failing one', () => {
+    const result = decideOutcomeFromCoverage(
+      { coveragePercent: null, testable: false, passed: false },
+      undefined,
+      { passed: false, sandboxRefused: true, reason: 'E2B not configured' },
+    )
+    // Falls through to the unconditional-accept path, same as "no buildCheck
+    // at all" — a refused build check carries no real signal either way.
+    expect(result.stage).toBe('completed')
+    expect(result.reason).not.toMatch(/build check/i)
+  })
+
+  it('never consults buildCheck for a genuinely testable app — coverage already decided the outcome', () => {
+    const result = decideOutcomeFromCoverage(
+      { coveragePercent: 85, testable: true, passed: true },
+      undefined,
+      { passed: false, reason: 'irrelevant — should never be read' },
+    )
+    expect(result.stage).toBe('completed')
+    expect(result.reason).toMatch(/85%/)
+  })
+
+  it('#917 still takes priority over any buildCheck — a sandbox-refused coverage run fails regardless of buildCheck', () => {
+    const result = decideOutcomeFromCoverage(
+      {
+        coveragePercent: null,
+        testable: false,
+        passed: false,
+        sandboxRefused: true,
+        reason: 'E2B not configured — sandboxed execution required for untrusted code',
+      },
+      undefined,
+      { passed: true },
+    )
+    expect(result.stage).toBe('failed')
+    expect(result.reason).toMatch(/sandbox/i)
+  })
+})
+
+/**
  * #905 — "No Code Without An Issue" (.ainative/ISSUE_TRACKING_ENFORCEMENT.md's
  * Golden Rule). buildTaskIssueBody() renders the issue body resolveTask() opens
  * on the company's own Gitea repo BEFORE implementation begins.

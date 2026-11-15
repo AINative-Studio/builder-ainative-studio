@@ -76,6 +76,29 @@ export interface CoverageResult {
   sandboxRefused?: boolean
 }
 
+/**
+ * #1914 — a no-test-suite app (the overwhelmingly common case, see this
+ * file's header) used to auto-complete on a successful implement+commit with
+ * ZERO verification that the generated code even builds. mergeTaskPR()
+ * unconditionally squash-merges a `completed` task and deployCompanyFromGitea()
+ * redeploys — so a syntactically broken change could reach a founder's LIVE
+ * app fully automatically. This result type carries a real `next build`
+ * outcome (which type-checks AND bundles, catching more than a bare `tsc
+ * --noEmit` would) for that case, mirroring CoverageResult's "never fabricate,
+ * be honest when it can't be measured" contract.
+ */
+export interface BuildCheckResult {
+  /** True only when `npm run build` actually ran and exited 0. */
+  passed: boolean
+  /** Human-readable reason when passed is false, or the check could not run
+   *  at all — for the task's durable `output` field, never silently blank. */
+  reason?: string
+  /** Same meaning as CoverageResult.sandboxRefused — refused to run
+   *  untrusted code unsandboxed, NOT "the app has no build script." A caller
+   *  must not treat this as a legitimate build-check skip. */
+  sandboxRefused?: boolean
+}
+
 /** Reasonable ceiling so a hung generated app's test suite can't hang the
  *  resolver — mirrors core's 120s pytest bound. */
 export const RUN_TIMEOUT_MS = 120_000
@@ -113,6 +136,28 @@ export function detectTestCommand(packageJsonRaw: string | undefined): { command
     return { command: 'npx', args: ['vitest', 'run', '--coverage'] }
   }
   return null
+}
+
+/**
+ * #1914 — does this generated app declare a real build script? Every app
+ * `project-exporter.ts`'s DEFAULT_PACKAGE_JSON produces has `scripts.build:
+ * 'next build'`, so this is expected to resolve for the overwhelming
+ * majority of generated apps — unlike detectTestCommand(), where "no
+ * command" is the norm. A generated app with no build script at all (an
+ * older/non-Next.js export shape) returns null; the caller treats that as
+ * "cannot verify," never as an automatic pass. PURE.
+ */
+export function detectBuildCommand(packageJsonRaw: string | undefined): { command: string; args: string[] } | null {
+  if (!packageJsonRaw) return null
+  let pkg: any
+  try {
+    pkg = JSON.parse(packageJsonRaw)
+  } catch {
+    return null
+  }
+  const scripts = pkg?.scripts || {}
+  if (typeof scripts.build !== 'string') return null
+  return { command: 'npm', args: ['run', 'build'] }
 }
 
 /**
@@ -308,6 +353,127 @@ export async function runCoverage(
     if (dir) {
       await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
     }
+  }
+}
+
+/**
+ * #1914 — run a generated app's own `npm run build` against a FileMap and
+ * return a REAL pass/fail. This is the gate for the no-test-suite case:
+ * decideOutcomeFromCoverage() must not auto-complete (and therefore
+ * auto-merge + auto-deploy) a change whose build was never even attempted.
+ * Same sandboxing posture as runCoverage() — E2B when configured, fail-closed
+ * (sandboxRefused: true) otherwise, with the same explicit
+ * ALLOW_UNSANDBOXED_COVERAGE opt-in for local development (reusing that
+ * existing flag rather than inventing a second one for the same risk).
+ */
+export async function runBuildCheck(
+  files: FileMap,
+  opts: { timeoutMs?: number; env?: NodeJS.ProcessEnv } = {},
+): Promise<BuildCheckResult> {
+  const timeoutMs = opts.timeoutMs ?? RUN_TIMEOUT_MS
+  const buildCommand = detectBuildCommand(files['package.json'] ?? files['/package.json'])
+  if (!buildCommand) {
+    return { passed: false, reason: 'No build script found in package.json — cannot verify this app builds.' }
+  }
+
+  if (isE2BEnabled(opts.env)) {
+    return runBuildCheckInE2B(files, buildCommand, timeoutMs)
+  }
+
+  const env = opts.env ?? process.env
+  if (env.ALLOW_UNSANDBOXED_COVERAGE !== 'true') {
+    console.error(
+      '[coverage-runner] E2B_API_KEY is not configured — refusing to run founder-generated ' +
+        'build code unsandboxed. Set E2B_API_KEY to enable sandboxed build checks, or set ' +
+        'ALLOW_UNSANDBOXED_COVERAGE=true for local development only.',
+    )
+    return {
+      passed: false,
+      reason: 'E2B not configured — sandboxed execution required for untrusted code',
+      sandboxRefused: true,
+    }
+  }
+
+  console.error(
+    '[coverage-runner] ALLOW_UNSANDBOXED_COVERAGE=true is set and E2B_API_KEY is absent — ' +
+      'running founder-generated build code UNSANDBOXED via local spawn() on this process. ' +
+      'This must never happen in production; set E2B_API_KEY instead.',
+  )
+
+  let dir: string | null = null
+  try {
+    dir = await writeFileMapToTemp(files)
+
+    const install = await runCommand('npm', ['install', '--no-audit', '--no-fund'], dir, timeoutMs)
+    if (install.exitCode !== 0) {
+      return {
+        passed: false,
+        reason: install.timedOut
+          ? `npm install timed out after ${timeoutMs}ms`
+          : `npm install failed (exit ${install.exitCode})`,
+      }
+    }
+
+    const run = await runCommand(buildCommand.command, buildCommand.args, dir, timeoutMs)
+    if (run.timedOut) {
+      return { passed: false, reason: `Build timed out after ${timeoutMs}ms` }
+    }
+    return {
+      passed: run.exitCode === 0,
+      reason: run.exitCode === 0 ? undefined : `Build exited with code ${run.exitCode}`,
+    }
+  } catch (e) {
+    return { passed: false, reason: `Build check errored: ${e instanceof Error ? e.message : String(e)}` }
+  } finally {
+    if (dir) {
+      await fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+    }
+  }
+}
+
+/**
+ * E2B-isolated path for runBuildCheck() — same install → build sequence,
+ * executed inside one isolated E2B sandbox (see runCoverageInE2B's own doc
+ * comment for why this isolation exists at all).
+ */
+async function runBuildCheckInE2B(
+  files: FileMap,
+  buildCommand: { command: string; args: string[] },
+  timeoutMs: number,
+): Promise<BuildCheckResult> {
+  const session = await runSequenceInE2BSandbox(
+    files,
+    [
+      { command: 'npm', args: ['install', '--no-audit', '--no-fund'] },
+      { command: buildCommand.command, args: buildCommand.args },
+    ],
+    { timeoutMs, readBack: [] },
+  )
+
+  if (session.sandboxError) {
+    return { passed: false, reason: `E2B sandbox unavailable: ${session.sandboxError}` }
+  }
+
+  const [install, run] = session.commandResults
+
+  if (!install || install.exitCode !== 0) {
+    return {
+      passed: false,
+      reason: install?.timedOut
+        ? `npm install timed out after ${timeoutMs}ms (E2B sandbox)`
+        : `npm install failed (exit ${install?.exitCode ?? 'unknown'}) (E2B sandbox)`,
+    }
+  }
+
+  if (!run) {
+    return { passed: false, reason: 'Build did not produce a result (E2B sandbox)' }
+  }
+  if (run.timedOut) {
+    return { passed: false, reason: `Build timed out after ${timeoutMs}ms (E2B sandbox)` }
+  }
+  return {
+    passed: run.exitCode === 0,
+    reason: run.exitCode === 0 ? undefined : `Build exited with code ${run.exitCode} (E2B sandbox)`,
   }
 }
 
