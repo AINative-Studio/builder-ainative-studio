@@ -92,6 +92,18 @@ function findBacktickEnd(code: string, openIdx: number): number {
  * founder's own page displays — the same comment/string-blindness class
  * already fixed across obedience-gate.ts / output-validator.ts /
  * jsx-fixer.ts / etc., not yet applied in this file.
+ *
+ * #2034/#2053/#2081-class guard: a `'`/`"` that isn't really opening a
+ * string — a contraction right after a word character, or one whose only
+ * candidate same-quote close sits on a LATER line (a real single/double-
+ * quoted JS string can never contain a raw newline) — must be treated as
+ * an ordinary character, not skipped past. Otherwise a real `//`/`/* *\/`
+ * comment or backtick template literal starting inside that bogus span
+ * (e.g. a `// export { Foo }` comment after "the '90s") never gets its own
+ * comment/backtick handling below, so it stays byte-identical between
+ * `code` and this mask — `safeReplace()` then treats it as ordinary real
+ * code instead of comment content, and transforms text that's actually
+ * commented out (#2083).
  */
 function maskStringsAndComments(code: string): string {
   let out = ''
@@ -113,7 +125,19 @@ function maskStringsAndComments(code: string): string {
     // Only skipped so a quote-char doesn't trip the backtick/comment checks
     // below (e.g. a `//` or backtick appearing inside an ordinary string).
     if (ch === '"' || ch === "'") {
+      const prevCh = code[i - 1]
+      if (ch === "'" && prevCh !== undefined && /[A-Za-z0-9_$]/.test(prevCh)) {
+        out += ch
+        i++
+        continue
+      }
       const end = findStringEnd(code, i, ch)
+      const nl = code.indexOf('\n', i)
+      if (nl !== -1 && (end === -1 || nl < end)) {
+        out += ch
+        i++
+        continue
+      }
       const stop = end === -1 ? code.length : end + 1
       out += code.slice(i, stop)
       i = stop
@@ -218,6 +242,14 @@ function stripWrappingCodeFence(raw: string): string {
  * has that line split off as a bogus extra "file", corrupting the real
  * file it actually belongs to and potentially clobbering whatever file
  * follows under the same (reused) marker name.
+ *
+ * #2034/#2053/#2081-class guard: a `'`/`"` that isn't really opening a
+ * string — a contraction right after a word character, or one whose only
+ * candidate same-quote close sits on a LATER line — must be treated as an
+ * ordinary character, not skipped past. Otherwise a real multi-line
+ * backtick/comment construct starting inside that bogus span is jumped
+ * straight over without ever calling `markSpan` on it, so its own embedded
+ * `// --- FILE: ... ---`-shaped lines never get flagged as hidden (#2083).
  */
 function linesInsideMultilineConstruct(code: string): Set<number> {
   const inside = new Set<number>()
@@ -231,7 +263,17 @@ function linesInsideMultilineConstruct(code: string): Set<number> {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
+      const prevCh = code[i - 1]
+      if (ch === "'" && prevCh !== undefined && /[A-Za-z0-9_$]/.test(prevCh)) {
+        i++
+        continue
+      }
       const end = findStringEnd(code, i, ch)
+      const nl = code.indexOf('\n', i)
+      if (nl !== -1 && (end === -1 || nl < end)) {
+        i++
+        continue
+      }
       i = end === -1 ? code.length : end + 1
       continue
     }
