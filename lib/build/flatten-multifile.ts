@@ -33,6 +33,28 @@ function findStringEnd(code: string, openIdx: number, quote: string): number {
   return -1
 }
 
+/**
+ * #2034/#2053/#2057-class guard: true when the `'`/`"` at `idx` can be ruled
+ * out as a real string-literal opener — either a JSX-text contraction
+ * ("we're") immediately after a word character, or one whose only
+ * candidate close (per the already-computed `end`) is past a line break (a
+ * real single/double-quoted JS string can never contain a raw newline). See
+ * lib/build/bracket-scanner.ts's resolveStringOpen for the canonical
+ * write-up of both cases. Without this, both call sites below (which treat
+ * any bare `'` as a real string open) desync: linesInsideMultilineConstruct
+ * jumps `i` to whatever quote character happens to appear next — possibly
+ * past a real backtick/comment start it should have caught — and
+ * maskStringsAndComments blanks real code in between as if it were string
+ * content, hiding a real import/export line from safeReplace's callers.
+ */
+function isFakeStringOpen(code: string, idx: number, quote: string, end: number): boolean {
+  const prev = code[idx - 1]
+  if (quote === "'" && prev !== undefined && /[A-Za-z0-9_$]/.test(prev)) return true
+  const nl = code.indexOf('\n', idx)
+  if (end === -1) return nl !== -1
+  return nl !== -1 && nl < end
+}
+
 /** Index of the matching `}` for the `${` interpolation opener at `openIdx` (honoring nested `{}`), or -1 if unbalanced. */
 function findMatchingCurly(code: string, openIdx: number): number {
   let depth = 1
@@ -114,6 +136,11 @@ function maskStringsAndComments(code: string): string {
     // below (e.g. a `//` or backtick appearing inside an ordinary string).
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       const stop = end === -1 ? code.length : end + 1
       out += code.slice(i, stop)
       i = stop
@@ -232,6 +259,10 @@ function linesInsideMultilineConstruct(code: string): Set<number> {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        i++
+        continue
+      }
       i = end === -1 ? code.length : end + 1
       continue
     }

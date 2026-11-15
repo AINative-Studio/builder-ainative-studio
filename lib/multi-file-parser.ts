@@ -421,6 +421,23 @@ const SHADCN_COMPONENT_FILE: Record<string, string> = {
  * matched `<Badge[\s/>]` and injected an unused `import { Badge } from
  * './components/ui/badge'` for a component never actually rendered.
  */
+/**
+ * #2034/#2053/#2057-class guard: true when the `'`/`"` at `idx` can be ruled
+ * out as a real string-literal opener — either a JSX-text contraction
+ * ("we're") immediately after a word character, or one whose only
+ * candidate close (per the already-computed `end`) is past a line break (a
+ * real single/double-quoted JS string can never contain a raw newline). See
+ * lib/build/bracket-scanner.ts's resolveStringOpen for the canonical
+ * write-up of both cases.
+ */
+function isFakeStringOpen(code: string, idx: number, quote: string, end: number): boolean {
+  const prev = code[idx - 1]
+  if (quote === "'" && prev !== undefined && /[A-Za-z0-9_$]/.test(prev)) return true
+  const nl = code.indexOf('\n', idx)
+  if (end === -1) return nl !== -1
+  return nl !== -1 && nl < end
+}
+
 function maskCommentsAndStrings(code: string): string {
   let out = ''
   let i = 0
@@ -429,6 +446,11 @@ function maskCommentsAndStrings(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       const realEnd = end === -1 ? code.length - 1 : end
       out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
