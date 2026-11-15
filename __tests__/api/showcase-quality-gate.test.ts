@@ -56,4 +56,39 @@ describe('isQualityApp (showcase #58 quality gate)', () => {
       'function App(){ return 1 }\n' + 'x '.repeat(1200)
     expect(isQualityApp(code, 'abc')).toBe(true)
   })
+
+  /**
+   * #2034/#2053/.../#2063-class bug (filed as #2074): the masking helper
+   * added to fix the decoy-marker bug above has its own unguarded quote
+   * scan. A JSX-text apostrophe ("don't") with no other same-quote
+   * character anywhere later in the file gets misread as a real string
+   * opener whose "close" is the end of the file — blanking every real
+   * `// --- FILE:` marker after it, so splitOnRealFileMarkers merges
+   * sections that should stay separate.
+   *
+   * Here that wrongly merges a small function-bearing section into a
+   * larger junk section, making the MERGED blob (which, being a plain
+   * concatenation, still textually contains "function ") become the new
+   * largest section and get wrongly selected as mainSection — flipping
+   * the result from the correct reject (mainSection = the junk section
+   * alone, lacking function/const) to a wrong accept.
+   */
+  it('correctly rejects when a real marker after an earlier apostrophe would otherwise be swallowed', () => {
+    const secC = 'x '.repeat(1100) // 2200 chars, no function/const, no quotes — the correct mainSection
+    const secA = "We don't ship junk. " + 'x '.repeat(900) // 1821 chars, no function/const
+    const secB = 'function App(){ return 1 } ' + 'x '.repeat(200) // 428 chars, has function
+
+    const code =
+      '// --- FILE: src/C.tsx\n' + secC +
+      '// --- FILE: src/A.tsx\n' + secA +
+      '// --- FILE: src/B.tsx\n' + secB
+
+    // Sanity: secC alone is the largest of the 3 real sections, and only
+    // secB contains 'function '/'const ' — if correctly split 3 ways,
+    // mainSection is secC (no function/const) => reject. If the marker
+    // before secB is swallowed by secA's apostrophe, secA+secB merge into
+    // a section larger than secC that DOES contain 'function ' => wrongly
+    // accepted. This assertion only holds once the mask is guarded.
+    expect(isQualityApp(code, 'abc')).toBe(false)
+  })
 })
