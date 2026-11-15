@@ -87,7 +87,9 @@ function linesInsideMultilineConstruct(code: string): Set<number> {
     if (ch === '"' || ch === "'") {
       let j = i + 1
       while (j < code.length && code[j] !== ch) { if (code[j] === '\\') j++; j++ }
-      i = j + 1
+      const end = j < code.length ? j : -1
+      if (isFakeStringOpen(code, i, ch, end)) { i++; continue }
+      i = end === -1 ? code.length : end + 1
       continue
     }
     if (ch === '/' && next === '/') {

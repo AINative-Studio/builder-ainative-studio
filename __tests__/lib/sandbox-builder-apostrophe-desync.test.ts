@@ -79,4 +79,35 @@ describe('sandbox-builder — comment/string-mask apostrophe desync (#2034/#2053
     const script = renderScriptSentToSandbox()
     expect(script).toContain('globalThis.App = function App')
   })
+
+  /**
+   * Same bug class, ported to this file's SEPARATE
+   * `linesInsideMultilineConstruct` helper (feeds extractMainFileContent's
+   * own FILE_MARKER scan and buildRenderScript's import-strip scan — a
+   * distinct function from maskStringsAndComments above, with its own
+   * unguarded copy of the quote-handling branch, #2063/#2077 follow-up). A
+   * JSX-text contraction earlier in the real App file's own content opens a
+   * fake single-quoted string; with no newline-boundary check, the scanner
+   * jumps past the real backtick template literal that hides a decoy
+   * FILE-marker-shaped line, so extractMainFileContent wrongly splits the
+   * App file in two at the decoy — truncating the file whose name actually
+   * matches `App.tsx` and losing the real `export default function App`
+   * that came after the split point.
+   */
+  it('still finds the real "export default function App" when a decoy marker is hidden inside a template literal after an earlier JSX-text contraction', async () => {
+    const code = [
+      '// --- FILE: src/App.tsx ---',
+      "function Hero() { return <p>We're building something great.</p> }",
+      'const docs = `',
+      '// --- FILE: src/components/Decoy.tsx ---',
+      '`',
+      'export default function App(){ return <div><Hero/></div> }',
+    ].join('\n')
+
+    const result = await buildInSandbox(code)
+    expect(result.success).toBe(true)
+
+    const script = renderScriptSentToSandbox()
+    expect(script).toContain('globalThis.App = function App')
+  })
 })

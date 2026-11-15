@@ -58,6 +58,36 @@ describe('stripTrailingProse (unit)', () => {
     expect(result.trim().endsWith('}')).toBe(true)
   })
 
+  /**
+   * #2034/#2053/.../#2077-class bug ported to this file's own
+   * `bracesBalance` helper (which `stripTrailingProse` uses to confirm the
+   * code before a trailing `---` rule is syntactically complete). Its quote
+   * branch treated any `'`/`"` as a real string open, including a JSX-text
+   * contraction — with no newline-boundary check, it then scanned for the
+   * next same-quote character anywhere later in the content and, finding
+   * none, jumped straight past the real closing `}`s, so `bracesBalance`
+   * wrongly reported "unbalanced" and `stripTrailingProse` left the garbage
+   * trailing prose in place — reintroducing the exact Babel
+   * "Unexpected token" bug this function exists to prevent, for any file
+   * whose last real line happens to contain a contraction.
+   */
+  it('still strips trailing prose when the file contains a JSX-text contraction before the last closing brace', () => {
+    const content = [
+      'export default function App() {',
+      "  return <p>We're building something great.</p>",
+      '}',
+      '---',
+      '',
+      '**Key Points**',
+      '- Done',
+    ].join('\n')
+
+    const result = stripTrailingProse(content)
+    expect(result).not.toContain('Key Points')
+    expect(result).toContain('export default function App')
+    expect(result.trim().endsWith('}')).toBe(true)
+  })
+
   it('leaves content with no trailing markdown rule untouched', () => {
     const content = [
       "import React from 'react';",
