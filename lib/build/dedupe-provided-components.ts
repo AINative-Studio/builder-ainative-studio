@@ -30,8 +30,8 @@
 import {
   findMatchingBracket as sharedFindMatchingBracket,
   maskComments,
-  findStringEnd,
   findBacktickEnd,
+  resolveStringOpen,
 } from './bracket-scanner'
 
 export const SCAFFOLD_PROVIDED_COMPONENTS = [
@@ -147,9 +147,18 @@ function isInsideStringLiteral(code: string, idx: number): boolean {
   while (i < idx && i < code.length) {
     const ch = code[i]
     if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      if (end === -1 || end >= idx) return true
-      i = end + 1
+      // #2034/#2053-class guard: resolveStringOpen() (not a raw
+      // findStringEnd()) rules out a JSX-text contraction/decade-style
+      // apostrophe as a real string opener — without it, a lone `'` earlier
+      // in the file (ordinary in generated marketing copy) desyncs this
+      // scan, which can either falsely report `idx` as "inside a string"
+      // (leaving a genuine top-level decoy artifact unstripped) or skip past
+      // the real string/comment boundary that would have correctly resolved
+      // whether `idx` sits inside one.
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { i++; continue }
+      if (resolved.end === -1 || resolved.end >= idx) return true
+      i = resolved.end + 1
       continue
     }
     if (ch === '`') {

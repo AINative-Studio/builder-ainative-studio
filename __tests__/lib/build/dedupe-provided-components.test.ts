@@ -433,4 +433,28 @@ describe('dedupeProvidedComponents', () => {
       expect(out).toContain('export default function App')
     })
   })
+
+  describe('isInsideStringLiteral apostrophe desync (#2034/#2053-class)', () => {
+    /**
+     * Regression: isInsideStringLiteral() used to scan with the raw
+     * findStringEnd() (no apostrophe guard). A decade-style apostrophe in
+     * ordinary JSX text ("the '90s"), with no other quote character
+     * anywhere after it in the file, made findStringEnd() return -1 — and
+     * since this function treats "no close found" as "idx is inside a
+     * string" (`end === -1 || end >= idx) return true`), it wrongly
+     * concluded the real, TOP-LEVEL "Available Shadcn components" artifact
+     * further down was sitting inside a string literal and skipped
+     * truncating it, leaving the artifact comment in the shipped output.
+     */
+    it('still strips a top-level "Available Shadcn components" artifact that appears after a decade-style apostrophe in JSX text', () => {
+      const code = [
+        "function Hero() { return <p>Retro vibes from the '90s</p> }",
+        'export default function App(){ return <Hero/> }',
+        '// Available Shadcn components: Button, Card, Input',
+      ].join('\n')
+      const out = dedupeProvidedComponents(code)
+      expect(out).not.toMatch(/Available Shadcn components/)
+      expect(out).toContain('export default function App')
+    })
+  })
 })
