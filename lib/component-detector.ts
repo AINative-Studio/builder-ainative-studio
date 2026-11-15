@@ -258,6 +258,24 @@ function skipArrowConstTypeAnnotation(code: string, idx: number): number {
  * (#1748). The shared pair is a strict superset of what this function
  * needs (it additionally honors nested `${}` interpolation inside a
  * template literal, which this function's masking only benefits from).
+ *
+ * #2034/#2053/#2057-class guard: a `'` can legitimately be an English-
+ * contraction apostrophe inside JSX text ("We're", "don't") rather than a
+ * real string-literal opener, and `foo'bar'` isn't valid JS — so a `'`
+ * immediately after a word character can only be prose, never a real open.
+ * Likewise, a real single/double-quoted JS string can never contain a raw
+ * newline, so if the only candidate closing quote `findStringEnd` can find
+ * is on a LATER line (or there's no close at all but more file follows),
+ * this open was never real either. Without this guard, either case makes
+ * this scanner treat everything up to that bogus "close" (often the rest
+ * of the whole file, when no other matching quote exists) as string
+ * content and blank it out — which, fed into `hasDefaultExport` /
+ * `detectRootComponent` below, can hide a file's REAL `export default`
+ * entirely and trigger the duplicate-default-export SyntaxError /
+ * "Element type is invalid" crash this file's own module doc warns about.
+ * Mirrors lib/build/bracket-scanner.ts's `resolveStringOpen` (kept as a
+ * self-contained copy here rather than an import, since that helper isn't
+ * exported from the shared module as of this fix).
  */
 function maskStringsAndComments(code: string): string {
   let out = ''
@@ -280,7 +298,15 @@ function maskStringsAndComments(code: string): string {
       continue
     }
     if (ch === '"' || ch === "'") {
-      const close = findStringEnd(code, i, ch)
+      const isFakeApostrophe = ch === "'" && i > 0 && /[A-Za-z0-9_$]/.test(code[i - 1])
+      const close = isFakeApostrophe ? -1 : findStringEnd(code, i, ch)
+      const nl = code.indexOf('\n', i)
+      const isFakeOpen = isFakeApostrophe || (nl !== -1 && (close === -1 || nl < close))
+      if (isFakeOpen) {
+        out += ch
+        i++
+        continue
+      }
       const stop = close === -1 ? code.length : close + 1
       out += ' '.repeat(stop - i)
       i = stop
