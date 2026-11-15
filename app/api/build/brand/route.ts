@@ -28,6 +28,7 @@ import { resolveApp } from '@/lib/build/app-registry'
 import { toSlug } from '@/lib/build/slug'
 import { RESERVED_SUBDOMAINS } from '@/lib/build/deploy'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
+import { fallbackNameFromIdea } from '@/lib/build/idea-fallback-name'
 
 export const runtime = 'nodejs'
 
@@ -138,11 +139,11 @@ export async function POST(request: NextRequest) {
 
   // Last resort: every real model attempt either failed outright or kept
   // colliding MAX_NAMING_ATTEMPTS times in a row (rare) — fall back to a
-  // decent slug from the first meaningful noun, never the raw idea. Still
-  // check it for a collision; if even THAT'S taken, this is the one place a
-  // suffix is acceptable, since we've exhausted every real-naming attempt.
-  const fallback = idea.replace(/^(i want to build|build|create|make|a|an|the)\s+/gi, '').split(/\s+/)[0] || 'app'
-  const name = fallback.charAt(0).toUpperCase() + fallback.slice(1)
+  // decent slug from the first meaningful noun, never the raw idea (and
+  // never just a leading bracketed/tagged prefix — #2067). Still check it
+  // for a collision; if even THAT'S taken, this is the one place a suffix
+  // is acceptable, since we've exhausted every real-naming attempt.
+  const name = fallbackNameFromIdea(idea)
   let slug = toSlug(name)
   if (await slugTaken(slug)) {
     for (let n = 2; n <= 50; n++) {

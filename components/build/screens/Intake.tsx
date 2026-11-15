@@ -6,6 +6,7 @@ import { useEffect, useState } from 'react'
 import { useBuild } from '@/contexts/build-context'
 import { trackEvent } from '@/components/analytics/google-analytics'
 import { getOrCreateAnonDraftToken } from '@/lib/build/anon-draft-token'
+import { fallbackNameFromIdea } from '@/lib/build/idea-fallback-name'
 
 export function Intake() {
   const { state, dispatch } = useBuild()
@@ -111,10 +112,9 @@ export function Intake() {
   )
 }
 
-// Fallback name only when brand generation fails — strip the "I want to build a"
-// preamble and take the first meaningful word, so we never show "I Want To".
+// Fallback name only when brand generation fails — delegates to the same
+// idea-cleaning helper /api/build/brand's own last-resort fallback uses
+// (#2067), so a bracketed/tagged idea never collapses to just "[LOOP-TEST".
 function fallbackName(idea: string): string {
-  const cleaned = idea.trim().replace(/^(i\s+want\s+to\s+build|i\s+want\s+to|build|create|make|a|an|the)\s+/gi, '')
-  const w = cleaned.split(/\s+/)[0] || 'Cody'
-  return w.charAt(0).toUpperCase() + w.slice(1)
+  return fallbackNameFromIdea(idea, 'Cody')
 }
