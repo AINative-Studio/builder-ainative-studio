@@ -77,6 +77,63 @@ export function findBacktickEnd(code: string, openIdx: number): number {
 }
 
 /**
+ * True when the `'` at `idx` can be ruled out as a real string-literal
+ * opener because it's almost certainly an apostrophe inside JSX/plain text
+ * — an English contraction immediately after a word character ("We're",
+ * "don't", "Let's"); `foo'bar'` isn't valid JS, so a `'` right after a
+ * word character can never legitimately open a real string. Shared by
+ * every quote-aware scanner below so the #2053 fix lives in one place.
+ */
+function isFakeApostrophe(code: string, idx: number): boolean {
+  const prev = code[idx - 1]
+  return code[idx] === "'" && prev !== undefined && /[A-Za-z0-9_$]/.test(prev)
+}
+
+/**
+ * Resolves whether the `"`/`'` at `idx` is a genuine string-literal opener
+ * and, if so, where it closes — or rules it out as a fake open entirely
+ * (returns `null`), in which case callers should treat the quote character
+ * itself as ordinary text/code rather than skipping anything.
+ *
+ * Two independent ways a quote can be fake, both found live in generated
+ * marketing copy:
+ *  - `isFakeApostrophe` above (a contraction).
+ *  - The ONLY candidate closing quote `findStringEnd` can find is on a
+ *    LATER LINE. A real single/double-quoted JS string literal can never
+ *    contain a raw, unescaped newline (that's a syntax error outside
+ *    template literals) — so if the nearest same-quote character is past a
+ *    line break, this open was never a real string either (e.g. a decade
+ *    reference like "the '90s" with no closing `'` until some unrelated
+ *    string many lines later). Without this check, the scanner would skip
+ *    everything in between as "string content" — silently un-blanking real
+ *    comments (maskComments) or swallowing real bracket characters and
+ *    reporting a false "unbalanced" (findMatchingBracket), exactly #2034/
+ *    #2053's bug class but via a different trigger.
+ *
+ * A genuinely truncated/unterminated string — no matching quote anywhere,
+ * AND the file ends on the same line it opened on (nothing after it to have
+ * been misread) — is NOT considered fake; that's still reported via
+ * `end: -1` so existing truncation-handling callers keep their behavior.
+ * But a `'`/`"` with no same-line close that's followed by MORE lines of
+ * real file content (e.g. a lone decade apostrophe, nothing else in the
+ * whole file happens to use that quote character) is exactly as fake as
+ * one whose only candidate close is on a later line — there's no real
+ * string here either way, just no close ever appears to prove it.
+ */
+function resolveStringOpen(code: string, idx: number, quote: string): { end: number } | null {
+  if (isFakeApostrophe(code, idx)) return null
+  const end = findStringEnd(code, idx, quote)
+  const nl = code.indexOf('\n', idx)
+  if (end === -1) {
+    // No close anywhere. Genuine truncation only if there's no more file
+    // left after this line either — otherwise this was never a real open.
+    return nl === -1 ? { end: -1 } : null
+  }
+  if (nl !== -1 && nl < end) return null
+  return { end }
+}
+
+/**
  * Index of the matching `closeChar` bracket for the `openChar` bracket at
  * `openIdx` (which must point at `openChar`), honoring arbitrarily nested
  * brackets of that same kind. Returns -1 if unbalanced.
@@ -128,9 +185,13 @@ export function findMatchingBracket(
       // whole match.
     }
     if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      if (end === -1) return -1
-      i = end + 1
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) {
+        i++
+        continue
+      }
+      if (resolved.end === -1) return -1
+      i = resolved.end + 1
       continue
     }
     if (ch === '`') {
@@ -188,21 +249,20 @@ export function maskComments(code: string): string {
       i += 2
       continue
     }
-    // #2053: a `'` immediately preceded by a word character can never
-    // legitimately open a real JS string literal (`foo'bar'` isn't valid
-    // JS) — it's an apostrophe inside plain JSX text, almost always an
-    // English contraction ("We're", "Don't", "Let's") in generated
-    // marketing copy. Treating it as a string-open scans forward to the
-    // NEXT real `'` anywhere later in the file (findStringEnd has no way to
-    // know this one was fake) and silently copies everything in between —
-    // including a real `//`/`/* */` comment this function exists to blank —
-    // through unmodified as if it were string content. Only `'` needs this
-    // guard; English contractions never use `"`.
-    const prev = code[i - 1]
-    const isFakeApostrophe = ch === "'" && prev !== undefined && /[A-Za-z0-9_$]/.test(prev)
-    if ((ch === '"' || ch === "'") && !isFakeApostrophe) {
-      const end = findStringEnd(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
+    // #2053/#2034-class guard (see resolveStringOpen's doc above this
+    // function) — a `'`/`"` that isn't really opening a string (a
+    // contraction, or a decade-style apostrophe whose only candidate close
+    // is past a line break) is left as an ordinary character instead of
+    // being treated as a string-open that swallows real comments as if
+    // they were string content.
+    if (ch === '"' || ch === "'") {
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) {
+        out += ch
+        i++
+        continue
+      }
+      const realEnd = resolved.end === -1 ? code.length - 1 : resolved.end
       out += code.slice(i, realEnd + 1)
       i = realEnd + 1
       continue
