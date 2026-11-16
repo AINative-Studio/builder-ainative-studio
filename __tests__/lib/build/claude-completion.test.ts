@@ -284,6 +284,94 @@ describe('completeText', () => {
   })
 })
 
+// ── isBedrockRateLimited / getFallbackCompletion ────────────────────────────
+// Found live 2026-11-16 (companies `groundwork`, `wallkind`): lib/build/
+// task-implementer.ts's nightly-backlog implementation calls
+// claude.client.messages.create() directly (not through completeText()) and
+// had no fallback at all on a Bedrock daily-token-quota 429 — the same
+// signature issue #1802/PR #1805 already fixed on the live-generation path.
+
+describe('isBedrockRateLimited', () => {
+  it('is true for the real bedrock-client.ts 429 error shape', async () => {
+    const { isBedrockRateLimited } = await import('@/lib/build/claude-completion')
+    const err = new Error(
+      'Bedrock invoke failed: HTTP 429 {"message":"Too many tokens per day, please wait before trying again."}',
+    )
+    expect(isBedrockRateLimited(err)).toBe(true)
+  })
+
+  it('is true for a bare "too many tokens per day" message regardless of case', async () => {
+    const { isBedrockRateLimited } = await import('@/lib/build/claude-completion')
+    expect(isBedrockRateLimited(new Error('TOO MANY TOKENS PER DAY, please wait'))).toBe(true)
+  })
+
+  it('is false for an unrelated error', async () => {
+    const { isBedrockRateLimited } = await import('@/lib/build/claude-completion')
+    expect(isBedrockRateLimited(new Error('ECONNRESET'))).toBe(false)
+  })
+
+  it('is false for a different HTTP status from the same bedrock-client.ts throw shape', async () => {
+    const { isBedrockRateLimited } = await import('@/lib/build/claude-completion')
+    expect(isBedrockRateLimited(new Error('Bedrock invoke failed: HTTP 500 internal error'))).toBe(false)
+  })
+
+  it('is false for a non-Error value', async () => {
+    const { isBedrockRateLimited } = await import('@/lib/build/claude-completion')
+    expect(isBedrockRateLimited(undefined)).toBe(false)
+    expect(isBedrockRateLimited({ some: 'object' })).toBe(false)
+  })
+})
+
+describe('getFallbackCompletion', () => {
+  beforeEach(() => {
+    vi.resetModules()
+    clearBedrockEnv()
+    clearAnthropicEnv()
+  })
+
+  it('returns null when the primary is already anthropic (nothing left to fall back to)', async () => {
+    const mod = await import('@/lib/build/claude-completion')
+    const result = mod.getFallbackCompletion({
+      client: {},
+      provider: 'anthropic',
+      model: 'claude-sonnet-4-5-20250929',
+      label: 'x',
+    })
+    expect(result).toBeNull()
+  })
+
+  it('returns null when primary is bedrock but no direct Anthropic key is configured', async () => {
+    const mod = await import('@/lib/build/claude-completion')
+    const result = mod.getFallbackCompletion({
+      client: {},
+      provider: 'bedrock',
+      model: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+      label: 'x',
+    })
+    expect(result).toBeNull()
+  })
+
+  it('returns a real anthropic client when primary is bedrock and ANTHROPIC_API_KEY is configured', async () => {
+    process.env.ANTHROPIC_API_KEY = 'sk-ant-test1234'
+    vi.mock('@anthropic-ai/sdk', () => ({
+      default: class FakeAnthropic {
+        constructor(public opts: any) {}
+        messages = { create: vi.fn() }
+      },
+    }))
+    const mod = await import('@/lib/build/claude-completion')
+    const result = mod.getFallbackCompletion({
+      client: {},
+      provider: 'bedrock',
+      model: 'us.anthropic.claude-sonnet-4-5-20250929-v1:0',
+      label: 'x',
+    })
+    expect(result).not.toBeNull()
+    expect(result!.provider).toBe('anthropic')
+    expect(result!.client).toBeDefined()
+  })
+})
+
 // ── BedrockClient.messages.create — shape validation ────────────────────────
 
 describe('BedrockClient — request shaping', () => {

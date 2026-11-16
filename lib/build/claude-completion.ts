@@ -59,6 +59,40 @@ export function getClaudeCompletion(): ClaudeCompletion | null {
   return null
 }
 
+/**
+ * True when `error` is Bedrock's own daily-token-quota exhaustion —
+ * bedrock-client.ts's `getBedrockClient()` throws a plain `Error` (no
+ * `.status` field, unlike an SDK error) reading
+ * `Bedrock invoke failed: HTTP 429 {"message":"Too many tokens per day..."}`.
+ *
+ * Found live (2026-11-16) on two real companies (`groundwork`, `wallkind`):
+ * their nightly-backlog task-implementation calls (lib/build/task-implementer.ts,
+ * the only caller of getClaudeCompletion() that calls `.messages.create()`
+ * directly rather than through completeText()) hit this and failed outright,
+ * with no retry — the same 429-cascade issue #1802 found on the live
+ * generation path (app/api/chat-ws, lib/agent/multi-pass-generator.ts) and
+ * fixed there (PR #1805) by rotating to a non-Bedrock fallback model. That
+ * fix was never ported to this call path, which has no fallback at all.
+ */
+export function isBedrockRateLimited(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : typeof error === 'string' ? error : ''
+  return /HTTP 429/.test(message) || /too many tokens per day/i.test(message)
+}
+
+/**
+ * A second Claude completion client on a DIFFERENT provider than `primary`,
+ * for retrying a Bedrock-quota-exhausted call against an account that isn't
+ * sharing the same exhausted daily quota. Returns null when `primary` isn't
+ * Bedrock, or no direct Anthropic key is configured (nothing to fall back
+ * to) — callers should keep the original failure in that case.
+ */
+export function getFallbackCompletion(primary: ClaudeCompletion): ClaudeCompletion | null {
+  if (primary.provider !== 'bedrock') return null
+  const direct = anthropicDirect()
+  if (!direct) return null
+  return { client: direct.client, provider: 'anthropic', model: direct.model, label: 'Claude Sonnet 4.5' }
+}
+
 // Real bug (customer-reported, 2026-09-09, Pathlo/DocumentsPanel): "Generate
 // Product Roadmap" showed "Generating…" and then nothing ever happened — no
 // error, no document, no timeout. Root cause: completeText had NO timeout at

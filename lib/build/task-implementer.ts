@@ -10,8 +10,15 @@
  * artifacts, never app code. This is genuinely new capability, built fresh.
  *
  * v1 scope (deliberately narrow, per the #373 scoping pass):
- *   - Single attempt, no retry loop — an honest failure surfaces immediately
- *     rather than silently retrying or fabricating success.
+ *   - Single attempt per provider, no retry loop — an honest failure
+ *     surfaces immediately rather than silently retrying or fabricating
+ *     success. The one exception (found live 2026-11-16 on `groundwork`/
+ *     `wallkind`): a Bedrock daily-token-quota 429 (same signature #1802
+ *     fixed on the live-generation path) can never be fixed by retrying the
+ *     SAME exhausted account, so a single fallback attempt against a
+ *     different provider (direct Anthropic, when configured) is tried
+ *     before giving up — this is a provider failover, not a "try again and
+ *     hope" retry loop.
  *   - Full-file context for every existing file (confirmed via
  *     lib/build/multifile-emphasis.ts: generated apps are bounded/small —
  *     sidebar+table+kanban+charts+settings scale, not a large codebase — so
@@ -21,7 +28,7 @@
  *     the result. This module does not touch git or run tests itself.
  */
 
-import { getClaudeCompletion } from '@/lib/build/claude-completion'
+import { getClaudeCompletion, getFallbackCompletion, isBedrockRateLimited, type ClaudeCompletion } from '@/lib/build/claude-completion'
 import type { BuildTask } from '@/lib/build/task-store'
 
 export interface ImplementTaskResult {
@@ -143,12 +150,41 @@ export function parseImplementationResponse(raw: string): ImplementTaskResult {
 // I/O — isolated from the pure logic above
 // ---------------------------------------------------------------------------
 
+async function callImplementation(
+  claude: ClaudeCompletion,
+  system: string,
+  user: string,
+): Promise<ImplementTaskResult> {
+  const res = await claude.client.messages.create(
+    {
+      model: claude.model,
+      max_tokens: MAX_TOKENS,
+      temperature: 0.4,
+      system,
+      messages: [{ role: 'user', content: user }],
+    },
+    { signal: AbortSignal.timeout(TIMEOUT_MS) },
+  )
+  const text = (res.content || [])
+    .filter((b: any) => b.type === 'text')
+    .map((b: any) => b.text)
+    .join('\n')
+  return parseImplementationResponse(text)
+}
+
 /**
  * Implement one backlog task against a company's existing generated-app
- * files. Single attempt, no retry — an honest failure (LLM error, no
- * provider configured, unparseable output, model-reported impossibility)
- * returns ok:false with a real reason for BuildTask.output. Never fabricates
- * a success.
+ * files. Single attempt per provider, no "try again and hope" retry loop —
+ * an honest failure (LLM error, no provider configured, unparseable output,
+ * model-reported impossibility) returns ok:false with a real reason for
+ * BuildTask.output. Never fabricates a success.
+ *
+ * One exception: a Bedrock daily-token-quota 429 (confirmed live 2026-11-16
+ * on `groundwork`/`wallkind` — "Bedrock invoke failed: HTTP 429 ... Too many
+ * tokens per day") fails over once to a direct-Anthropic client when one is
+ * configured, since retrying the same exhausted Bedrock account can never
+ * succeed — the same reasoning issue #1802/PR #1805 already applied to the
+ * live-generation path, just never ported to this one.
  */
 export async function implementTask(
   task: Pick<BuildTask, 'title' | 'detail'>,
@@ -163,22 +199,21 @@ export async function implementTask(
   const user = buildImplementationUserPrompt(task, existingFiles)
 
   try {
-    const res = await claude.client.messages.create(
-      {
-        model: claude.model,
-        max_tokens: MAX_TOKENS,
-        temperature: 0.4,
-        system,
-        messages: [{ role: 'user', content: user }],
-      },
-      { signal: AbortSignal.timeout(TIMEOUT_MS) },
-    )
-    const text = (res.content || [])
-      .filter((b: any) => b.type === 'text')
-      .map((b: any) => b.text)
-      .join('\n')
-    return parseImplementationResponse(text)
+    return await callImplementation(claude, system, user)
   } catch (e) {
+    if (isBedrockRateLimited(e)) {
+      const fallback = getFallbackCompletion(claude)
+      if (fallback) {
+        try {
+          return await callImplementation(fallback, system, user)
+        } catch (e2) {
+          return {
+            ok: false,
+            reason: `Implementation call failed: ${e instanceof Error ? e.message : String(e)} (fallback also failed: ${e2 instanceof Error ? e2.message : String(e2)})`,
+          }
+        }
+      }
+    }
     return {
       ok: false,
       reason: `Implementation call failed: ${e instanceof Error ? e.message : String(e)}`,
