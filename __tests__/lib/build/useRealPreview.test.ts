@@ -190,6 +190,50 @@ describe('useRealPreview — error paths', () => {
     await waitFor(() => expect(result.current.status).toBe('error'), { timeout: 3000 })
   })
 
+  // #2066: Preview.tsx's error-state copy has always said "the app build can
+  // be retried," but nothing ever wired that up — a failed live-preview build
+  // was a permanent dead end with no way back to 'idle'. Found via live E2E
+  // testing, where this left an orphaned company (registerApp() never fires
+  // on an 'error' status) that never appeared in the founder's company list.
+  it('retry() resets status back to idle/generating and re-runs generation', async () => {
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, body: null } as unknown as Response) // first attempt fails
+      .mockResolvedValueOnce(sseResponse([ // retry succeeds
+        sseEvent({ type: 'init', chatId: 'chat-retry' }),
+        sseEvent({ type: 'complete' }),
+      ]))
+      .mockResolvedValueOnce(filesNotFound())
+      .mockResolvedValueOnce({ ok: true, text: async () => '<html>' + 'x'.repeat(900) + '</html>' } as unknown as Response)
+    vi.stubGlobal('fetch', fetchMock)
+
+    const { result } = renderHook(() => useRealPreview('Retryable idea', true))
+    await waitFor(() => expect(result.current.status).toBe('error'), { timeout: 3000 })
+
+    act(() => { result.current.retry() })
+
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+    expect(result.current.chatId).toBe('chat-retry')
+    expect(result.current.errorMessage).toBeNull()
+  })
+
+  it('retry() is a no-op when status is not error', async () => {
+    vi.stubGlobal('fetch', vi.fn()
+      .mockResolvedValueOnce(sseResponse([
+        sseEvent({ type: 'init', chatId: 'chat-ready' }),
+        sseEvent({ type: 'complete' }),
+      ]))
+      .mockResolvedValueOnce(filesNotFound())
+      .mockResolvedValueOnce({ ok: true, text: async () => '<html>' + 'x'.repeat(900) + '</html>' } as unknown as Response),
+    )
+    const { result } = renderHook(() => useRealPreview('Already working idea', true))
+    await waitFor(() => expect(result.current.status).toBe('ready'), { timeout: 3000 })
+
+    act(() => { result.current.retry() })
+
+    expect(result.current.status).toBe('ready')
+    expect(result.current.chatId).toBe('chat-ready')
+  })
+
   it('sets status=error when SSE stream contains an error event', async () => {
     vi.stubGlobal('fetch', vi.fn()
       .mockResolvedValueOnce(sseResponse([

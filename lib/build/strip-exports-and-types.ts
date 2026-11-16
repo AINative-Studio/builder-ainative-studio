@@ -60,6 +60,29 @@ function findMatchingCurly(code: string, openIdx: number): number {
   return -1
 }
 
+/**
+ * #2034/#2053-class guard: true when the `'`/`"` at `idx` can be ruled out
+ * as a real string-literal opener — either a JSX-text contraction ("we're")
+ * immediately after a word character, or one whose only candidate close
+ * (per the already-computed `end`) is past a line break (a real single/
+ * double-quoted JS string can never contain a raw newline). See
+ * lib/build/bracket-scanner.ts's resolveStringOpen for the canonical
+ * write-up of both cases. Without this, maskStringsCommentsAndTemplates()
+ * below desyncs on a JSX-text apostrophe anywhere earlier in the file,
+ * wrongly masking the real top-level `export default` (or a real `: any`/
+ * `: string`/etc. annotation) as "string content" — which makes
+ * safeReplace() treat it as a decoy and skip stripping it, leaving
+ * `export` in code injected into a non-module `<script>` tag (a hard
+ * SyntaxError at render).
+ */
+function isFakeStringOpen(code: string, idx: number, quote: string, end: number): boolean {
+  const prev = code[idx - 1]
+  if (quote === "'" && prev !== undefined && /[A-Za-z0-9_$]/.test(prev)) return true
+  const nl = code.indexOf('\n', idx)
+  if (end === -1) return nl !== -1
+  return nl !== -1 && nl < end
+}
+
 /** Index of the closing backtick ending the template literal starting at `openIdx`, honoring nested `${}` interpolations. */
 function findBacktickEnd(code: string, openIdx: number): number {
   let i = openIdx + 1
@@ -96,6 +119,11 @@ function maskStringsCommentsAndTemplates(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       if (end === -1) {
         out += ch + code.slice(i + 1).replace(/[^\n]/g, ' ')
         i = code.length

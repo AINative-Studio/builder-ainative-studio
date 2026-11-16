@@ -87,4 +87,41 @@ describe('repair-app route FILE-marker re-split is comment/string-aware, not a b
     expect(parts[0]).toMatch(/^src\/App\.tsx/)
     expect(parts[1]).toMatch(/^src\/components\/Sidebar\.tsx/)
   })
+
+  /**
+   * #2034/#2053/.../#2063-class bug (filed as #2074): this route's own copy
+   * of maskStringsAndBlockCommentsForFileMarkerScan has the identical
+   * unguarded quote scan these other issues found and fixed elsewhere. A
+   * JSX-text contraction apostrophe ("don't") with no other same-quote
+   * character anywhere later in the repaired code is misread as a real
+   * string opener whose "close" is the end of the file — blanking every
+   * real `// --- FILE:` marker after it, so a genuinely 3-file repair
+   * result gets wrongly persisted as only 2 files, silently dropping the
+   * boundary between the last two.
+   */
+  it('still finds a real FILE marker after an earlier JSX-text contraction apostrophe', () => {
+    const { splitOnRealFileMarkers } = loadHelpers()
+    const real =
+      '// --- FILE: src/App.tsx ---\n' +
+      "export default function App(){ return <p>We don't ship broken apps.</p> }\n" +
+      '// --- FILE: src/components/Sidebar.tsx ---\n' +
+      'export default function Sidebar(){ return null }'
+    const parts = splitOnRealFileMarkers(real).filter(Boolean)
+    expect(parts.length).toBe(2)
+    expect(parts[0]).toMatch(/^src\/App\.tsx/)
+    expect(parts[1]).toMatch(/^src\/components\/Sidebar\.tsx/)
+  })
+
+  it('still finds a real FILE marker after an earlier decade-style apostrophe', () => {
+    const { splitOnRealFileMarkers } = loadHelpers()
+    const real =
+      '// --- FILE: src/App.tsx ---\n' +
+      "export default function App(){ return <p>Retro styles from the '90s.</p> }\n" +
+      '// --- FILE: src/components/Sidebar.tsx ---\n' +
+      'export default function Sidebar(){ return null }'
+    const parts = splitOnRealFileMarkers(real).filter(Boolean)
+    expect(parts.length).toBe(2)
+    expect(parts[0]).toMatch(/^src\/App\.tsx/)
+    expect(parts[1]).toMatch(/^src\/components\/Sidebar\.tsx/)
+  })
 })

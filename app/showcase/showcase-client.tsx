@@ -4,7 +4,7 @@ import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { SEED_SHOWCASE, SHOWCASE_CATEGORIES, type ShowcaseEntry } from '@/lib/showcase-data'
 import { detectRootComponent, applyComponentRewrite } from '@/lib/component-detector'
-import { findMatchingBrace, findStringEnd, findBacktickEnd } from '@/lib/build/bracket-scanner'
+import { findMatchingBrace, findBacktickEnd, resolveStringOpen } from '@/lib/build/bracket-scanner'
 
 /**
  * Length-preserving mask of string/template-literal content AND `/* *\/`
@@ -30,6 +30,18 @@ import { findMatchingBrace, findStringEnd, findBacktickEnd } from '@/lib/build/b
  * apart. Masking only strings/templates/block comments still defeats a
  * decoy sitting inside one of those (the actual real-world shape) while
  * leaving every genuine top-level marker intact to match against.
+ *
+ * Uses `resolveStringOpen()` (not the raw `findStringEnd()`) to decide
+ * whether a `'`/`"` is a real string opener at all — the same #2034/#2053-
+ * class guard every other FILE_MARKER mask in this bug family now applies.
+ * Without it, an ordinary JSX-text contraction or decade-style apostrophe
+ * (`We're building...`, `the '90s`) earlier in a generated page desyncs this
+ * scan: it gets misread as opening a real string and jumps forward to some
+ * unrelated later quote (or EOF), silently blanking real code — including a
+ * genuine `// --- FILE:` marker — in between, which can cause a single-file
+ * generated app to be wrongly split (or a genuinely multi-file one to be
+ * wrongly left unsplit) in the public showcase preview (#2064-class, found
+ * in this file during the overnight render-correctness sweep).
  */
 function maskStringsAndBlockCommentsOnly(code: string): string {
   let out = ''
@@ -38,8 +50,13 @@ function maskStringsAndBlockCommentsOnly(code: string): string {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      const realEnd = end === -1 ? code.length - 1 : end
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) {
+        out += ch
+        i++
+        continue
+      }
+      const realEnd = resolved.end === -1 ? code.length - 1 : resolved.end
       out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
       continue

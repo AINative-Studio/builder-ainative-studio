@@ -34,22 +34,45 @@ import { countEcosystemPrimitives, ecosystemBonusMessage } from '@/lib/build/eco
 
 export const runtime = 'nodejs'
 
-async function resolveOwner(): Promise<{ email: string; tier: string } | null> {
+// #2097: this route used to silently swallow a plan-lookup failure (bare
+// `catch {}`, no logging) and discard `getPlanStatus()`'s `verified` flag
+// entirely — so a core outage/timeout for a real Enterprise account was
+// indistinguishable from a genuinely free account, and the only sign anything
+// was wrong was a paying founder's build quota silently capping at 3. This is
+// the same silent-downgrade class #762 already fixed for provisioning and
+// paid-feature gating (see lib/ainative/resolve-plan.ts, app/api/build/
+// provision/route.ts) — `getPlanStatus` never throws for a core outage, so
+// try/catch alone can't detect this; only `status.verified` can.
+async function resolveOwner(): Promise<{ email: string; tier: string; verified: boolean } | null> {
   try {
     const session = await auth()
     const email = (session as any)?.user?.email as string | undefined
     const accessToken = (session as any)?.accessToken as string | undefined
     if (!email) return null
     let tier = 'hobbyist'
+    let verified = true
     if (accessToken) {
+      verified = false
       try {
         const status = await getPlanStatus(accessToken)
         tier = status.tier || 'hobbyist'
-      } catch {
-        /* fall back to free-tier allowance */
+        verified = status.verified
+        if (!verified) {
+          console.error(
+            `[credits] plan verification UNVERIFIED for ${email} — core did not answer ` +
+              `(timeout/5xx/network), so tier "${tier}" is a default, not a real read. ` +
+              `NOT proof this founder is on the free tier; their build quota may be ` +
+              `wrongly capped until core is reachable again.`,
+          )
+        }
+      } catch (err) {
+        console.error(
+          `[credits] plan lookup threw for ${email} — falling back to tier "hobbyist". ` +
+            `NOT proof this founder is unpaid: ${err instanceof Error ? err.message : String(err)}`,
+        )
       }
     }
-    return { email, tier }
+    return { email, tier, verified }
   } catch {
     return null
   }
@@ -59,7 +82,11 @@ export async function GET() {
   const owner = await resolveOwner()
   if (!owner) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
   const status = await getBuildCreditStatus(owner.email, owner.tier)
-  return NextResponse.json({ ...status, tier: owner.tier })
+  // #2097: `tierVerified: false` tells the client this tier/limit is a
+  // fallback, not a confirmed read — surfaced so the UI can show "we
+  // couldn't verify your plan" instead of a confident-looking "0 builds
+  // left" that may be a core-outage artifact, not a real entitlement answer.
+  return NextResponse.json({ ...status, tier: owner.tier, tierVerified: owner.verified })
 }
 
 export async function POST(request: Request) {
@@ -86,8 +113,20 @@ export async function POST(request: Request) {
     ? raw
     : applyValueGuarantee(raw, await hasReachedPreview(owner.email))
   if (!status.allowed) {
+    // #2097: fail closed on an unverified tier (never mint unlimited builds on
+    // an unresolved lookup — that's its own abuse vector), but say so clearly
+    // in both the log and the response, matching provision/route.ts's policy
+    // for this same failure class. A founder blocked here while `tierVerified`
+    // is false is NOT confirmed to be over their real limit.
+    if (!owner.verified) {
+      console.error(
+        `[credits] blocking a build for ${owner.email} on an UNVERIFIED tier ` +
+          `("${owner.tier}") — core did not confirm this account's real plan. ` +
+          `If this account is actually paid, this is a false block.`,
+      )
+    }
     return NextResponse.json(
-      { error: 'build_limit_reached', ...status, tier: owner.tier },
+      { error: 'build_limit_reached', ...status, tier: owner.tier, tierVerified: owner.verified },
       { status: 402 },
     )
   }
@@ -112,6 +151,7 @@ export async function POST(request: Request) {
     valueGuarantee: status.valueGuarantee ?? false,
     viaDripToken: status.viaDripToken ?? false,
     tier: owner.tier,
+    tierVerified: owner.verified,
     ecosystem: {
       composed,
       bonusEarned: bonusApplied,

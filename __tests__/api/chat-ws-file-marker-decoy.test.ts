@@ -32,12 +32,13 @@ describe('chat-ws FILE-marker detection is comment/string-aware, not a blind .te
   const source = fs.readFileSync(path.join(process.cwd(), 'app/api/chat-ws/route.ts'), 'utf8')
 
   function loadHasRealFileMarker(): (code: string) => boolean {
-    const helperStart = source.indexOf('function linesInsideMultilineConstruct(code: string): Set<number> {')
+    const helperStart = source.indexOf('function isFakeStringOpen(code: string, idx: number, quote: string, end: number): boolean {')
     expect(helperStart).toBeGreaterThan(-1)
     const nextFnAfterBoth = source.indexOf('\n/**\n * Real gap found live (issue #624,')
     expect(nextFnAfterBoth).toBeGreaterThan(helperStart)
     const body = source.slice(helperStart, nextFnAfterBoth)
       // Strip TS-only annotations so this runs as plain JS via `new Function`.
+      .replace(/function isFakeStringOpen\(code: string, idx: number, quote: string, end: number\): boolean \{/, 'function isFakeStringOpen(code, idx, quote, end) {')
       .replace(/function linesInsideMultilineConstruct\(code: string\): Set<number> \{/, 'function linesInsideMultilineConstruct(code) {')
       .replace('new Set<number>()', 'new Set()')
       .replace(/\(from: number, to: number, line: number\): number =>/, '(from, to, line) =>')
@@ -94,6 +95,31 @@ describe('chat-ws FILE-marker detection is comment/string-aware, not a blind .te
       '  return <pre>{docs}</pre>',
       '}',
       '',
+    ].join('\n')
+    expect(hasRealFileMarker(decoy)).toBe(false)
+  })
+
+  /**
+   * #2034/#2053/.../#2074-class bug ported to THIS file's own copy of
+   * linesInsideMultilineConstruct (its doc comment even says it's "same
+   * helper shape as sandbox-builder.ts's and multi-file-parser.ts's"
+   * version, which had this exact apostrophe/newline-boundary bug, fixed
+   * separately for those two files but not this one). An apostrophe in
+   * JSX text (a contraction) earlier in the generated code opens a fake
+   * single-quoted string; with no newline-boundary guard, the scanner
+   * hunts for the next `'` anywhere later in the file and jumps `i`
+   * straight past the real backtick template literal that hides the decoy
+   * marker below, so the span inside the backtick is never added to
+   * `hidden` and the decoy is wrongly read as a real marker.
+   */
+  it('does NOT treat a decoy marker inside a template literal as a real marker, even after an earlier JSX-text apostrophe', () => {
+    const hasRealFileMarker = loadHasRealFileMarker()
+    const decoy = [
+      "function Hero() { return <p>We're building something great.</p> }",
+      'const docs = `',
+      '// --- FILE: path/to/file.tsx ---',
+      '`',
+      'export default Hero',
     ].join('\n')
     expect(hasRealFileMarker(decoy)).toBe(false)
   })

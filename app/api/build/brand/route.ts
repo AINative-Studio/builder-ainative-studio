@@ -141,7 +141,11 @@ export async function POST(request: NextRequest) {
   // decent slug from the first meaningful noun, never the raw idea. Still
   // check it for a collision; if even THAT'S taken, this is the one place a
   // suffix is acceptable, since we've exhausted every real-naming attempt.
-  const fallback = idea.replace(/^(i want to build|build|create|make|a|an|the)\s+/gi, '').split(/\s+/)[0] || 'app'
+  // Strip a leading bracketed/parenthesized tag (e.g. "[LOOP-TEST 2026-11-15] ")
+  // first — otherwise split(/\s+/)[0] below grabs the tag's own first token
+  // ("[LOOP-TEST") as the "name", dropping everything meaningful after it.
+  const withoutTag = idea.replace(/^[[(][^\])]*[\])]\s*/, '')
+  const fallback = withoutTag.replace(/^(i want to build|build|create|make|a|an|the)\s+/gi, '').split(/\s+/)[0] || 'app'
   const name = fallback.charAt(0).toUpperCase() + fallback.slice(1)
   let slug = toSlug(name)
   if (await slugTaken(slug)) {

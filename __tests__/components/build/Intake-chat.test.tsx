@@ -34,7 +34,7 @@ afterEach(() => {
 describe('Intake — chat presentation (#E3.1)', () => {
   it("Cody's first message opens with the backlog-specified line", () => {
     render(React.createElement(Intake))
-    expect(host.textContent).toContain("Tell me your idea in a sentence or two. I'll ask 3 quick questions, then get to work")
+    expect(host.textContent).toContain("Tell me your idea in a sentence or two.")
   })
 
   // #1258: the original line implied a fully hands-off pipeline, but real
@@ -45,6 +45,16 @@ describe('Intake — chat presentation (#E3.1)', () => {
   it('sets honest expectations that Cody will check in a few times during generation', () => {
     render(React.createElement(Intake))
     expect(host.textContent).toContain("I'll check in with you a few times along the way")
+  })
+
+  // #2068: the old copy said "I'll ask 3 quick questions" — accurate only for
+  // the idea-specific kickoff questions (APP_KICKOFF_QUESTIONS etc., 3-4
+  // questions), but KickoffQuestions.tsx always chains on 5 more founder-type
+  // questions (lib/build/founder-type.ts) straight after with no warning,
+  // making the real total 7+. Found via live E2E testing on production.
+  it('does not promise a specific, inaccurate question count (#2068)', () => {
+    render(React.createElement(Intake))
+    expect(host.textContent).not.toContain('3 quick questions')
   })
 
   it('still renders a real input the founder can type into and submit', () => {

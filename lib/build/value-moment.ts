@@ -158,8 +158,15 @@ export function creditsBadgeLabel(status: {
   used?: number
   limit?: number
   unlimited?: boolean
+  tierVerified?: boolean
 } | null): string {
   if (!status || status.unlimited) return ''
+  // #2097: a plan lookup that failed to verify (core outage/timeout) renders
+  // the tier/limit as a FALLBACK, not a confirmed read — showing a confident
+  // "0 left" in that state is exactly how a real Enterprise founder saw their
+  // own account look permanently locked out with no indication anything had
+  // gone wrong upstream. Say so plainly instead of a number that may be a guess.
+  if (status.tierVerified === false) return 'plan unverified'
   const used = status.used
   const limit = status.limit
   if (typeof used !== 'number' || typeof limit !== 'number' || limit <= 0) return ''

@@ -213,6 +213,11 @@ function maskPreservingLength(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       const stop = end === -1 ? code.length : end + 1
       out += ' '.repeat(stop - i)
       i = stop
@@ -691,6 +696,11 @@ function maskTemplatesAndComments(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       const stop = end === -1 ? code.length : end + 1
       out += code.slice(i, stop)
       i = stop
@@ -1058,6 +1068,11 @@ function maskStringsAndCommentsPreservingLines(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       const realEnd = end === -1 ? code.length - 1 : end
       out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
@@ -1204,15 +1219,26 @@ function stubUnresolvableBareImports(code: string): string {
   let fixed = code
 
   // Side-effect-only bare imports, e.g. `import 'some-polyfill'`.
+  let masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /^([ \t]*)import\s+['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
-    (match, _indent: string, pkg: string) => (isAllowlistedPackage(pkg) ? match : '')
+    (match: string, _indent: string, pkg: string, offset: number) => {
+      // A decoy import-shaped line sitting inside a template literal or
+      // comment (e.g. example code a docs/SDK landing page renders
+      // verbatim) must not be stubbed as if it were a real top-level
+      // import — same masked-span guard every other stubber in this file
+      // uses before rewriting a match (#2064).
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return isAllowlistedPackage(pkg) ? match : ''
+    }
   )
 
   // Imports with bindings: default, namespace, named, or a mix.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /^([ \t]*)import\s+(type\s+)?([^'";]*?)\s*from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
-    (match, indent: string, typeOnly: string | undefined, clause: string, pkg: string) => {
+    (match: string, indent: string, typeOnly: string | undefined, clause: string, pkg: string, offset: number) => {
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
       if (isAllowlistedPackage(pkg)) return match
       // `import type {...}` bindings have no runtime value — safe to drop entirely.
       if (typeOnly) return ''
@@ -1244,26 +1270,38 @@ function stubUnresolvableReExports(code: string): string {
   // from this file alone, so there's nothing to stub; dropping it entirely
   // is the only safe move (same precedent as dropping a side-effect-only
   // import above).
+  let masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /^([ \t]*)export\s+\*\s+from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
-    (match, _indent: string, pkg: string) => (isAllowlistedPackage(pkg) ? match : '')
+    (match: string, _indent: string, pkg: string, offset: number) => {
+      // Same masked-span guard as stubUnresolvableBareImports above — an
+      // export-shaped decoy line inside a template literal or comment must
+      // not be rewritten as real code (#2064).
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return isAllowlistedPackage(pkg) ? match : ''
+    }
   )
 
   // `export * as Name from 'pkg'` — a namespace re-export; unlike the bare
   // `export *` above, Name IS a real local binding, so it gets the same
   // stub a namespace import would.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /^([ \t]*)export\s+\*\s+as\s+([A-Za-z_$][\w$]*)\s+from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
-    (match, indent: string, name: string, pkg: string) =>
-      isAllowlistedPackage(pkg)
+    (match: string, indent: string, name: string, pkg: string, offset: number) => {
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
+      return isAllowlistedPackage(pkg)
         ? match
         : `${indent}export const ${name} = ${genericInertStub(name, isUsedAsJsxTag(code, name))};\n`
+    }
   )
 
   // `export { a, b as c } from 'pkg'` / `export type { ... } from 'pkg'`.
+  masked = maskPreservingOffsets(fixed)
   fixed = fixed.replace(
     /^([ \t]*)export\s+(type\s+)?\{([^}]*)\}\s*from\s*['"]([^'".][^'"]*)['"]\s*;?[ \t]*$/gm,
-    (match, indent: string, typeOnly: string | undefined, names: string, pkg: string) => {
+    (match: string, indent: string, typeOnly: string | undefined, names: string, pkg: string, offset: number) => {
+      if (masked.slice(offset, offset + match.length).trim() === '') return match
       if (isAllowlistedPackage(pkg)) return match
       // `export type { ... } from 'pkg'` has no runtime value — safe to drop.
       if (typeOnly) return ''
@@ -1355,6 +1393,26 @@ function findBacktickEnd(code: string, openIdx: number): number {
 }
 
 /**
+ * #2034/#2053/#2057-class guard: true when the `'`/`"` at `idx` can be ruled
+ * out as a real string-literal opener — either a JSX-text contraction
+ * ("we're") immediately after a word character, or one whose only
+ * candidate close (per the already-computed `end`) is past a line break (a
+ * real single/double-quoted JS string can never contain a raw newline). See
+ * lib/build/bracket-scanner.ts's resolveStringOpen for the canonical
+ * write-up of both cases. Shared by every mask* helper below so a decoy/
+ * comment-hidden name or import this file's rewrites rely on masking out
+ * doesn't silently resurface — or real code after a contraction doesn't
+ * silently vanish — the same way #2034/#2053/#2057 did elsewhere.
+ */
+function isFakeStringOpen(code: string, idx: number, quote: string, end: number): boolean {
+  const prev = code[idx - 1]
+  if (quote === "'" && prev !== undefined && /[A-Za-z0-9_$]/.test(prev)) return true
+  const nl = code.indexOf('\n', idx)
+  if (end === -1) return nl !== -1
+  return nl !== -1 && nl < end
+}
+
+/**
  * Blanks out every string literal, template literal, and `//`/`/* *\/`
  * comment in `code` (replacing each with a single space) so a structural
  * scan like isUsedAsJsxTag() below only ever matches a REAL JSX tag.
@@ -1382,6 +1440,11 @@ function maskStringsAndComments(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       i = end === -1 ? code.length : end + 1
       out += ' '
       continue
@@ -1432,6 +1495,11 @@ function maskPreservingOffsets(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       const realEnd = end === -1 ? code.length - 1 : end
       out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
