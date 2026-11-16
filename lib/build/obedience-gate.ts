@@ -34,7 +34,7 @@
  * (e.g. a counter).
  */
 import { scorePrimitives, RUNTIME_PROXY_PATH_SUBSTRINGS, getRuntimeProxyInstruction, type CompanyRole } from './primitive-catalog'
-import { findMatchingBracket, findMatchingParen, findMatchingBrace, findStringEnd, findBacktickEnd, maskComments } from './bracket-scanner'
+import { findMatchingBracket, findMatchingParen, findMatchingBrace, findBacktickEnd, maskComments, resolveStringOpen } from './bracket-scanner'
 
 /** Does the code call the ZeroDB proxy for real persistence? */
 export function usesDataLayer(code: string): boolean {
@@ -161,9 +161,15 @@ function findTagClose(code: string, attrsStart: number): number {
     const ch = code[i]
     if (ch === '\\') { i += 2; continue }
     if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      if (end === -1) return -1
-      i = end + 1
+      // #2034/#2053-class guard: a quote that's actually a contraction
+      // apostrophe, or whose only candidate close is on a LATER line, was
+      // never a real string open — treat it as an ordinary character
+      // instead of swallowing everything up to a bogus "close" (which can
+      // hide the tag's real `>` behind depth it never actually had).
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { i++; continue }
+      if (resolved.end === -1) return -1
+      i = resolved.end + 1
       continue
     }
     if (ch === '`') {
@@ -607,8 +613,10 @@ export function hasDynamicTailwindClassGap(code: string): boolean {
     while (i < closeBraceIdx) {
       const ch = masked[i]
       if (ch === '"' || ch === "'") {
-        const end = findStringEnd(masked, i, ch)
-        i = (end === -1 ? masked.length : end) + 1
+        // #2034/#2053-class guard — see findTagClose above.
+        const resolved = resolveStringOpen(masked, i, ch)
+        if (resolved === null) { i++; continue }
+        i = (resolved.end === -1 ? masked.length : resolved.end) + 1
         continue
       }
       if (ch === '`') {

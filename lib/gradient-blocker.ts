@@ -3,7 +3,7 @@
  * Removes Tailwind gradient classes from generated code
  */
 
-import { findStringEnd, findBacktickEnd, findMatchingBrace } from './build/bracket-scanner'
+import { findBacktickEnd, findMatchingBrace, resolveStringOpen } from './build/bracket-scanner'
 
 /**
  * Tailwind gradient patterns to block
@@ -46,13 +46,19 @@ function forEachLiteralContent(
       continue
     }
     if (ch === '"' || ch === "'") {
-      const closeIdx = findStringEnd(code, i, ch)
-      if (closeIdx === -1 || closeIdx > end) {
+      // #2034/#2053-class guard: a contraction apostrophe, or a quote whose
+      // only candidate close sits on a LATER line, was never a real string
+      // open — treating it as one would `visit()` a bogus span (e.g. real
+      // page copy between a decade apostrophe and some unrelated later
+      // string's own quote), running the gradient regexes over text that
+      // was never a className value at all.
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null || resolved.end === -1 || resolved.end > end) {
         i++
         continue
       }
-      visit(i + 1, closeIdx)
-      i = closeIdx + 1
+      visit(i + 1, resolved.end)
+      i = resolved.end + 1
       continue
     }
     if (ch === '`') {
@@ -97,7 +103,9 @@ function classNameValueSpans(code: string): Array<[number, number]> {
     const i = m.index + m[0].length
     const ch = code[i]
     if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
+      // #2034/#2053-class guard — see forEachLiteralContent above.
+      const resolved = resolveStringOpen(code, i, ch)
+      const end = resolved === null ? -1 : resolved.end
       if (end !== -1) spans.push([i + 1, end])
       attrRe.lastIndex = end === -1 ? i + 1 : end + 1
       continue
