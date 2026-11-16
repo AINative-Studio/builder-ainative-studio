@@ -136,6 +136,20 @@ describe('creditsBadgeLabel — compact "N left" for the account chip/menu', () 
     expect(creditsBadgeLabel({ used: 1 })).toBe('')
     expect(creditsBadgeLabel({ used: 1, limit: 0 })).toBe('')
   })
+
+  // #2097: a real Enterprise account's plan lookup silently failed and this
+  // badge confidently showed "0 left" as if it were a confirmed read — the
+  // account owner had no way to tell a core outage apart from a genuine
+  // entitlement limit. tierVerified:false must override the numeric label.
+  it('shows "plan unverified" instead of a numeric count when the tier lookup was not confirmed', () => {
+    expect(creditsBadgeLabel({ used: 3, limit: 3, unlimited: false, tierVerified: false })).toBe('plan unverified')
+    expect(creditsBadgeLabel({ used: 0, limit: 3, unlimited: false, tierVerified: false })).toBe('plan unverified')
+  })
+
+  it('shows the real numeric count when the tier lookup was confirmed (or verification status is unknown, e.g. unlimited)', () => {
+    expect(creditsBadgeLabel({ used: 1, limit: 3, unlimited: false, tierVerified: true })).toBe('2 left')
+    expect(creditsBadgeLabel({ used: 1, limit: 3, unlimited: false })).toBe('2 left')
+  })
 })
 
 describe('creditsMeterFillPercent — honest meter fill, not a fixed placeholder', () => {

@@ -207,15 +207,22 @@ export function KickoffQuestions() {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ slug: state.appSub, idea: state.idea, track: state.track, role: state.role || undefined }),
       })
+      const d = await res.json().catch(() => null)
       if (res.status === 402) {
-        trackEvent('build_limit_reached', 'funnel', state.track, undefined)
+        // #2097: track whether this block was on a CONFIRMED plan read or a
+        // fallback after an unresolved core lookup — distinguishing a real
+        // entitlement gate from a possible false block for a paid founder.
+        trackEvent(
+          'build_limit_reached', 'funnel',
+          d?.tierVerified === false ? `${state.track}_unverified_tier` : state.track,
+          undefined,
+        )
         if (decideLimitAction({ limitReached: true, sawPreview: state.sawPreview }) === 'pricing') {
           dispatch({ type: 'GOTO_SCREEN', screen: 'pricing' })
           setProceeding(false)
           return
         }
       }
-      const d = await res.json().catch(() => null)
       if (typeof d?.ecosystem?.message === 'string') runwayNote = d.ecosystem.message
     } catch { /* fail open — proceed with the build */ }
 

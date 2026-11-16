@@ -123,6 +123,31 @@ describe('AccountMenu — real remaining-build indicator (#1258)', () => {
     expect(host.querySelector('[data-testid="account-menu-badge-credits"]')).toBeNull()
   })
 
+  // #2097: a real Enterprise account's plan lookup silently failed server-side
+  // and this badge confidently rendered "0 left" — the founder had no signal
+  // that anything was wrong. When the credits endpoint reports
+  // tierVerified:false, the badge must say so instead of showing a numeric
+  // count that may be a fallback, not a confirmed read.
+  it('shows "plan unverified" instead of a numeric count when the server could not confirm the tier', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ used: 0, limit: 3, unlimited: false, tierVerified: false }),
+    }))
+    const { AccountMenu } = await import('@/components/build/AccountMenu')
+    render(
+      React.createElement(AccountMenu, {
+        session: { user: { name: 'Toby', email: 'toby@ainative.studio' } } as any,
+        open: true,
+        onOpenChange: vi.fn(),
+        onScreen: vi.fn(),
+      }),
+    )
+    await flush()
+    const badge = host.querySelector('[data-testid="account-menu-badge-credits"]')
+    expect(badge?.textContent).toBe('plan unverified')
+    expect(badge?.textContent).not.toContain('0 left')
+  })
+
   it('never fetches credits for a guest session — no owner identity to meter', async () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({}) })
     vi.stubGlobal('fetch', fetchMock)
