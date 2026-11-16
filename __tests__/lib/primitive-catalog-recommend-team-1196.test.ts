@@ -84,4 +84,38 @@ describe('recommendTeam — coach team recommendation (#1196)', () => {
     // at least one of the non-ZeroCommerce companions should ride along.
     expect(names.some((n) => ['ZeroPipeline', 'ZeroInvoice', 'ZeroCommerce'].includes(n))).toBe(true)
   })
+
+  // #2091: found via live E2E testing — the coach's "starting team" suggestion
+  // was semantically unrelated to the idea for two real, unrelated ideas,
+  // because 'customers' and 'booking' alone were enough to trigger
+  // ZeroPipeline (sales CRM) and Intent-Casting Marketplace (two-sided
+  // AI-agent marketplace) respectively, regardless of actual context. The
+  // real composition pipeline (selectPrimitives downstream) self-corrected
+  // to real matching primitives in both cases — this was purely a confusing/
+  // alarming kickoff-screen suggestion, never a build-breaking bug.
+  describe('#2091 — generic single-word triggers no longer cause unrelated suggestions', () => {
+    it('does not recommend ZeroPipeline for an idea that only mentions "customers" with no sales/CRM context', () => {
+      const idea = 'A simple customer feedback board for a small cafe: customers submit feedback with a star rating, and the owner can view all feedback in a dashboard sorted by rating.'
+      const team = recommendTeam(idea, 'app')
+      expect(team.some((m) => m.primitive === 'ZeroPipeline')).toBe(false)
+    })
+
+    it('does not recommend Intent-Casting Marketplace for a plain appointment-booking idea with no marketplace/matching context', () => {
+      const idea = 'A simple appointment booking widget for a solo hairdresser: clients pick an available time slot and book it, and the stylist can see all upcoming bookings in one place.'
+      const team = recommendTeam(idea, 'app')
+      expect(team.some((m) => m.primitive === 'Intent-Casting Marketplace')).toBe(false)
+    })
+
+    it('still recommends ZeroPipeline for an idea with genuine sales/CRM/pipeline language (regression guard)', () => {
+      const idea = 'A CRM to track sales leads and deals for my outbound team'
+      const team = recommendTeam(idea, 'company')
+      expect(team.some((m) => m.primitive === 'ZeroPipeline')).toBe(true)
+    })
+
+    it('still recommends Intent-Casting Marketplace for a genuine two-sided marketplace/matching idea (regression guard)', () => {
+      const idea = 'A two-sided marketplace where agents broadcast buyer intent and businesses respond with matching services'
+      const team = recommendTeam(idea, 'company')
+      expect(team.some((m) => m.primitive === 'Intent-Casting Marketplace')).toBe(true)
+    })
+  })
 })
