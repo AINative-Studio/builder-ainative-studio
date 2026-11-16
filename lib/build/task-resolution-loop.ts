@@ -158,6 +158,16 @@ export function maxTasksForTier(tier: string | null | undefined): number {
 }
 
 /**
+ * #2105 — how much wall-clock time a single resolveTask() attempt is allowed
+ * before this loop gives up waiting on it and defers the task back to `todo`
+ * instead of letting the platform's own maxDuration kill discover it a day
+ * later. Must stay comfortably under the nightly-loop route's shared 300s
+ * maxDuration so there's always room left to serialize the response — see
+ * runTaskResolutions()'s `deadline` param doc below for the full mechanism.
+ */
+export const PER_TASK_TIMEOUT_MS = 90 * 1000
+
+/**
  * Resolve up to this company's plan-tier task ceiling (see maxTasksForTier)
  * `todo` tasks for a company scope, oldest first (matching a simple FIFO —
  * no priority model exists yet). `planTier` is the company's REAL,
@@ -171,6 +181,26 @@ export function maxTasksForTier(tier: string | null | undefined): number {
  * lib/ainative/active-plan.ts's resolveActivePlan(). Omitted or
  * unresolvable, this degrades to the free-tier limit. Returns how many were
  * attempted + how many completed successfully. Never throws.
+ *
+ * #2105 — `deadline` (ms, `Date.now()`-comparable) is the route's OWN shared
+ * maxDuration deadline, threaded all the way down here. The route's doc
+ * comment already claimed "one company's backlog must never starve the
+ * shared route's maxDuration budget," but nothing enforced it: a bare
+ * `await resolveTask(...)` with no bound meant a single slow company (a real
+ * LLM-implement call plus up to a 120s coverage run) could run past the
+ * point where the platform hard-kills the whole function — the task stays
+ * `in_progress` forever, discovered only a day later by isStaleInProgress's
+ * reaper, which is exactly the pattern confirmed live on `wrench` (19
+ * consecutive nightly failures, see #2089/#2105). Each attempt now: (a)
+ * skips entirely if there isn't at least PER_TASK_TIMEOUT_MS left before the
+ * deadline (task stays `todo`, tried again next run — never marked
+ * in_progress for nothing), and (b) races the real resolveTask() call
+ * against PER_TASK_TIMEOUT_MS, explicitly deferring (not failing) the task
+ * on a timeout so the NEXT run retries it immediately rather than waiting
+ * for a 30-minute-stale reap that may not even fire before another
+ * maxDuration kill. `deadline` is optional and defaults to "no deadline" so
+ * existing callers/tests that don't pass one keep today's unbounded
+ * behavior.
  *
  * #1232 — `completed` means coverage-verified, decided BEFORE resolveTask()
  * attempts its own best-effort auto-merge + redeploy (#468); a merge/deploy
@@ -203,8 +233,11 @@ export async function runTaskResolutions(
   scopeKey: string,
   slug: string,
   planTier?: string | null,
-): Promise<{ attempted: number; completed: number; merged: number; redeployed: number; reaped: number; completedNoCoverage: number }> {
-  if (!scopeKey || !slug) return { attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0, completedNoCoverage: 0 }
+  deadline?: number,
+): Promise<{ attempted: number; completed: number; merged: number; redeployed: number; reaped: number; completedNoCoverage: number; deferred: number }> {
+  if (!scopeKey || !slug) {
+    return { attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0, completedNoCoverage: 0, deferred: 0 }
+  }
 
   const limit = maxTasksForTier(planTier)
   let attempted = 0
@@ -213,6 +246,7 @@ export async function runTaskResolutions(
   let redeployed = 0
   let reaped = 0
   let completedNoCoverage = 0
+  let deferred = 0
   try {
     const tasks = await listTasks(scopeKey)
 
@@ -276,9 +310,21 @@ export async function runTaskResolutions(
       .slice(0, limit)
 
     for (const task of due) {
+      // #2105 — if there isn't enough time left before the route's own
+      // maxDuration deadline to even attempt this task safely, stop here
+      // rather than starting one more resolveTask() that the platform would
+      // kill mid-flight. The task is simply never touched this run (stays
+      // `todo`, no in_progress write), so next run picks it up fresh with no
+      // stale-reap detour needed.
+      if (deadline != null && Date.now() + PER_TASK_TIMEOUT_MS > deadline) break
+
       attempted += 1
       try {
-        const result = await resolveTask(scopeKey, task, slug)
+        const result = await raceTaskResolution(scopeKey, task, slug)
+        if (result === 'timed-out') {
+          deferred += 1
+          continue
+        }
         if (result.ok) completed += 1
         if (result.ok && result.testable === false) completedNoCoverage += 1
         if (result.merged) merged += 1
@@ -291,5 +337,48 @@ export async function runTaskResolutions(
   } catch {
     /* listing failure is non-fatal */
   }
-  return { attempted, completed, merged, redeployed, reaped, completedNoCoverage }
+  return { attempted, completed, merged, redeployed, reaped, completedNoCoverage, deferred }
+}
+
+/**
+ * #2105 — bounds a single resolveTask() attempt to PER_TASK_TIMEOUT_MS so a
+ * genuinely slow resolution (LLM-implement + up to a 120s coverage run) can
+ * never be the thing that runs past the nightly-loop route's own maxDuration
+ * and gets hard-killed mid-flight. On a timeout, the task is deliberately
+ * put back to `todo` with an honest reason — the SAME non-terminal recovery
+ * isStaleInProgress's reaper already uses for a crash discovered a day
+ * later, just applied immediately instead of waiting a day to find out.
+ * resolveTask() itself keeps running in the background after the race loses
+ * (Promise.race cannot cancel it) — if it finishes and writes a terminal
+ * stage after this function already reset the task to `todo`, that write
+ * simply gets overwritten by the next run's attempt, which is the same
+ * "last write wins, never fabricates success" behavior this store already
+ * has for every other race in this pipeline.
+ */
+async function raceTaskResolution(
+  scopeKey: string,
+  task: BuildTask,
+  slug: string,
+): Promise<Awaited<ReturnType<typeof resolveTask>> | 'timed-out'> {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<'timed-out'>((resolve) => {
+    timer = setTimeout(() => resolve('timed-out'), PER_TASK_TIMEOUT_MS)
+  })
+  const result = await Promise.race([resolveTask(scopeKey, task, slug), timeout]).finally(() => {
+    clearTimeout(timer!)
+  })
+  if (result === 'timed-out') {
+    // resolveTask() already wrote `in_progress` before starting its real
+    // work (see its own doc comment) and keeps running in the background —
+    // Promise.race cannot cancel it. Reset the row to `todo` NOW rather than
+    // leaving it `in_progress` for isStaleInProgress's 30-minute reaper to
+    // discover possibly a full day later. Best-effort: if this write itself
+    // fails, the row stays `in_progress` and the existing reaper is still
+    // the fallback — never worse than before this fix.
+    await updateTask(scopeKey, task.id, {
+      stage: 'todo',
+      output: `Deferred — resolution did not finish within ${PER_TASK_TIMEOUT_MS / 1000}s, this run's time budget. Will retry next run.`,
+    }).catch(() => {})
+  }
+  return result
 }

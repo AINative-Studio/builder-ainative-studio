@@ -339,6 +339,14 @@ export interface NightlyRunHealth {
    * never mistaken for an explicit 0.
    */
   tasksCompletedNoCoverage?: number
+  /**
+   * #2105 — attempted but ran out of this run's shared maxDuration budget
+   * before resolveTask() finished; returned to `todo` immediately for next
+   * run's retry rather than left `in_progress` for a day-later stale-reap to
+   * discover as a crash. Optional for the same reason as the siblings
+   * above — an older/pre-this-field row is never mistaken for an explicit 0.
+   */
+  tasksDeferred?: number
   stalledCompanies: number
   elapsedMs: number
   /**

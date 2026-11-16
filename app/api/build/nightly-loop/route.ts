@@ -116,6 +116,8 @@ interface CompanyOutcome {
   tasksReaped: number
   /** #1914 — of tasksCompleted, how many had no test suite to verify against; see runTaskResolutions(). */
   tasksCompletedNoCoverage: number
+  /** #2105 — attempted but ran out of this run's shared time budget before finishing; see runTaskResolutions()'s `deadline` param. Returned to `todo` for an immediate retry next run, not left `in_progress` for a day-later reap. */
+  tasksDeferred: number
   commsSent: boolean
   stalled: boolean
 }
@@ -194,7 +196,7 @@ export async function GET(request: NextRequest) {
     const outcomes = await mapWithConcurrency(
       batch,
       NIGHTLY_COMPANY_CONCURRENCY,
-      (e) => runForCompany(e, resolvePlanTier),
+      (e) => runForCompany(e, resolvePlanTier, deadline),
       { deadline },
     )
 
@@ -212,6 +214,7 @@ export async function GET(request: NextRequest) {
     const tasksRedeployed = completed.reduce((n, o) => n + (o.value?.tasksRedeployed || 0), 0)
     const tasksReaped = completed.reduce((n, o) => n + (o.value?.tasksReaped || 0), 0)
     const tasksCompletedNoCoverage = completed.reduce((n, o) => n + (o.value?.tasksCompletedNoCoverage || 0), 0)
+    const tasksDeferred = completed.reduce((n, o) => n + (o.value?.tasksDeferred || 0), 0)
     const commsSent = completed.filter((o) => o.value?.commsSent).length
     const stalledCompanies = completed.filter((o) => o.value?.stalled).length
 
@@ -226,7 +229,7 @@ export async function GET(request: NextRequest) {
     logger.info('Nightly autonomous loop complete', {
       dispatched, total: results.length, processed: completed.length, deferred,
       failedCompanies, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted,
-      tasksMerged, tasksRedeployed, tasksReaped, tasksCompletedNoCoverage,
+      tasksMerged, tasksRedeployed, tasksReaped, tasksCompletedNoCoverage, tasksDeferred,
       commsSent, stalledCompanies, elapsedMs, budgetExhausted,
     })
     if (stalledCompanies > 0) {
@@ -261,6 +264,7 @@ export async function GET(request: NextRequest) {
       tasksRedeployed,
       tasksReaped,
       tasksCompletedNoCoverage,
+      tasksDeferred,
       stalledCompanies,
       elapsedMs,
     })
@@ -284,6 +288,7 @@ export async function GET(request: NextRequest) {
       tasksRedeployed,
       tasksReaped,
       tasksCompletedNoCoverage,
+      tasksDeferred,
       commsSent,
       stalledCompanies,
       results,
@@ -315,6 +320,7 @@ export async function GET(request: NextRequest) {
       tasksRedeployed: 0,
       tasksReaped: 0,
       tasksCompletedNoCoverage: 0,
+      tasksDeferred: 0,
       stalledCompanies: 0,
       elapsedMs: Date.now() - startedAt,
       crashed: true,
@@ -336,11 +342,13 @@ export async function GET(request: NextRequest) {
 async function runForCompany(
   e: LoopEnrollment,
   resolvePlanTier: (ownerKey: string | undefined) => Promise<string | null>,
+  deadline?: number,
 ): Promise<CompanyOutcome> {
   const outcome: CompanyOutcome = {
     result: { companyId: e.companyId, briefing: null, taskId: null, status: 'error', detail: 'not run' },
     reportWritten: false, mediaGenerated: 0, tasksAttempted: 0, tasksCompleted: 0,
     tasksMerged: 0, tasksRedeployed: 0, tasksReaped: 0, tasksCompletedNoCoverage: 0,
+    tasksDeferred: 0,
     commsSent: false, stalled: false,
   }
 
@@ -637,13 +645,14 @@ async function runForCompany(
     try {
       const scopeKey = chatScopeKey(e.ownerKey, e.companyId)
       const planTier = await resolvePlanTier(e.ownerKey).catch(() => null)
-      const t = await runTaskResolutions(scopeKey, e.companyId, planTier)
+      const t = await runTaskResolutions(scopeKey, e.companyId, planTier, deadline)
       outcome.tasksAttempted += t.attempted
       outcome.tasksCompleted += t.completed
       outcome.tasksMerged += t.merged || 0
       outcome.tasksRedeployed += t.redeployed || 0
       outcome.tasksReaped += t.reaped || 0
       outcome.tasksCompletedNoCoverage += t.completedNoCoverage || 0
+      outcome.tasksDeferred += t.deferred || 0
     } catch (err) {
       logger.warn('Task resolution run failed', { companyId: e.companyId, err: (err as Error)?.message })
     }
