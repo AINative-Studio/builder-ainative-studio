@@ -142,7 +142,7 @@ export function AccountMenu({ session, open, onOpenChange, onScreen }: AccountMe
   // current count instead of nothing (today) or a fake hardcoded fill
   // (the old always-38% bar). Best-effort: a failed/slow fetch just leaves
   // the meter at 0% and the badge unset — never blocks the menu from working.
-  const [credits, setCredits] = useState<{ used: number; limit: number; unlimited: boolean } | null>(null)
+  const [credits, setCredits] = useState<{ used: number; limit: number; unlimited: boolean; tierVerified?: boolean } | null>(null)
   useEffect(() => {
     if (isGuest) { setCredits(null); return }
     let cancelled = false
@@ -150,7 +150,10 @@ export function AccountMenu({ session, open, onOpenChange, onScreen }: AccountMe
       .then((r) => (r.ok ? r.json() : null))
       .then((d) => {
         if (cancelled || !d || typeof d.used !== 'number') return
-        setCredits({ used: d.used, limit: d.limit, unlimited: !!d.unlimited })
+        // #2097: tierVerified:false means the limit/used numbers above are a
+        // fallback, not a confirmed plan read — pass it through so the badge
+        // can say so instead of showing a confident-looking "0 left".
+        setCredits({ used: d.used, limit: d.limit, unlimited: !!d.unlimited, tierVerified: d.tierVerified })
       })
       .catch(() => {})
     return () => { cancelled = true }

@@ -216,6 +216,95 @@ describe('POST /api/build/credits (#324 GR-15)', () => {
     expect(h.getBuildCreditStatus).toHaveBeenCalledWith('founder@example.com', 'hobbyist')
   })
 
+  // #2097: a real Enterprise account was silently treated as hobbyist because
+  // this route discarded getPlanStatus()'s `verified` flag and never logged
+  // the failure — indistinguishable from a genuinely free account. These
+  // tests lock in the fix: `verified` is read, surfaced to the client as
+  // `tierVerified`, and every fallback path logs loudly (same pattern as
+  // lib/ainative/resolve-plan.ts's `unverified()` and app/api/build/provision/
+  // route.ts's live-tier-lookup handling).
+  describe('#2097 — tier verification is surfaced, never silently discarded', () => {
+    it('GET surfaces tierVerified:true on a confirmed plan read', async () => {
+      h.getPlanStatus.mockResolvedValue({ tier: 'enterprise', verified: true })
+      h.getBuildCreditStatus.mockResolvedValue(status({ unlimited: true }))
+      const res = await GET()
+      const body = await res.json()
+      expect(body.tier).toBe('enterprise')
+      expect(body.tierVerified).toBe(true)
+    })
+
+    it('GET surfaces tierVerified:false when getPlanStatus resolves unverified (core outage, not a real read)', async () => {
+      h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: false })
+      h.getBuildCreditStatus.mockResolvedValue(status())
+      const res = await GET()
+      const body = await res.json()
+      expect(body.tier).toBe('hobbyist')
+      expect(body.tierVerified).toBe(false)
+    })
+
+    it('GET surfaces tierVerified:false when getPlanStatus throws', async () => {
+      h.getPlanStatus.mockRejectedValue(new Error('core down'))
+      h.getBuildCreditStatus.mockResolvedValue(status())
+      const res = await GET()
+      const body = await res.json()
+      expect(body.tierVerified).toBe(false)
+    })
+
+    it('logs loudly (not silently) when the plan lookup resolves unverified', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: false })
+      h.getBuildCreditStatus.mockResolvedValue(status())
+      await GET()
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('UNVERIFIED'))
+      errSpy.mockRestore()
+    })
+
+    it('logs loudly (not silently) when the plan lookup throws', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      h.getPlanStatus.mockRejectedValue(new Error('core down'))
+      h.getBuildCreditStatus.mockResolvedValue(status())
+      await GET()
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('core down'))
+      errSpy.mockRestore()
+    })
+
+    it('a confirmed, verified paid tier is never downgraded', async () => {
+      h.getPlanStatus.mockResolvedValue({ tier: 'enterprise', verified: true })
+      h.getBuildCreditStatus.mockResolvedValue(status({ unlimited: true }))
+      await post({ slug: 'x', idea: PLAIN_IDEA })
+      expect(h.getBuildCreditStatus).toHaveBeenCalledWith('founder@example.com', 'enterprise')
+    })
+
+    it('POST 402 response surfaces tierVerified:false and logs an explicit false-block warning', async () => {
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: false })
+      h.getBuildCreditStatus.mockResolvedValue(status({ used: 3, limit: 3, remaining: 0, allowed: false }))
+      const res = await post({ slug: 'x', idea: PLAIN_IDEA })
+      expect(res.status).toBe(402)
+      const body = await res.json()
+      expect(body.tierVerified).toBe(false)
+      expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('UNVERIFIED tier'))
+      errSpy.mockRestore()
+    })
+
+    it('POST 402 response surfaces tierVerified:true when genuinely confirmed at the limit', async () => {
+      h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: true })
+      h.getBuildCreditStatus.mockResolvedValue(status({ used: 3, limit: 3, remaining: 0, allowed: false }))
+      const res = await post({ slug: 'x', idea: PLAIN_IDEA })
+      expect(res.status).toBe(402)
+      const body = await res.json()
+      expect(body.tierVerified).toBe(true)
+    })
+
+    it('POST 200 success response also surfaces tierVerified', async () => {
+      h.getPlanStatus.mockResolvedValue({ tier: 'enterprise', verified: true })
+      h.getBuildCreditStatus.mockResolvedValue(status({ unlimited: true }))
+      const res = await post({ slug: 'x', idea: PLAIN_IDEA })
+      const body = await res.json()
+      expect(body.tierVerified).toBe(true)
+    })
+  })
+
   it('a malformed JSON body is tolerated (empty idea, build still recorded)', async () => {
     h.getBuildCreditStatus.mockResolvedValue(status())
     const res = await POST(new Request('http://localhost/api/build/credits', {
