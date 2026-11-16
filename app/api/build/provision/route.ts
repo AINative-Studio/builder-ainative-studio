@@ -48,6 +48,7 @@ import { NextRequest } from 'next/server'
 import { auth } from '@/app/(auth)/auth'
 import { getPlanStatus, isPaidTier } from '@/lib/ainative/plan'
 import { resolveAppVerified, setAppProvisioned, setAppOwner, isRegistryLookupUnverified } from '@/lib/build/app-registry'
+import { syncEnrollmentOwnerKey } from '@/lib/build/loop-enrollment'
 import { deployPersistent } from '@/lib/build/deploy'
 import {
   provisionInstantDb,
@@ -277,7 +278,15 @@ export async function POST(request: NextRequest) {
   // #253: stamp the signed-in founder as this company's owner so it appears in
   // their "my companies" index (best-effort; independent of paid/trial state).
   const ownerEmail = (session as any)?.user?.email as string | undefined
-  if (ownerEmail) setAppOwner(slug, ownerEmail).catch(() => {})
+  if (ownerEmail) {
+    setAppOwner(slug, ownerEmail).catch(() => {})
+    // #2089-adjacent: keep the nightly-loop enrollment's ownerKey in sync
+    // with the registry's real ownerEmail — see
+    // syncEnrollmentOwnerKey's doc comment (lib/build/loop-enrollment.ts)
+    // for why a stale ownerKey silently stops the nightly loop from ever
+    // reaching this company again.
+    syncEnrollmentOwnerKey(slug, ownerEmail).catch(() => {})
+  }
 
   // Provisioning policy (#207): PERMANENT (sk_) requires a PAID subscription; an
   // UNPAID user gets a REAL ~24h `tmp_` trial project (no hard paywall, #1579/#1602

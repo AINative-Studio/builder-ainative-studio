@@ -25,6 +25,7 @@ const h = vi.hoisted(() => ({
   provisionCompanyRepo: vi.fn(),
   enrollCompany: vi.fn(),
   isEnrolled: vi.fn(),
+  syncEnrollmentOwnerKey: vi.fn(),
   auth: vi.fn(),
 }))
 
@@ -38,7 +39,9 @@ vi.mock('@/lib/git/company-repo', () => ({
   provisionCompanyRepo: h.provisionCompanyRepo,
 }))
 vi.mock('@/lib/build/instant-db', () => ({ BUILDER_WORKSPACE_ID: 'builder-ws-default' }))
-vi.mock('@/lib/build/loop-enrollment', () => ({ enrollCompany: h.enrollCompany, isEnrolled: h.isEnrolled }))
+vi.mock('@/lib/build/loop-enrollment', () => ({
+  enrollCompany: h.enrollCompany, isEnrolled: h.isEnrolled, syncEnrollmentOwnerKey: h.syncEnrollmentOwnerKey,
+}))
 
 import { POST } from '@/app/api/build/register-app/route'
 
@@ -104,6 +107,28 @@ describe('POST /api/build/register-app — auto-enroll into the nightly loop', (
     await flush()
     expect(h.isEnrolled).toHaveBeenCalledWith('acme')
     expect(h.enrollCompany).not.toHaveBeenCalled()
+  })
+
+  // #2089-adjacent: a company already enrolled (e.g. first enrolled
+  // anonymously, with no ownerKey) must still have its enrollment's
+  // ownerKey corrected once a regen resolves a real owner — otherwise the
+  // nightly loop keeps gating every per-company step on a stale/missing
+  // ownerKey forever. See syncEnrollmentOwnerKey's doc comment.
+  it('syncs the enrollment ownerKey on a regeneration of an already-enrolled company with a known owner', async () => {
+    h.isEnrolled.mockResolvedValue(true)
+    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-2', name: 'Acme', track: 'app', ownerEmail: 'a@b.com' })
+    await POST(req({ slug: 'acme', chatId: 'chat-2', name: 'Acme', track: 'app' }))
+    await flush()
+    expect(h.syncEnrollmentOwnerKey).toHaveBeenCalledWith('acme', 'a@b.com')
+    expect(h.enrollCompany).not.toHaveBeenCalled()
+  })
+
+  it('does not call syncEnrollmentOwnerKey when an already-enrolled company still has no resolvable owner', async () => {
+    h.isEnrolled.mockResolvedValue(true)
+    h.resolveApp.mockResolvedValue({ slug: 'acme', chatId: 'chat-2', name: 'Acme', track: 'app' })
+    await POST(req({ slug: 'acme', chatId: 'chat-2', name: 'Acme', track: 'app' }))
+    await flush()
+    expect(h.syncEnrollmentOwnerKey).not.toHaveBeenCalled()
   })
 
   it('falls back to the slug as companyName when no name is given', async () => {

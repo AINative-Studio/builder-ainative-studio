@@ -96,6 +96,83 @@ export async function setLoopEnabled(
   }
 }
 
+/**
+ * Backfill a stale/missing `ownerKey` on an ALREADY-enrolled company (found
+ * during the #2089 wrench/tidemark nightly-loop-stall investigation).
+ *
+ * THE BUG: a company's FIRST enrollment often happens before it has a real
+ * owner — register-app auto-enrolls EVERY registration, including a wholly
+ * anonymous one, with `ownerKey: ownerEmail`, which is undefined for an
+ * anonymous build. Once that first row exists, `isEnrolled()` guards every
+ * later `enrollCompany()` call site (register-app on a later regen,
+ * subscription/verify at checkout, auto-mode's "Start Auto Mode") from ever
+ * re-enrolling the company — so even after `setAppOwner()` later stamps the
+ * founder's REAL email onto the app-registry row (checkout, provisioning),
+ * this append-only enrollment store's `ownerKey` is never updated to match.
+ *
+ * Why this matters: every per-company step the nightly loop actually does —
+ * media routines, backlog-task seeding, and (most importantly)
+ * `runTaskResolutions()` itself — is gated behind `if (e.ownerKey)` in
+ * app/api/build/nightly-loop/route.ts, and the `scopeKey` every one of
+ * those steps uses is `chatScopeKey(e.ownerKey, e.companyId)`. A company
+ * stuck with a stale/empty `ownerKey` either (a) never gets ANY of that
+ * work done again (the `if` guard is false), or (b) gets it done under the
+ * WRONG scope — invisible to a real backlog task filed against the
+ * company's correct, CURRENT ownerEmail scope (obedience-backfill.ts, the
+ * chat-ws obedience gate, etc.). Either way, a real, filed task can sit
+ * forever with zero chance of the nightly loop ever reaching it, with no
+ * error or signal anywhere.
+ *
+ * Fix: whenever a caller confirms a company's real ownerEmail
+ * (`setAppOwner`, or register-app's own session-derived stamp), also call
+ * this so the enrollment row's `ownerKey` catches up — appending a
+ * corrected row (same append-only convention as `setLoopEnabled`/
+ * `enrollCompany`) that carries the existing enrollment's other fields
+ * forward unchanged. A no-op (returns `true`, nothing written) when the
+ * company isn't enrolled yet (nothing to fix — the next real
+ * `enrollCompany()` call will carry the correct key from the start) or its
+ * latest row already carries this exact `ownerKey`.
+ */
+export async function syncEnrollmentOwnerKey(companyId: string, ownerKey: string): Promise<boolean> {
+  const key = (ownerKey || '').trim().toLowerCase()
+  if (!configured() || !companyId || !key) return false
+  try {
+    const rows = await fetchAllRows()
+    const own = rows
+      .map((r) => r.row_data)
+      .filter(
+        (rd): rd is LoopEnrollment & { kind?: string } =>
+          Boolean(rd) && rd!.companyId === companyId && rd!.kind !== 'run' && rd!.kind !== 'run_health',
+      )
+    if (!own.length) return true
+    own.sort((a, b) => (b.enrolledAt || '').localeCompare(a.enrolledAt || ''))
+    const latest = own[0]
+    if ((latest.ownerKey || '').trim().toLowerCase() === key) return true
+
+    const res = await fetch(rowsUrl(), {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        row_data: {
+          companyId: latest.companyId,
+          companyName: latest.companyName,
+          track: latest.track,
+          goal: latest.goal,
+          ownerKey: key,
+          enabled: latest.enabled,
+          enrolledAt: new Date().toISOString(),
+          autoDuration: latest.autoDuration,
+          autoExpiresAt: latest.autoExpiresAt,
+        },
+      }),
+      signal: AbortSignal.timeout(20000),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 /** Record the outcome of a nightly run (appended as an event row for the dashboard). */
 export async function recordRun(companyId: string, taskId: string | null, status: string): Promise<void> {
   if (!configured()) return

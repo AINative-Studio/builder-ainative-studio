@@ -49,7 +49,7 @@ import { deployCompanyFromGitea, companyDeployEnabled } from '@/lib/build/compan
 import { BUILDER_WORKSPACE_ID } from '@/lib/build/instant-db'
 import { deriveOwnerKey } from '@/lib/build/chat-store'
 import { creditReferrerOnSubscribe } from '@/lib/build/referral'
-import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
+import { enrollCompany, isEnrolled, syncEnrollmentOwnerKey } from '@/lib/build/loop-enrollment'
 import { runNightlyLoop } from '@/lib/build/autonomous-loop'
 import { shouldProvisionDeployService, shouldStartInitialRun } from '@/lib/build/live-vs-planned'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
@@ -195,7 +195,15 @@ export async function POST(request: NextRequest) {
       // #253: stamp the paying founder as the owner so this company appears in
       // their "my companies" index. Best-effort — never blocks confirmation.
       const email = (session as any)?.user?.email as string | undefined
-      if (email) setAppOwner(slug, email).catch(() => {})
+      if (email) {
+        setAppOwner(slug, email).catch(() => {})
+        // #2089-adjacent: a company auto-enrolled anonymously at a free
+        // registration never gets its enrollment ownerKey corrected once
+        // the founder actually pays — see syncEnrollmentOwnerKey's doc
+        // comment (lib/build/loop-enrollment.ts) for why that silently
+        // stops the nightly loop from ever reaching this company again.
+        syncEnrollmentOwnerKey(slug, email).catch(() => {})
+      }
       if (jwt) {
         const r = await claimCompanyProject(slug, jwt).catch(() => null)
         if (r?.ok) claimed = r.claimed
