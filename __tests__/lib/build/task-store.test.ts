@@ -7,6 +7,8 @@ import {
   isTaskStage,
   filterByStage,
   countByStage,
+  completionKind,
+  countCompletedByKind,
   coerceTask,
   sortTasks,
   recurringTaskFromLoop,
@@ -160,6 +162,41 @@ describe('countByStage (#55)', () => {
   it('ignores tasks with a bad stage', () => {
     const c = countByStage([{ ...mkTask(), stage: 'bogus' as any }])
     for (const s of TASK_STAGES) expect(c[s]).toBe(0)
+  })
+})
+
+// ---------- completionKind / countCompletedByKind (#2115) ----------
+describe('completionKind (#2115 — "completed" ≠ "shipped")', () => {
+  it('is null for a non-completed task, regardless of output', () => {
+    expect(completionKind(mkTask({ stage: 'todo', output: 'Split into 3 smaller sub-task(s): a, b, c.' }))).toBeNull()
+    expect(completionKind(mkTask({ stage: 'in_progress' }))).toBeNull()
+  })
+  it("is 'decomposed' for a completed task whose output matches task-splitter.ts's exact decomposition string", () => {
+    expect(completionKind(mkTask({ stage: 'completed', output: 'Split into 3 smaller sub-task(s): a, b, c.' }))).toBe('decomposed')
+    expect(completionKind(mkTask({ stage: 'completed', output: 'Split into 17 smaller sub-task(s): x.' }))).toBe('decomposed')
+  })
+  it("is 'shipped' for a completed task with real output, or none at all", () => {
+    expect(completionKind(mkTask({ stage: 'completed', output: 'Wired the form to POST /api/db/waitlist.' }))).toBe('shipped')
+    expect(completionKind(mkTask({ stage: 'completed', output: undefined }))).toBe('shipped')
+  })
+  it('does not false-positive on output that merely mentions splitting mid-sentence', () => {
+    expect(completionKind(mkTask({ stage: 'completed', output: 'Considered splitting this but implemented it directly instead.' }))).toBe('shipped')
+  })
+})
+
+describe('countCompletedByKind (#2115)', () => {
+  it('returns zeros for an empty or all-non-completed list', () => {
+    expect(countCompletedByKind([])).toEqual({ shipped: 0, decomposed: 0 })
+    expect(countCompletedByKind([mkTask({ stage: 'todo' })])).toEqual({ shipped: 0, decomposed: 0 })
+  })
+  it('splits completed tasks into shipped vs decomposed buckets', () => {
+    const tasks = [
+      mkTask({ id: 'a', stage: 'completed', output: 'Split into 2 smaller sub-task(s): x, y.' }),
+      mkTask({ id: 'b', stage: 'completed', output: 'Split into 4 smaller sub-task(s): x, y, z, w.' }),
+      mkTask({ id: 'c', stage: 'completed', output: 'Shipped the real fix.' }),
+      mkTask({ id: 'd', stage: 'todo' }),
+    ]
+    expect(countCompletedByKind(tasks)).toEqual({ shipped: 1, decomposed: 2 })
   })
 })
 

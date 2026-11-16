@@ -227,4 +227,42 @@ describe('TasksPanel — real load/filter/detail coverage (#1204)', () => {
     expect((global.fetch as any).mock.calls.length).toBe(callsBefore + 1)
     expect((global.fetch as any).mock.calls.at(-1)[0]).toContain('companyId=co-2')
   })
+
+  // #2115 — "completed" alone can't tell a founder a task shipped real work
+  // vs. was only split into smaller sub-tasks (task-splitter.ts). The API
+  // attaches completionKind per task + a completedBreakdown summary; this
+  // panel must surface both rather than silently dropping them.
+  it('tags a decomposed completed task with a "split into sub-tasks" chip, and a real shipped one with none', async () => {
+    const tasks = [
+      makeTask({ id: 'd1', title: 'Oversized task', stage: 'completed', completionKind: 'decomposed' }),
+      makeTask({ id: 's1', title: 'Real fix', stage: 'completed', completionKind: 'shipped' }),
+    ]
+    global.fetch = vi.fn(async () => jsonResponse({
+      tasks,
+      counts: { completed: 2 },
+      completedBreakdown: { shipped: 1, decomposed: 1 },
+    })) as any
+    render(React.createElement(TasksPanel, { companyId: 'co-1' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    const chips = host.querySelectorAll('[data-testid="task-completion-kind"]')
+    expect(chips.length).toBe(1)
+    expect(host.textContent).toContain('Oversized task')
+    expect(host.textContent).toContain('Real fix')
+  })
+
+  it("shows the real shipped/decomposed breakdown line only on the Completed tab", async () => {
+    const tasks = [makeTask({ id: 'd1', stage: 'completed', completionKind: 'decomposed' })]
+    global.fetch = vi.fn(async () => jsonResponse({
+      tasks,
+      counts: { completed: 1 },
+      completedBreakdown: { shipped: 3, decomposed: 2 },
+    })) as any
+    render(React.createElement(TasksPanel, { companyId: 'co-1' }))
+    await act(async () => { await Promise.resolve(); await Promise.resolve() })
+
+    expect(byTestId('task-completed-breakdown')).toBeNull()
+    await act(async () => { byTestId('task-tab-completed')!.click() })
+    expect(byTestId('task-completed-breakdown')?.textContent).toBe('3 shipped · 2 split into sub-tasks')
+  })
 })

@@ -137,6 +137,20 @@ export interface BuildTask {
    * task.
    */
   giteaSynthetic?: boolean
+  /**
+   * Whether a `completed` task shipped real work or was merely decomposed
+   * into smaller sub-tasks (#904/#925's splitter — see task-splitter.ts —
+   * marks an oversized PARENT `completed` the moment it is split, before any
+   * child has done anything). #2115 (real companies sampled live: beacon,
+   * lumeo, tidemark) found 47/47 sampled `completed` tasks across 3
+   * companies were pure decomposition, with zero shipped-code evidence, and
+   * `GET /api/build/tasks`'s response had no field distinguishing the two —
+   * so a founder (or this loop) reading "Completed: N" had no way to tell
+   * real ships from decomposition noise. Computed at read time from the
+   * task's own `output` (see `completionKind()` below), never persisted —
+   * `null`/absent for a non-`completed` task.
+   */
+  completionKind?: 'shipped' | 'decomposed' | null
   /** ISO timestamp created. */
   createdAt: string
   /** ISO timestamp last updated (stage change, output). */
@@ -268,6 +282,43 @@ export function countByStage(tasks: BuildTask[]): Record<TaskStage, number> {
     if (isTaskStage(t?.stage)) counts[t.stage] += 1
   }
   return counts
+}
+
+/**
+ * Matches the exact `output` string `splitTask()` (task-splitter.ts) writes
+ * on the oversized parent it decomposes — `Split into N smaller sub-task(s):
+ * id, id, ...`. This is the ONLY place a 'completed' task's output takes this
+ * shape; every real resolveTask() implementation writes a different kind of
+ * output (a summary of what shipped, or a defer reason). Pure.
+ */
+const DECOMPOSITION_OUTPUT_RE = /^Split into \d+ smaller sub-task\(s\):/
+
+/**
+ * Classify a `completed` task as having shipped real work ('shipped') vs.
+ * merely having been split into smaller sub-tasks ('decomposed') — #2115's
+ * suggested fix, so `GET /api/build/tasks` and the dashboard can stop
+ * conflating "completed" with "shipped." `null` for any non-completed task
+ * (the distinction is meaningless until a task is actually done). Pure —
+ * derives entirely from the task's own stored `stage`/`output`, never a
+ * separate source of truth that could drift out of sync with it.
+ */
+export function completionKind(task: Pick<BuildTask, 'stage' | 'output'>): 'shipped' | 'decomposed' | null {
+  if (task?.stage !== 'completed') return null
+  return DECOMPOSITION_OUTPUT_RE.test(task.output || '') ? 'decomposed' : 'shipped'
+}
+
+/**
+ * Count `completed` tasks by `completionKind` (for a dashboard breakdown
+ * alongside `countByStage`'s raw per-stage counts). Non-completed tasks are
+ * ignored. Pure.
+ */
+export function countCompletedByKind(tasks: BuildTask[]): { shipped: number; decomposed: number } {
+  const out = { shipped: 0, decomposed: 0 }
+  for (const t of Array.isArray(tasks) ? tasks : []) {
+    const kind = completionKind(t)
+    if (kind) out[kind] += 1
+  }
+  return out
 }
 
 /**

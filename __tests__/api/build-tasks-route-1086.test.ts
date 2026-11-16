@@ -170,6 +170,38 @@ describe('GET /api/build/tasks — giteaIssueUrl (#1912)', () => {
   })
 })
 
+describe('GET /api/build/tasks — completionKind/completedBreakdown (#2115)', () => {
+  beforeEach(() => {
+    h.auth.mockReset().mockResolvedValue({ user: { email: 'founderA@x.com' } })
+    h.listTasksForCompany.mockReset().mockResolvedValue([])
+    h.isEnrolled.mockReset().mockResolvedValue(false)
+    h.getLastRun.mockReset().mockResolvedValue(null)
+    h.resolveApp.mockReset().mockResolvedValue(null)
+  })
+
+  it('attaches a per-task completionKind and a completedBreakdown summary', async () => {
+    h.listTasksForCompany.mockResolvedValue([
+      mkTask({ id: 'a', stage: 'completed', output: 'Split into 3 smaller sub-task(s): x, y, z.' }),
+      mkTask({ id: 'b', stage: 'completed', output: 'Wired the real fix.' }),
+      mkTask({ id: 'c', stage: 'todo' }),
+    ])
+    const res = await GET(getReq('http://x/api/build/tasks?companyId=acme'))
+    const json = await res.json()
+    const byId = Object.fromEntries(json.tasks.map((t: any) => [t.id, t.completionKind]))
+    expect(byId.a).toBe('decomposed')
+    expect(byId.b).toBe('shipped')
+    expect(byId.c).toBeNull()
+    expect(json.completedBreakdown).toEqual({ shipped: 1, decomposed: 1 })
+  })
+
+  it('never 500s and still returns a zeroed breakdown when the company-wide read fails', async () => {
+    h.listTasksForCompany.mockRejectedValue(new Error('zerodb down'))
+    const res = await GET(getReq('http://x/api/build/tasks?companyId=acme'))
+    const json = await res.json()
+    expect(json.completedBreakdown).toEqual({ shipped: 0, decomposed: 0 })
+  })
+})
+
 describe('POST /api/build/tasks (#1086 regression — writes stay owner-scoped)', () => {
   beforeEach(() => {
     h.auth.mockReset().mockResolvedValue({ user: { email: 'founderA@x.com' } })

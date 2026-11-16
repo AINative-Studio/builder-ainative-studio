@@ -47,6 +47,8 @@ import {
   listTasksForCompany,
   updateTask,
   countByStage,
+  countCompletedByKind,
+  completionKind,
   filterByStage,
   isTaskStage,
   recurringTaskFromLoop,
@@ -106,8 +108,18 @@ export async function GET(request: NextRequest) {
   const withIssueUrls = tasks.map((t) => ({
     ...t,
     giteaIssueUrl: issueWebUrl(app?.gitRepoUrl, t.giteaIssueNumber),
+    completionKind: completionKind(t),
   }))
-  return Response.json({ tasks: withIssueUrls, counts: countByStage(all), stages: STAGE_META })
+  // #2115 — "Completed: N" alone can't tell a founder (or this loop's own
+  // health checks) whether N tasks shipped real work or were just split into
+  // more backlog. Surfaced alongside the raw per-stage `counts`, which stay
+  // unchanged for existing callers.
+  return Response.json({
+    tasks: withIssueUrls,
+    counts: countByStage(all),
+    completedBreakdown: countCompletedByKind(all),
+    stages: STAGE_META,
+  })
 }
 
 /**

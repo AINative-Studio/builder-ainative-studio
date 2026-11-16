@@ -67,9 +67,17 @@ function ago(iso?: string): string {
 
 type FilterTab = 'all' | TaskStage
 
+/** #2115 — "Completed: N" alone can't tell a founder whether N tasks shipped
+ *  real work or were just split into more backlog (task-splitter.ts marks an
+ *  oversized parent `completed` the moment it's decomposed). `completedBreakdown`
+ *  comes straight from the API (derived from each task's own `output` — see
+ *  task-store.ts's `completionKind()`), defaulting to zeros before load. */
+interface CompletedBreakdown { shipped: number; decomposed: number }
+
 export function TasksPanel({ companyId }: { companyId: string }) {
   const [tasks, setTasks] = useState<BuildTask[]>([])
   const [counts, setCounts] = useState<Record<string, number>>({})
+  const [completedBreakdown, setCompletedBreakdown] = useState<CompletedBreakdown>({ shipped: 0, decomposed: 0 })
   const [loaded, setLoaded] = useState(false)
   // A failed load (non-ok response, or the fetch itself throwing) used to be
   // swallowed into the same empty `tasks: []` shape as a genuinely empty
@@ -89,6 +97,11 @@ export function TasksPanel({ companyId }: { companyId: string }) {
         if (!alive) return
         setTasks(Array.isArray(d?.tasks) ? d.tasks : [])
         setCounts(d?.counts && typeof d.counts === 'object' ? d.counts : {})
+        setCompletedBreakdown(
+          d?.completedBreakdown && typeof d.completedBreakdown === 'object'
+            ? { shipped: Number(d.completedBreakdown.shipped) || 0, decomposed: Number(d.completedBreakdown.decomposed) || 0 }
+            : { shipped: 0, decomposed: 0 },
+        )
         setLoadError(false)
         setLoaded(true)
       })
@@ -141,6 +154,16 @@ export function TasksPanel({ companyId }: { companyId: string }) {
         ))}
       </div>
 
+      {/* #2115 — "Completed: N" alone conflates real ships with decomposition
+          noise; this one-line breakdown only shows on the Completed tab,
+          where the distinction actually matters, and only once real data has
+          loaded (never a guessed/fabricated split). */}
+      {tab === 'completed' && loaded && !loadError && (counts.completed || 0) > 0 && (
+        <p className="m-mono m-task-completed-breakdown" data-testid="task-completed-breakdown">
+          {completedBreakdown.shipped} shipped · {completedBreakdown.decomposed} split into sub-tasks
+        </p>
+      )}
+
       {/* Body: honest empty state, or the filtered task cards. */}
       {!loaded ? (
         <p className="m-mono m-task-empty" data-testid="tasks-loading">loading tasks…</p>
@@ -165,6 +188,11 @@ export function TasksPanel({ companyId }: { companyId: string }) {
                 <span className={`st ${stageStClass(t.stage)}`} data-testid="task-stage-badge">
                   {STAGE_LABELS[t.stage]}
                 </span>
+                {t.stage === 'completed' && t.completionKind === 'decomposed' && (
+                  <span className="m-chip m-task-decomposed" data-testid="task-completion-kind">
+                    split into sub-tasks
+                  </span>
+                )}
                 <span className="m-chip m-task-source" data-testid="task-source">{SOURCE_LABEL[t.source]}</span>
               </div>
               <p className="m-task-title" data-testid="task-title">{t.title}</p>
@@ -188,6 +216,11 @@ export function TasksPanel({ companyId }: { companyId: string }) {
         <div className="m-task-detail" role="dialog" aria-label="Task detail" data-testid="task-detail">
           <div className="m-task-detail-head">
             <span className={`st ${stageStClass(selected.stage)}`}>{STAGE_LABELS[selected.stage]}</span>
+            {selected.stage === 'completed' && selected.completionKind === 'decomposed' && (
+              <span className="m-chip m-task-decomposed" data-testid="task-detail-completion-kind">
+                split into sub-tasks — not shipped code
+              </span>
+            )}
             <button className="btn-ghost m-task-detail-close" data-testid="task-detail-close" onClick={() => setSelected(null)}>
               close ✕
             </button>
