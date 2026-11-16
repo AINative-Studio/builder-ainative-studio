@@ -17,7 +17,7 @@ import { resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
 import { runReadyGate, runGitCommit, runWiringScan } from '@/lib/build/register-app-core'
 import { autoCreateAdTestCampaign } from '@/lib/build/ad-test-autocreate'
-import { enrollCompany, isEnrolled } from '@/lib/build/loop-enrollment'
+import { enrollCompany, isEnrolled, syncEnrollmentOwnerKey } from '@/lib/build/loop-enrollment'
 import { sendWelcomeEmail } from '@/lib/build/company-email'
 import { reportDeploymentHealthStage } from '@/lib/build/deployment-health'
 
@@ -280,8 +280,14 @@ export async function POST(request: NextRequest) {
   if (ok) {
     isEnrolled(slug)
       .then((already) => {
-        if (already) return
-        return enrollCompany({ companyId: slug, companyName, track, ownerKey: ownerEmail })
+        if (!already) return enrollCompany({ companyId: slug, companyName, track, ownerKey: ownerEmail })
+        // #2089-adjacent: this company was already enrolled (e.g. from an
+        // earlier anonymous registration, with no ownerKey) — a LATER
+        // regen that now has a real session email must still correct the
+        // enrollment's stale ownerKey, or the nightly loop keeps gating
+        // every per-company step on it / using the wrong scope forever.
+        // See syncEnrollmentOwnerKey's doc comment for the full mechanism.
+        if (ownerEmail) return syncEnrollmentOwnerKey(slug, ownerEmail)
       })
       .catch(() => {})
   }

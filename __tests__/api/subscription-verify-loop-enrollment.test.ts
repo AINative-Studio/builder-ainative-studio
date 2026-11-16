@@ -27,6 +27,7 @@ const h = vi.hoisted(() => ({
   resolveAppVerified: vi.fn(),
   enrollCompany: vi.fn(async () => true),
   isEnrolled: vi.fn(async () => false),
+  syncEnrollmentOwnerKey: vi.fn(async () => true),
   runNightlyLoop: vi.fn(async () => ({ companyId: 'acme', briefing: null, taskId: 'task-1', status: 'dispatched', detail: 'task queued for the swarm' })),
 }))
 
@@ -63,6 +64,7 @@ vi.mock('@/lib/build/referral', () => ({
 vi.mock('@/lib/build/loop-enrollment', () => ({
   enrollCompany: h.enrollCompany,
   isEnrolled: h.isEnrolled,
+  syncEnrollmentOwnerKey: h.syncEnrollmentOwnerKey,
 }))
 vi.mock('@/lib/build/autonomous-loop', () => ({
   runNightlyLoop: h.runNightlyLoop,
