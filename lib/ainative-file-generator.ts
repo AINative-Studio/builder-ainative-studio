@@ -21,6 +21,27 @@ export interface AppMetadata {
 }
 
 /**
+ * Truncate `text` to at most `maxLen` characters without cutting a word in
+ * half. A bare `.slice(0, maxLen)` on a long founder prompt lands mid-word
+ * essentially every time (confirmed live across every sampled company's
+ * layout.tsx meta/OG/Twitter `description` — e.g. "...roofing contractors
+ * (ru", "...community activ", "...management platf") with no ellipsis to
+ * signal the cut, which reads as broken/corrupted copy in Google search
+ * results and social share previews. Backs off to the nearest preceding
+ * space, trims trailing punctuation that would otherwise dangle right before
+ * the ellipsis (an orphaned open-paren, comma, dash, ...), and appends '…'
+ * so a founder's live metadata never visibly cuts off mid-word. Text already
+ * at or under the limit is returned verbatim (no ellipsis added).
+ */
+function truncateAtWordBoundary(text: string, maxLen: number): string {
+  if (text.length <= maxLen) return text
+  const sliced = text.slice(0, maxLen)
+  const lastSpace = sliced.lastIndexOf(' ')
+  const trimmed = lastSpace > 0 ? sliced.slice(0, lastSpace) : sliced
+  return trimmed.replace(/[\s.,;:!?(—-]+$/, '') + '…'
+}
+
+/**
  * Extract app metadata from the user prompt and generated code
  */
 export function extractAppMetadata(prompt: string, code: string): AppMetadata {
@@ -105,7 +126,7 @@ export function extractAppMetadata(prompt: string, code: string): AppMetadata {
   if (type === 'docs') pages.push('/docs', '/api-reference', '/quickstart')
   if (type === 'agent') pages.push('/agents', '/swarms', '/safety', '/traces')
 
-  return { name, description: prompt.slice(0, 200), type, features, pages }
+  return { name, description: truncateAtWordBoundary(prompt, 200), type, features, pages }
 }
 
 /**
@@ -326,7 +347,7 @@ function escapeJsStringLiteral(text: string): string {
 export function generateNextLayoutTs(meta: AppMetadata): string {
   const domain = meta.domain || `https://${meta.name.toLowerCase().replace(/\s+/g, '')}.app`
   const description = escapeJsStringLiteral(meta.description)
-  const shortDescription = escapeJsStringLiteral(meta.description.slice(0, 160))
+  const shortDescription = escapeJsStringLiteral(truncateAtWordBoundary(meta.description, 160))
 
   return `import type { Metadata } from 'next'
 import { Inter } from 'next/font/google'
