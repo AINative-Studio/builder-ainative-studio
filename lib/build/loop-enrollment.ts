@@ -139,7 +139,7 @@ export async function syncEnrollmentOwnerKey(companyId: string, ownerKey: string
   try {
     const rows = await fetchAllRows()
     const own = rows
-      .map((r) => r.row_data)
+      .map((r) => r.row_data as (LoopEnrollment & { kind?: string }) | undefined)
       .filter(
         (rd): rd is LoopEnrollment & { kind?: string } =>
           Boolean(rd) && rd!.companyId === companyId && rd!.kind !== 'run' && rd!.kind !== 'run_health',
