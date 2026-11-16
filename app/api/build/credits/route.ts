@@ -34,22 +34,46 @@ import { countEcosystemPrimitives, ecosystemBonusMessage } from '@/lib/build/eco
 
 export const runtime = 'nodejs'
 
-async function resolveOwner(): Promise<{ email: string; tier: string } | null> {
+async function resolveOwner(): Promise<{ email: string; tier: string; verified: boolean } | null> {
   try {
     const session = await auth()
     const email = (session as any)?.user?.email as string | undefined
     const accessToken = (session as any)?.accessToken as string | undefined
     if (!email) return null
     let tier = 'hobbyist'
+    let verified = true
     if (accessToken) {
       try {
         const status = await getPlanStatus(accessToken)
         tier = status.tier || 'hobbyist'
-      } catch {
-        /* fall back to free-tier allowance */
+        // #2097: getPlanStatus() never throws for a core outage — it swallows
+        // the failure and reports `verified: false` with `tier` already
+        // defaulted to 'hobbyist' (see resolve-plan.ts's own doc comment on
+        // this exact trap). Discarding that flag here, as this route used to,
+        // made a genuine Enterprise customer's quota check indistinguishable
+        // from a real core outage: both silently landed on a hard 3-build cap
+        // with nothing in the logs. Log loudly, consistent with resolve-plan.ts's
+        // own `[plan] PLAN VERIFICATION FAILED` pattern, and surface the flag
+        // in the response (see below) instead of swallowing it a second time.
+        if (status.verified === false) {
+          console.error(
+            `[credits] plan verification failed for ${email} — falling back to ` +
+              `tier "${tier}" allowance. This is NOT a confirmed Hobbyist account; ` +
+              `a paying customer may be wrongly capped. See the preceding ` +
+              `"[plan] PLAN VERIFICATION FAILED" log for the upstream cause.`,
+          )
+          verified = false
+        }
+      } catch (err) {
+        verified = false
+        console.error(
+          `[credits] getPlanStatus() threw for ${email} — falling back to hobbyist ` +
+            `allowance. A paying customer may be wrongly capped. Cause: ` +
+            `${err instanceof Error ? `${err.name}: ${err.message}` : String(err)}`,
+        )
       }
     }
-    return { email, tier }
+    return { email, tier, verified }
   } catch {
     return null
   }
@@ -59,7 +83,7 @@ export async function GET() {
   const owner = await resolveOwner()
   if (!owner) return NextResponse.json({ error: 'unauthenticated' }, { status: 401 })
   const status = await getBuildCreditStatus(owner.email, owner.tier)
-  return NextResponse.json({ ...status, tier: owner.tier })
+  return NextResponse.json({ ...status, tier: owner.tier, verified: owner.verified })
 }
 
 export async function POST(request: Request) {
@@ -87,7 +111,7 @@ export async function POST(request: Request) {
     : applyValueGuarantee(raw, await hasReachedPreview(owner.email))
   if (!status.allowed) {
     return NextResponse.json(
-      { error: 'build_limit_reached', ...status, tier: owner.tier },
+      { error: 'build_limit_reached', ...status, tier: owner.tier, verified: owner.verified },
       { status: 402 },
     )
   }
@@ -112,6 +136,7 @@ export async function POST(request: Request) {
     valueGuarantee: status.valueGuarantee ?? false,
     viaDripToken: status.viaDripToken ?? false,
     tier: owner.tier,
+    verified: owner.verified,
     ecosystem: {
       composed,
       bonusEarned: bonusApplied,

@@ -200,12 +200,48 @@ describe('POST /api/build/credits (#324 GR-15)', () => {
     expect(res.status).toBe(401)
   })
 
-  it('plan lookup failure falls back to the free tier (never over-grants)', async () => {
+  it('plan lookup failure falls back to the free tier (never over-grants) AND logs loudly (#2097)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
     h.getPlanStatus.mockRejectedValue(new Error('core down'))
     h.getBuildCreditStatus.mockResolvedValue(status())
     const res = await post({ slug: 'x', idea: PLAIN_IDEA })
     expect(res.status).toBe(200)
     expect(h.getBuildCreditStatus).toHaveBeenCalledWith('founder@example.com', 'hobbyist')
+    // #2097: this failure must be OBSERVABLE, not just a quiet fallback — a
+    // paying customer wrongly capped at hobbyist with nothing in the logs is
+    // exactly the silent-downgrade bug this regression guards against.
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('[credits]'))
+    const body = await res.json()
+    expect(body.verified).toBe(false)
+    errSpy.mockRestore()
+  })
+
+  it('a non-throwing but UNVERIFIED plan status also falls back AND logs loudly, distinct from a genuine Hobbyist account (#2097)', async () => {
+    // getPlanStatus() never throws for a core outage — it swallows the
+    // failure internally and reports tier "hobbyist" with verified:false
+    // (see lib/ainative/resolve-plan.ts). A route that only reads `.tier`
+    // can't tell this apart from a REAL Hobbyist account.
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: false })
+    h.getBuildCreditStatus.mockResolvedValue(status())
+    const res = await post({ slug: 'x', idea: PLAIN_IDEA })
+    expect(res.status).toBe(200)
+    const body = await res.json()
+    expect(body.tier).toBe('hobbyist')
+    expect(body.verified).toBe(false)
+    expect(errSpy).toHaveBeenCalledWith(expect.stringContaining('[credits] plan verification failed'))
+    errSpy.mockRestore()
+  })
+
+  it('a genuinely verified Hobbyist account is NOT flagged as unverified (#2097)', async () => {
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    h.getPlanStatus.mockResolvedValue({ tier: 'hobbyist', verified: true })
+    h.getBuildCreditStatus.mockResolvedValue(status())
+    const res = await post({ slug: 'x', idea: PLAIN_IDEA })
+    const body = await res.json()
+    expect(body.verified).toBe(true)
+    expect(errSpy).not.toHaveBeenCalled()
+    errSpy.mockRestore()
   })
 
   it('no access token → free tier without calling the plan service', async () => {
