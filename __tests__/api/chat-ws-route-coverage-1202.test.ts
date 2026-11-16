@@ -1251,4 +1251,55 @@ describe('POST /api/chat-ws — route-level coverage (#1202)', () => {
     expect(errorEvent, `raw SSE body was: ${raw}`).toBeTruthy()
     expect(errorEvent.error).toBe('Stream failed')
   })
+
+  // #2094: found via live E2E testing — a real generation failed 3/3 times
+  // with the bare "Stream failed" message, with no way to tell a genuine code
+  // defect apart from an account-quota exhaustion. This final catch already
+  // checked for capacity exhaustion (#1802) but never checked isQuotaError,
+  // even though that detector is already used elsewhere in this same file —
+  // a quota-shaped error thrown INSIDE the stream body (as opposed to caught
+  // by the earlier, pre-stream quota short-circuit) fell all the way through
+  // to the same opaque message as an unclassified bug.
+  it('#2094: surfaces the honest quota-exhaustion message, not a generic failure, when a quota-shaped error escapes inside the stream start() body', async () => {
+    // isQuotaError is mocked module-wide in this file (default: false) — the
+    // REAL implementation's own handling of a plain Error instance is covered
+    // separately in __tests__/lib/quota-error.test.ts. This test verifies
+    // chat-ws/route.ts's final catch actually calls isQuotaError and uses its
+    // result, which it never did before this fix.
+    const { isQuotaError } = await import('@/lib/quota-error')
+    ;(isQuotaError as any).mockReturnValueOnce(true)
+    const { buildRagContext } = await import('@/lib/build/rag-context')
+    ;(buildRagContext as any).mockRejectedValueOnce(new Error('monthly_token_limit_exceeded: add credits to continue'))
+    const { POST } = await import('@/app/api/chat-ws/route')
+    const req = mockJsonRequest('http://localhost/api/chat-ws', {
+      message: 'Trigger a quota failure inside the stream body',
+    })
+    const res = await POST(req)
+    const { events, raw } = await drainSSE(res)
+    const errorEvent = events.find((e) => e.type === 'error')
+    expect(errorEvent, `raw SSE body was: ${raw}`).toBeTruthy()
+    expect(errorEvent.code).toBe('quota_exhausted')
+    // QUOTA_USER_MESSAGE is mocked in this file's module-wide lib/quota-error
+    // mock (see top of file) — the real string's content is covered by
+    // __tests__/lib/quota-error.test.ts. This asserts the WIRING: route.ts
+    // actually uses QUOTA_USER_MESSAGE, not a hardcoded string.
+    expect(errorEvent.error).toBe('You have run out of generation quota for this month.')
+    expect(errorEvent.error).not.toBe('Stream failed')
+  })
+
+  it('#2094: a capacity-shaped error still wins over a coincidentally quota-shaped message (capacity checked first)', async () => {
+    const { buildRagContext } = await import('@/lib/build/rag-context')
+    const { makeCapacityExhaustedError } = await import('@/lib/capacity-error')
+    ;(buildRagContext as any).mockRejectedValueOnce(makeCapacityExhaustedError())
+    const { POST } = await import('@/app/api/chat-ws/route')
+    const req = mockJsonRequest('http://localhost/api/chat-ws', {
+      message: 'Trigger a capacity failure inside the stream body',
+    })
+    const res = await POST(req)
+    const { events, raw } = await drainSSE(res)
+    const errorEvent = events.find((e) => e.type === 'error')
+    expect(errorEvent, `raw SSE body was: ${raw}`).toBeTruthy()
+    expect(errorEvent.code).toBe('generation_capacity_exhausted')
+    expect(errorEvent.error).toMatch(/capacity/i)
+  })
 })

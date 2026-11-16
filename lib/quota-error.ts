@@ -34,16 +34,27 @@ export function isQuotaError(err: unknown): boolean {
   const status = anyErr.status ?? anyErr.code ?? anyErr.statusCode
   if (status === 402) return true
 
+  // #2094: a real `Error` instance's `message` is a non-enumerable property,
+  // so JSON.stringify(err) silently returns "{}" for a plain `new Error(...)`
+  // — it never throws, so the old try/catch's fallback-to-`.message` branch
+  // never ran for the single most common error shape in JS. A quota error
+  // thrown as `new Error('monthly_token_limit_exceeded...')` (rather than a
+  // plain string or a structured API-response object) was therefore
+  // completely invisible to this detector. Check `.message` FIRST when it's
+  // a real string, falling back to JSON.stringify only for a plain object
+  // with no message (e.g. a raw parsed API response).
   const text =
     typeof err === 'string'
       ? err
-      : (() => {
-          try {
-            return JSON.stringify(err)
-          } catch {
-            return String((err as { message?: string })?.message ?? err)
-          }
-        })()
+      : typeof (err as { message?: unknown })?.message === 'string'
+        ? (err as { message: string }).message
+        : (() => {
+            try {
+              return JSON.stringify(err)
+            } catch {
+              return String(err)
+            }
+          })()
 
   const lower = text.toLowerCase()
   // A bare "402" in the text is only conclusive alongside a billing marker,

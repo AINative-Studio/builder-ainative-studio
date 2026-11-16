@@ -37,6 +37,25 @@ describe('isQuotaError', () => {
     expect(isQuotaError('')).toBe(false)
   })
 
+  // #2094: found via live E2E testing — a real `Error` instance's `message`
+  // is a non-enumerable property, so JSON.stringify(err) silently returns
+  // "{}" for a plain `new Error(...)` (it never throws, so the old
+  // fallback-to-.message branch — written for a JSON.stringify THROW, e.g. a
+  // circular reference — never actually ran for this, the single most common
+  // error shape in JS). A quota error thrown as a real Error object anywhere
+  // in the call stack (rather than passed as a bare string or a parsed API
+  // response object) was therefore completely invisible to this detector,
+  // silently falling through to a generic/unclassified failure message.
+  it('#2094: detects a quota marker in a real Error instance\'s message (not just a bare string or object)', () => {
+    expect(isQuotaError(new Error('monthly_token_limit_exceeded: add credits to continue'))).toBe(true)
+    expect(isQuotaError(new Error('upstream returned billing_error'))).toBe(true)
+  })
+
+  it('#2094: a real Error instance with an ordinary (non-quota) message still correctly returns false', () => {
+    expect(isQuotaError(new Error('zeromemory recall failed'))).toBe(false)
+    expect(isQuotaError(new Error('Agent crashed: timeout after 120s'))).toBe(false)
+  })
+
   it('exposes a user-facing message', () => {
     expect(QUOTA_USER_MESSAGE).toMatch(/monthly token limit/i)
   })
