@@ -2666,10 +2666,25 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
           // (402/billing) short-circuit above, for the distinct "every phase
           // hit rate limiting" case tagged just above (chunk generation).
           const capacityExhausted = isCapacityExhaustedError(error)
+          // #2094: this catch is the LAST line of defense for every unclassified
+          // streaming failure, and it only ever checked for capacity exhaustion
+          // — not quota/billing (isQuotaError, already used earlier in this same
+          // file for the SSE event-level check at line ~1081 and the pre-stream
+          // short-circuit at ~1258). A quota error that slips past those earlier
+          // checks and surfaces here instead (e.g. thrown deeper in the call
+          // stack, after streaming has already started) fell through to the
+          // same bare "Stream failed" as a genuine, unclassified bug — found via
+          // live E2E testing where a real generation failed 3/3 times with this
+          // exact opaque message and no way to tell quota exhaustion apart from
+          // a real defect. Quota is checked first since both an exhausted
+          // monthly quota is a HARD stop (no retry can fix it until it resets)
+          // while a transient capacity limit is explicitly retriable.
+          const quotaExhausted = !capacityExhausted && isQuotaError(error)
           safeEnqueue(encoder.encode(`data: ${JSON.stringify({
             type: 'error',
-            error: capacityExhausted ? CAPACITY_USER_MESSAGE : 'Stream failed',
+            error: capacityExhausted ? CAPACITY_USER_MESSAGE : quotaExhausted ? QUOTA_USER_MESSAGE : 'Stream failed',
             ...(capacityExhausted ? { code: 'generation_capacity_exhausted' } : {}),
+            ...(quotaExhausted ? { code: 'quota_exhausted' } : {}),
           })}\n\n`))
 
           // RLHF: Log failure for training data
