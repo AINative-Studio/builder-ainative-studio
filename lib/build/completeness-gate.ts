@@ -487,6 +487,33 @@ export function findTruncatedFiles(files?: Record<string, string>): string[] {
       // SOME real code but never got to its own export statement.
       if (looksLikeComponentFile(path) && masked.trim() && !/\bexport\b/.test(masked)) {
         broken.push(path)
+        continue
+      }
+
+      // SIGNAL 3 (overnight render-integrity sweep, live repro: company
+      // "luminary", /src/components/ContactFormSection.tsx). lib/sandpack/
+      // build-files.ts's fixMissingExports() runs BEFORE this detector is
+      // reused by stubTruncatedFiles(), and patches a bare `export` keyword
+      // onto an otherwise still-cut-off declaration — which erases SIGNAL
+      // 2's "zero export" trigger above without actually finishing the
+      // file. The stream stopped right after a statement, so the braces
+      // still balance and an export now exists, but the component's body
+      // never reached its own `return`/JSX — React throws "Nothing was
+      // returned from render" the instant it tries to mount it. Only
+      // .tsx/.jsx (never plain .ts/.js, which legitimately export
+      // non-rendering constants/types/hooks with no return or JSX at all),
+      // and never a re-export barrel (`export { default } from '...'`,
+      // `export * from '...'`), which also legitimately has neither.
+      if (
+        /\.(t|j)sx$/.test(path) &&
+        looksLikeComponentFile(path) &&
+        masked.trim() &&
+        /\bexport\b/.test(masked) &&
+        !/\bexport\s*(?:\*|\{[^}]*\})\s*from\s*['"]/.test(masked) &&
+        !/<[A-Za-z]|<>/.test(masked) &&
+        !/\breturn\b/.test(masked)
+      ) {
+        broken.push(path)
       }
     }
     return broken
