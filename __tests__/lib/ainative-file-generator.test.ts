@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { generateAINativeFileSet, extractAppMetadata } from '@/lib/ainative-file-generator'
+import { generateAINativeFileSet, extractAppMetadata, generateNextLayoutTs } from '@/lib/ainative-file-generator'
 
 /**
  * Real production incident (2026-09): PR #494 wired generateAINativeFileSet()
@@ -129,5 +129,55 @@ describe('extractAppMetadata', () => {
       'export default function App(){}',
     )
     expect(meta.type).toBe('ecommerce')
+  })
+
+  /**
+   * Real incident (2026-11-16): every sampled live company's layout.tsx
+   * <meta name="description">/OG/Twitter description read a raw
+   * `prompt.slice(0, 200)` (and a further `.slice(0, 160)` for the OG/Twitter
+   * short form) that lands mid-word on virtually every real prompt, e.g.
+   * "...roofing contractors (ru", "...community activ", "...management
+   * platf" — broken-looking copy in search results and social previews with
+   * no ellipsis to signal the cut. Fixed by backing off to the nearest word
+   * boundary and appending '…'.
+   */
+  it('truncates a long description at a word boundary with an ellipsis, never mid-word', () => {
+    const prompt =
+      'Build a polished, production-quality single-page marketing LANDING PAGE for "Shingle" (tagline: "Close more roofs, faster.") — a real company for this idea: A B2B sales CRM for roofing contractors (run 1789290483344) — track leads, move deals through a pipeline from quote to signed contract.'
+    const meta = extractAppMetadata(prompt, 'export default function App(){}')
+    expect(meta.description.length).toBeLessThanOrEqual(201)
+    expect(meta.description.endsWith('…')).toBe(true)
+    expect(meta.description).not.toMatch(/\s(ru|platf|activ)$/)
+    // the word right before the ellipsis must be a real, whole word from the prompt
+    const lastWord = meta.description.slice(0, -1).trim().split(/\s+/).pop()!
+    expect(prompt).toContain(lastWord)
+  })
+
+  it('leaves a description at or under the limit unchanged, with no ellipsis added', () => {
+    const meta = extractAppMetadata('build me a crossposting tool', 'export default function App(){}')
+    expect(meta.description).toBe('build me a crossposting tool')
+    expect(meta.description.endsWith('…')).toBe(false)
+  })
+})
+
+describe('generateNextLayoutTs — OG/Twitter short description', () => {
+  it('truncates the long description to a word boundary for the OG/Twitter tags too, not mid-word', () => {
+    const longDescription =
+      'A B2B sales CRM for roofing contractors — track leads, move deals through a pipeline from quote to signed contract, log calls with customers, and send invoices once a job is done for real paying customers'
+    const layout = generateNextLayoutTs({
+      name: 'Shingle',
+      description: longDescription,
+      type: 'saas',
+      features: [],
+      pages: ['/'],
+    })
+    const ogMatch = layout.match(/openGraph:[\s\S]*?description: '([^\n]*)',/)
+    expect(ogMatch).toBeTruthy()
+    const ogDescription = ogMatch![1]
+    expect(ogDescription.length).toBeLessThanOrEqual(161)
+    expect(ogDescription.endsWith('…')).toBe(true)
+    // the word right before the ellipsis must be a real, whole word from the source text
+    const lastWord = ogDescription.slice(0, -1).trim().split(/\s+/).pop()!
+    expect(longDescription).toContain(lastWord)
   })
 })
