@@ -152,6 +152,147 @@ describe('setLoopEnabled', () => {
   })
 })
 
+// ---------- syncEnrollmentOwnerKey (#2089-adjacent) ----------
+describe('syncEnrollmentOwnerKey', () => {
+  afterEach(() => {
+    vi.resetModules()
+    delete process.env.ZERODB_API_KEY
+    delete process.env.ZERODB_PROJECT_ID
+  })
+
+  it('returns false without fetch when not configured', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const { syncEnrollmentOwnerKey } = await freshUnconfigured()
+    expect(await syncEnrollmentOwnerKey('wrench', 'founder@co.com')).toBe(false)
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns false when companyId is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    expect(await syncEnrollmentOwnerKey('', 'founder@co.com')).toBe(false)
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns false when ownerKey is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    expect(await syncEnrollmentOwnerKey('wrench', '')).toBe(false)
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('is a no-op (true, no write) when the company has no enrollment row at all', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [] } }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    expect(await syncEnrollmentOwnerKey('wrench', 'founder@co.com')).toBe(true)
+    // Only the read (GET) happened, never a POST write.
+    expect(fn.mock.calls.every((c) => !c[1] || c[1].method !== 'POST')).toBe(true)
+  })
+
+  it('is a no-op (true, no write) when the latest row already carries this ownerKey', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'wrench', ownerKey: 'founder@co.com', enrolledAt: '2026-11-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    expect(await syncEnrollmentOwnerKey('wrench', 'founder@co.com')).toBe(true)
+    expect(fn.mock.calls.every((c) => !c[1] || c[1].method !== 'POST')).toBe(true)
+  })
+
+  it('treats ownerKey comparison as case/whitespace-insensitive (no spurious write)', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'wrench', ownerKey: 'Founder@Co.com', enrolledAt: '2026-11-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    expect(await syncEnrollmentOwnerKey('wrench', '  founder@co.com  ')).toBe(true)
+    expect(fn.mock.calls.every((c) => !c[1] || c[1].method !== 'POST')).toBe(true)
+  })
+
+  // ---- The real bug this repairs: a company auto-enrolled anonymously
+  // (ownerKey undefined/empty) later gets a real founder email at checkout/
+  // provisioning, but nothing ever corrected the enrollment row — leaving
+  // every nightly-loop per-company step (`if (e.ownerKey)`) permanently
+  // gated off, or scoped to the wrong key, for this company forever.
+  it('appends a corrected row when the latest enrollment has no ownerKey at all', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'wrench', companyName: 'Wrench', track: 'app', enrolledAt: '2026-10-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    expect(await syncEnrollmentOwnerKey('wrench', 'founder@co.com')).toBe(true)
+    const postCall = fn.mock.calls.find((c) => c[1]?.method === 'POST')
+    expect(postCall).toBeTruthy()
+    const body = JSON.parse(postCall![1]!.body as string)
+    expect(body.row_data).toMatchObject({
+      companyId: 'wrench', companyName: 'Wrench', track: 'app', ownerKey: 'founder@co.com', enabled: true,
+    })
+  })
+
+  it('appends a corrected row when the latest enrollment has a DIFFERENT ownerKey, preserving enabled/track/companyName', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'wrench', companyName: 'Wrench', track: 'company', enabled: false,
+        ownerKey: 'guest:old-session-id', enrolledAt: '2026-10-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    expect(await syncEnrollmentOwnerKey('wrench', 'founder@co.com')).toBe(true)
+    const postCall = fn.mock.calls.find((c) => c[1]?.method === 'POST')
+    const body = JSON.parse(postCall![1]!.body as string)
+    expect(body.row_data).toMatchObject({
+      companyId: 'wrench', companyName: 'Wrench', track: 'company', enabled: false, ownerKey: 'founder@co.com',
+    })
+  })
+
+  it('normalizes the incoming ownerKey (trim + lowercase) before writing', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'wrench', ownerKey: '', enrolledAt: '2026-10-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    await syncEnrollmentOwnerKey('wrench', '  Founder@Co.COM  ')
+    const postCall = fn.mock.calls.find((c) => c[1]?.method === 'POST')
+    expect(JSON.parse(postCall![1]!.body as string).row_data.ownerKey).toBe('founder@co.com')
+  })
+
+  it('picks the LATEST row (by enrolledAt) to compare/correct, not just the first in the list', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'wrench', ownerKey: 'founder@co.com', enrolledAt: '2026-10-01T00:00:00Z' }),
+      makeEnrollmentRow({ companyId: 'wrench', ownerKey: 'stale@co.com', enrolledAt: '2026-11-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    await syncEnrollmentOwnerKey('wrench', 'founder@co.com')
+    const postCall = fn.mock.calls.find((c) => c[1]?.method === 'POST')
+    expect(postCall).toBeTruthy() // the LATEST row (stale@co.com) differs, so a correction is written
+  })
+
+  it('ignores a different company`s rows', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'other-co', ownerKey: 'someone@co.com', enrolledAt: '2026-11-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    expect(await syncEnrollmentOwnerKey('wrench', 'founder@co.com')).toBe(true)
+    expect(fn.mock.calls.every((c) => !c[1] || c[1].method !== 'POST')).toBe(true)
+  })
+
+  it('returns false (never throws) when fetch throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net') }))
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    expect(await syncEnrollmentOwnerKey('wrench', 'founder@co.com')).toBe(false)
+  })
+
+  it('returns false when the write itself fails (non-ok)', async () => {
+    let getCalls = 0
+    const fn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (!init || init.method !== 'POST') {
+        getCalls++
+        const body = { data: [makeEnrollmentRow({ companyId: 'wrench', enrolledAt: '2026-10-01T00:00:00Z' })] }
+        return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+      }
+      return { ok: false, status: 500, json: async () => ({}), text: async () => '{}' }
+    })
+    vi.stubGlobal('fetch', fn)
+    const { syncEnrollmentOwnerKey } = await freshConfigured()
+    expect(await syncEnrollmentOwnerKey('wrench', 'founder@co.com')).toBe(false)
+    expect(getCalls).toBeGreaterThan(0)
+  })
+})
+
 // ---------- recordRun ----------
 describe('recordRun', () => {
   afterEach(() => {
