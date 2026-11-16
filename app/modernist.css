@@ -1193,6 +1193,11 @@
 .m-task-card:hover { background: var(--color-surface); }
 .m-task-card-top { display: flex; align-items: center; gap: 8px; }
 .m-task-source { align-self: auto; margin: 0; }
+/* #2115 — distinguishes a "completed" task that only split into smaller
+   sub-tasks (task-splitter.ts) from one that actually shipped real work, so
+   this never reads as "done" when nothing was delivered yet. */
+.m-task-decomposed { align-self: auto; margin: 0; background: var(--track-100); color: var(--track-700); }
+.m-task-completed-breakdown { font-size: 10.5px; color: var(--text-muted); margin: 0 0 8px; }
 .m-task-title { font-family: var(--font-heading); font-weight: 600; font-size: 13.5px; margin: 0; line-height: 1.35; }
 .m-task-card-foot { display: flex; align-items: center; justify-content: space-between; font-size: 10.5px; color: var(--text-muted); }
 .m-task-view { font-size: 10.5px; padding: 2px 4px; }
