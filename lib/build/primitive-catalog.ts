@@ -212,7 +212,13 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'AI-native CRM + sales pipeline: deals, stages, customers, revenue analytics',
     url: `${DOCS}/business-ops/zeropipeline`,
     apiBase: 'https://pipeline.ainative.studio/api/v1',
-    triggers: ['crm', 'sales', 'pipeline', 'leads', 'lead', 'customers', 'deals', 'prospects', 'b2b', 'outreach', 'account', 'sell to businesses'] },
+    // 'customers' was a trigger here but is far too generic a word on its
+    // own — "customers submit feedback", "see all upcoming bookings" for
+    // customers, etc. — to imply CRM/sales-pipeline need (#2091: a cafe
+    // feedback-board idea got recommended a "Sales agent" solely because it
+    // used the word "customers"). Every remaining trigger here is a much
+    // stronger, more specific CRM/sales signal.
+    triggers: ['crm', 'sales', 'pipeline', 'leads', 'lead', 'deals', 'prospects', 'b2b', 'outreach', 'account', 'sell to businesses'] },
   { name: 'ZeroInvoice', category: 'business-ops',
     purpose: 'Invoicing + billing: Stripe payments, QuickBooks sync, customer portals',
     url: `${DOCS}/business-ops/zeroinvoice`,
@@ -421,7 +427,12 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'Two-sided marketplace: agents broadcast goals, businesses respond with agent-readable services',
     url: `${DOCS}/marketplace/overview`,
     apiBase: 'https://api.ainative.studio/v1/public/intents',
-    triggers: ['marketplace', 'two-sided', 'match', 'matching', 'buyers and sellers', 'services', 'gig', 'booking'] },
+    // 'booking' was a trigger here but matches any ordinary single-sided
+    // scheduling idea ("an appointment booking widget for a solo
+    // hairdresser") that has nothing to do with a two-sided agent
+    // marketplace (#2091). Every remaining trigger here is specific to the
+    // actual two-sided-marketplace shape this primitive provides.
+    triggers: ['marketplace', 'two-sided', 'match', 'matching', 'buyers and sellers', 'services', 'gig'] },
   { name: 'AINativeNGO', category: 'business-ops',
     // "InstitutionOS" — 8-layer OS for AI-native institutions. Live API verified at
     // ngo.ainative.studio (openapi.json, 360 endpoints): grants, impact, donors,
