@@ -213,9 +213,8 @@ export async function listEnrolled(): Promise<LoopEnrollment[]> {
   try {
     const rows = await fetchAllRows()
     const enrollments: LoopEnrollment[] = rows
-      .map((r: { row_data?: LoopEnrollment & { kind?: string } }) => r.row_data)
-      .filter((rd: (LoopEnrollment & { kind?: string }) | undefined): rd is LoopEnrollment =>
-        Boolean(rd?.enabled) && rd?.kind !== 'run')
+      .map((r) => r.row_data as (LoopEnrollment & { kind?: string }) | undefined)
+      .filter((rd): rd is LoopEnrollment => Boolean(rd?.enabled) && rd?.kind !== 'run')
     return dedupeByCompany(enrollments)
   } catch {
     return []
@@ -235,8 +234,8 @@ export async function listEnrolled(): Promise<LoopEnrollment[]> {
 const MAX_ENROLLMENT_PAGES = 20
 const ENROLLMENT_PAGE_SIZE = 500
 
-async function fetchAllRows(): Promise<Array<{ row_data?: LoopEnrollment & { kind?: string } }>> {
-  const all: Array<{ row_data?: LoopEnrollment & { kind?: string } }> = []
+async function fetchAllRows(): Promise<Array<{ row_data?: Record<string, unknown> }>> {
+  const all: Array<{ row_data?: Record<string, unknown> }> = []
   for (let page = 0; page < MAX_ENROLLMENT_PAGES; page++) {
     const skip = page * ENROLLMENT_PAGE_SIZE
     const res = await fetch(`${rowsUrl()}?limit=${ENROLLMENT_PAGE_SIZE}&skip=${skip}`, {
@@ -287,16 +286,12 @@ export interface CompanyRun {
 export async function getLastRun(companyId: string): Promise<CompanyRun | null> {
   if (!configured() || !companyId) return null
   try {
-    const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(20000) })
-    if (!res.ok) return null
-    const data = JSON.parse(await res.text())
-    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const rows = await fetchAllRows()
     const runs = rows
-      .map((r: { row_data?: CompanyRun & { kind?: string } }) => r.row_data)
-      .filter((rd: (CompanyRun & { kind?: string }) | undefined): rd is CompanyRun =>
-        rd?.kind === 'run' && rd?.companyId === companyId)
+      .map((r) => r.row_data as (CompanyRun & { kind?: string }) | undefined)
+      .filter((rd): rd is CompanyRun => rd?.kind === 'run' && rd?.companyId === companyId)
     if (!runs.length) return null
-    runs.sort((a: CompanyRun, b: CompanyRun) => (b.lastRunAt || '').localeCompare(a.lastRunAt || ''))
+    runs.sort((a, b) => (b.lastRunAt || '').localeCompare(a.lastRunAt || ''))
     return runs[0]
   } catch {
     return null
@@ -322,13 +317,10 @@ export async function getLastRun(companyId: string): Promise<CompanyRun | null> 
 export async function listRecentRuns(companyId: string, limit = 6): Promise<CompanyRun[]> {
   if (!configured() || !companyId) return []
   try {
-    const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(20000) })
-    if (!res.ok) return []
-    const data = JSON.parse(await res.text())
-    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const rows = await fetchAllRows()
     const runs: CompanyRun[] = rows
-      .map((r: { row_data?: CompanyRun & { kind?: string } }) => r.row_data)
-      .filter((rd: (CompanyRun & { kind?: string }) | undefined): rd is CompanyRun =>
+      .map((r) => r.row_data as (CompanyRun & { kind?: string }) | undefined)
+      .filter((rd): rd is CompanyRun =>
         rd?.kind === 'run' && rd?.companyId === companyId && Boolean(rd?.lastTaskId))
     runs.sort((a, b) => (b.lastRunAt || '').localeCompare(a.lastRunAt || ''))
     return runs.slice(0, Math.max(0, limit))
@@ -345,14 +337,12 @@ export async function listRecentRuns(companyId: string, limit = 6): Promise<Comp
 export async function isEnrolled(companyId: string): Promise<boolean> {
   if (!configured() || !companyId) return false
   try {
-    const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(20000) })
-    if (!res.ok) return false
-    const data = JSON.parse(await res.text())
-    const rows = Array.isArray(data) ? data : data.data || data.rows || []
-    return rows
-      .map((r: { row_data?: LoopEnrollment & { kind?: string } }) => r.row_data)
-      .some((rd: (LoopEnrollment & { kind?: string }) | undefined) =>
-        Boolean(rd?.enabled) && rd?.kind !== 'run' && rd?.companyId === companyId)
+    const rows = await fetchAllRows()
+    const enrollments = rows
+      .map((r) => r.row_data as (LoopEnrollment & { kind?: string }) | undefined)
+      .filter((rd): rd is LoopEnrollment => Boolean(rd) && rd!.kind !== 'run')
+    const latest = dedupeByCompany(enrollments).find((e) => e.companyId === companyId)
+    return Boolean(latest?.enabled)
   } catch {
     return false
   }
@@ -464,14 +454,10 @@ export async function recordRunHealth(h: Omit<NightlyRunHealth, 'recordedAt'>): 
 export async function listRecentRunHealth(limit = 20): Promise<NightlyRunHealth[]> {
   if (!configured()) return []
   try {
-    const res = await fetch(`${rowsUrl()}?limit=500`, { headers: headers(), signal: AbortSignal.timeout(20000) })
-    if (!res.ok) return []
-    const data = JSON.parse(await res.text())
-    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    const rows = await fetchAllRows()
     const health: NightlyRunHealth[] = rows
-      .map((r: { row_data?: NightlyRunHealth & { kind?: string } }) => r.row_data)
-      .filter((rd: (NightlyRunHealth & { kind?: string }) | undefined): rd is NightlyRunHealth =>
-        rd?.kind === 'run_health')
+      .map((r) => r.row_data as (NightlyRunHealth & { kind?: string }) | undefined)
+      .filter((rd): rd is NightlyRunHealth => rd?.kind === 'run_health')
     health.sort((a, b) => (b.recordedAt || '').localeCompare(a.recordedAt || ''))
     return health.slice(0, Math.max(0, limit))
   } catch {

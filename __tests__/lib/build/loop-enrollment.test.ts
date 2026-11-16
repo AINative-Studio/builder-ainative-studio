@@ -569,6 +569,89 @@ describe('getLastRun', () => {
     const result = await getLastRun('co-1')
     expect(result!.lastTaskId).toBe('t1')
   })
+
+  // ---- Same real bug as listEnrolled's pagination test, same fix: getLastRun
+  // used its own single `?limit=500` fetch instead of the shared fetchAllRows()
+  // helper, so a company whose run-event row has aged past the first 500 rows
+  // (the append-only table grows by one row per enrolled company per night)
+  // silently looked "never run" on the dashboard even though it genuinely ran.
+  it('paginates past a single 500-row page — a run event past the first page is NOT silently missed', async () => {
+    const page0 = Array.from({ length: 500 }, (_, i) =>
+      ({ row_data: { kind: 'run', companyId: `co-${i}`, lastTaskId: `t-${i}`, lastStatus: 'ok', lastRunAt: '2026-09-01T00:00:00Z' } }))
+    const page1 = [{ row_data: { kind: 'run', companyId: 'wrench', lastTaskId: 't-wrench', lastStatus: 'dispatched', lastRunAt: '2026-11-14T07:05:00Z' } }]
+    const fn = vi.fn(async (url: string | URL | Request) => {
+      const isPage1 = String(url).includes('skip=500')
+      const body = isPage1 ? { data: page1, has_more: false } : { data: page0, has_more: true }
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+    })
+    vi.stubGlobal('fetch', fn)
+    const { getLastRun } = await freshConfigured()
+    const result = await getLastRun('wrench')
+    expect(result?.lastTaskId).toBe('t-wrench')
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+})
+
+// ---------- listRecentRuns (#1055) ----------
+describe('listRecentRuns', () => {
+  afterEach(() => {
+    vi.resetModules()
+    delete process.env.ZERODB_API_KEY
+    delete process.env.ZERODB_PROJECT_ID
+  })
+
+  it('returns [] when not configured', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const { listRecentRuns } = await freshUnconfigured()
+    expect(await listRecentRuns('co-1')).toEqual([])
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns runs for the company, newest first, respecting the limit', async () => {
+    mockFetch(() => ({ ok: true, body: { data: [
+      { row_data: { kind: 'run', companyId: 'co-1', lastTaskId: 't1', lastRunAt: '2026-01-01T00:00:00Z' } },
+      { row_data: { kind: 'run', companyId: 'co-1', lastTaskId: 't2', lastRunAt: '2026-01-03T00:00:00Z' } },
+      { row_data: { kind: 'run', companyId: 'co-1', lastTaskId: 't3', lastRunAt: '2026-01-02T00:00:00Z' } },
+      { row_data: { kind: 'run', companyId: 'co-2', lastTaskId: 'other', lastRunAt: '2026-01-05T00:00:00Z' } },
+    ] } }))
+    const { listRecentRuns } = await freshConfigured()
+    const result = await listRecentRuns('co-1', 2)
+    expect(result.map((r) => r.lastTaskId)).toEqual(['t2', 't3'])
+  })
+
+  it('excludes run rows with no lastTaskId', async () => {
+    mockFetch(() => ({ ok: true, body: { data: [
+      { row_data: { kind: 'run', companyId: 'co-1', lastTaskId: null, lastRunAt: '2026-01-01T00:00:00Z' } },
+    ] } }))
+    const { listRecentRuns } = await freshConfigured()
+    expect(await listRecentRuns('co-1')).toEqual([])
+  })
+
+  it('returns [] (never throws) when fetch throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net') }))
+    const { listRecentRuns } = await freshConfigured()
+    expect(await listRecentRuns('co-1')).toEqual([])
+  })
+
+  // ---- Same real bug/fix as getLastRun/isEnrolled above: listRecentRuns()
+  // must see the FULL append-only history, not just the first 500 rows, or
+  // its whole purpose (#1055 — "the last N nights in a row all failed") is
+  // defeated for any company whose history has aged past the first page.
+  it('paginates past a single 500-row page', async () => {
+    const page0 = Array.from({ length: 500 }, (_, i) =>
+      ({ row_data: { kind: 'run', companyId: `co-${i}`, lastTaskId: `t-${i}`, lastRunAt: '2026-09-01T00:00:00Z' } }))
+    const page1 = [{ row_data: { kind: 'run', companyId: 'tidemark', lastTaskId: 't-tidemark', lastRunAt: '2026-11-15T07:17:00Z' } }]
+    const fn = vi.fn(async (url: string | URL | Request) => {
+      const isPage1 = String(url).includes('skip=500')
+      const body = isPage1 ? { data: page1, has_more: false } : { data: page0, has_more: true }
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+    })
+    vi.stubGlobal('fetch', fn)
+    const { listRecentRuns } = await freshConfigured()
+    const result = await listRecentRuns('tidemark')
+    expect(result.map((r) => r.lastTaskId)).toEqual(['t-tidemark'])
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
 })
 
 // ---------- isEnrolled ----------
@@ -633,6 +716,52 @@ describe('isEnrolled', () => {
 
   it('handles raw array response (no data wrapper)', async () => {
     mockFetch(() => ({ ok: true, body: [makeEnrollmentRow({ companyId: 'co-1', enabled: true })] }))
+    const { isEnrolled } = await freshConfigured()
+    expect(await isEnrolled('co-1')).toBe(true)
+  })
+
+  // ---- Real bug: isEnrolled() had its own single `?limit=500` fetch instead
+  // of the shared, paginated fetchAllRows() helper listEnrolled() already uses
+  // — on the real append-only table (one row per enrolled company per night,
+  // confirmed 500+ rows in production), a company's own enrollment row ages
+  // past the first page and isEnrolled() silently reports "not enrolled" even
+  // though listEnrolled() (what the real nightly cron iterates) still finds
+  // it fine. This is exactly what hid the Tasks panel's "Recurring" row for a
+  // genuinely-enrolled company (#2089's investigation).
+  it('paginates past a single 500-row page — an enrollment row past the first page is NOT silently missed', async () => {
+    const page0 = Array.from({ length: 500 }, (_, i) => makeEnrollmentRow({ companyId: `co-${i}`, enrolledAt: '2026-09-01T00:00:00Z' }))
+    const page1 = [makeEnrollmentRow({ companyId: 'wrench', enabled: true, enrolledAt: '2026-09-05T00:00:00Z' })]
+    const fn = vi.fn(async (url: string | URL | Request) => {
+      const isPage1 = String(url).includes('skip=500')
+      const body = isPage1 ? { data: page1, has_more: false } : { data: page0, has_more: true }
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+    })
+    vi.stubGlobal('fetch', fn)
+    const { isEnrolled } = await freshConfigured()
+    expect(await isEnrolled('wrench')).toBe(true)
+    expect(fn).toHaveBeenCalledTimes(2)
+  })
+
+  // ---- Correctness fix riding along with the pagination fix: isEnrolled()
+  // used to check ANY historical row with `.some()`, so on this append-only
+  // store an OLD enabled:true row could never be overridden by a later pause
+  // (enabled:false) — a paused company still "looked" enrolled forever. Now
+  // dedupes to the latest row per company (same rule listEnrolled() already
+  // uses) before checking `enabled`.
+  it('respects the LATEST row when a company was paused after being enrolled', async () => {
+    mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'co-1', enabled: true, enrolledAt: '2026-01-01T00:00:00Z' }),
+      makeEnrollmentRow({ companyId: 'co-1', enabled: false, enrolledAt: '2026-01-05T00:00:00Z' }),
+    ] } }))
+    const { isEnrolled } = await freshConfigured()
+    expect(await isEnrolled('co-1')).toBe(false)
+  })
+
+  it('respects the LATEST row when a paused company was later resumed', async () => {
+    mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'co-1', enabled: false, enrolledAt: '2026-01-01T00:00:00Z' }),
+      makeEnrollmentRow({ companyId: 'co-1', enabled: true, enrolledAt: '2026-01-05T00:00:00Z' }),
+    ] } }))
     const { isEnrolled } = await freshConfigured()
     expect(await isEnrolled('co-1')).toBe(true)
   })
@@ -777,5 +906,24 @@ describe('listRecentRunHealth', () => {
     const result = await listRecentRunHealth()
     expect(result).toHaveLength(1)
     expect(result[0].shardIndex).toBe(3)
+  })
+
+  // ---- Same real bug/fix as the other readers in this file: a single
+  // `?limit=500` fetch could silently miss recent run_health rows once the
+  // shared append-only table has grown past one page.
+  it('paginates past a single 500-row page', async () => {
+    const page0 = Array.from({ length: 500 }, () => makeEnrollmentRow({ enrolledAt: '2026-09-01T00:00:00Z' }))
+    const page1 = [makeHealthRow({ shardIndex: 1, recordedAt: '2026-11-16T07:05:00Z' })]
+    const fn = vi.fn(async (url: string | URL | Request) => {
+      const isPage1 = String(url).includes('skip=500')
+      const body = isPage1 ? { data: page1, has_more: false } : { data: page0, has_more: true }
+      return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+    })
+    vi.stubGlobal('fetch', fn)
+    const { listRecentRunHealth } = await freshConfigured()
+    const result = await listRecentRunHealth()
+    expect(result).toHaveLength(1)
+    expect(result[0].shardIndex).toBe(1)
+    expect(fn).toHaveBeenCalledTimes(2)
   })
 })
