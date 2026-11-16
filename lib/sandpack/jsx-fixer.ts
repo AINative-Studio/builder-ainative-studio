@@ -213,6 +213,11 @@ function maskPreservingLength(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       const stop = end === -1 ? code.length : end + 1
       out += ' '.repeat(stop - i)
       i = stop
@@ -691,6 +696,11 @@ function maskTemplatesAndComments(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       const stop = end === -1 ? code.length : end + 1
       out += code.slice(i, stop)
       i = stop
@@ -1058,6 +1068,11 @@ function maskStringsAndCommentsPreservingLines(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       const realEnd = end === -1 ? code.length - 1 : end
       out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
@@ -1355,6 +1370,26 @@ function findBacktickEnd(code: string, openIdx: number): number {
 }
 
 /**
+ * #2034/#2053/#2057-class guard: true when the `'`/`"` at `idx` can be ruled
+ * out as a real string-literal opener — either a JSX-text contraction
+ * ("we're") immediately after a word character, or one whose only
+ * candidate close (per the already-computed `end`) is past a line break (a
+ * real single/double-quoted JS string can never contain a raw newline). See
+ * lib/build/bracket-scanner.ts's resolveStringOpen for the canonical
+ * write-up of both cases. Shared by every mask* helper below so a decoy/
+ * comment-hidden name or import this file's rewrites rely on masking out
+ * doesn't silently resurface — or real code after a contraction doesn't
+ * silently vanish — the same way #2034/#2053/#2057 did elsewhere.
+ */
+function isFakeStringOpen(code: string, idx: number, quote: string, end: number): boolean {
+  const prev = code[idx - 1]
+  if (quote === "'" && prev !== undefined && /[A-Za-z0-9_$]/.test(prev)) return true
+  const nl = code.indexOf('\n', idx)
+  if (end === -1) return nl !== -1
+  return nl !== -1 && nl < end
+}
+
+/**
  * Blanks out every string literal, template literal, and `//`/`/* *\/`
  * comment in `code` (replacing each with a single space) so a structural
  * scan like isUsedAsJsxTag() below only ever matches a REAL JSX tag.
@@ -1382,6 +1417,11 @@ function maskStringsAndComments(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       i = end === -1 ? code.length : end + 1
       out += ' '
       continue
@@ -1432,6 +1472,11 @@ function maskPreservingOffsets(code: string): string {
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
       const end = findStringEnd(code, i, ch)
+      if (isFakeStringOpen(code, i, ch, end)) {
+        out += ch
+        i++
+        continue
+      }
       const realEnd = end === -1 ? code.length - 1 : end
       out += code.slice(i, realEnd + 1).replace(/[^\n]/g, ' ')
       i = realEnd + 1
