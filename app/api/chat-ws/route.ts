@@ -279,6 +279,28 @@ async function runClaudePass(system: string, user: string, maxTokens = 16000, mo
  * contain a literal newline in valid JS, so only these two multi-line
  * constructs can hide an embedded line this way.
  */
+/**
+ * #2034/#2053/#2057-class guard: true when the `'`/`"` at `idx` can be
+ * ruled out as a real string-literal opener — either a JSX-text
+ * contraction ("we're") immediately after a word character, or one whose
+ * only candidate close (per the already-computed `end`, -1 if none) is
+ * past a line break (a real single/double-quoted JS string can never
+ * contain a raw newline). See lib/build/bracket-scanner.ts's
+ * resolveStringOpen for the canonical write-up of both cases. Without
+ * this, the quote branch below jumps `i` to whatever same-quote character
+ * happens to appear next — possibly straight past the real backtick/block-
+ * comment open it should have registered as a multi-line construct — so a
+ * decoy FILE-marker-shaped line genuinely hidden inside one is wrongly
+ * read as a real marker by hasRealFileMarker.
+ */
+function isFakeStringOpen(code: string, idx: number, quote: string, end: number): boolean {
+  const prev = code[idx - 1]
+  if (quote === "'" && prev !== undefined && /[A-Za-z0-9_$]/.test(prev)) return true
+  const nl = code.indexOf('\n', idx)
+  if (end === -1) return nl !== -1
+  return nl !== -1 && nl < end
+}
+
 function linesInsideMultilineConstruct(code: string): Set<number> {
   const inside = new Set<number>()
   const markSpan = (from: number, to: number, line: number): number => {
@@ -294,7 +316,9 @@ function linesInsideMultilineConstruct(code: string): Set<number> {
     if (ch === '"' || ch === "'") {
       let j = i + 1
       while (j < code.length && code[j] !== ch) { if (code[j] === '\\') j++; j++ }
-      i = j + 1
+      const end = j < code.length ? j : -1
+      if (isFakeStringOpen(code, i, ch, end)) { i++; continue }
+      i = end === -1 ? code.length : end + 1
       continue
     }
     if (ch === '/' && next === '/') {
