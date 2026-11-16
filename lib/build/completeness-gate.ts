@@ -38,7 +38,7 @@
  */
 
 import { parse } from '@babel/parser'
-import { maskComments, findStringEnd, findBacktickEnd } from './bracket-scanner'
+import { maskComments, findBacktickEnd, resolveStringOpen } from './bracket-scanner'
 
 /** One parsed import statement with its local specifier and local bindings. */
 interface LocalImport {
@@ -254,8 +254,18 @@ function linesInsideMultilineConstruct(code: string): Set<number> {
     const ch = code[i]
     const next = code[i + 1]
     if (ch === '"' || ch === "'") {
-      const end = findStringEnd(code, i, ch)
-      i = end === -1 ? code.length : end + 1
+      // #2034/#2053-class guard: resolveStringOpen() (not a raw
+      // findStringEnd()) rules out a JSX-text contraction/decade-style
+      // apostrophe as a real string opener. Without it, a lone `'` earlier
+      // in the file desyncs this scan — jumping `i` to whatever quote
+      // character happens to appear next (or to EOF) and silently skipping
+      // over a real backtick/block-comment open that should have been
+      // registered as a multi-line construct (same bug class already fixed
+      // in this function's twin, flatten-multifile.ts's
+      // linesInsideMultilineConstruct, #2034/#2053/#2057/#2061).
+      const resolved = resolveStringOpen(code, i, ch)
+      if (resolved === null) { i++; continue }
+      i = resolved.end === -1 ? code.length : resolved.end + 1
       continue
     }
     if (ch === '/' && next === '/') {
