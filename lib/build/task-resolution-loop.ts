@@ -54,6 +54,31 @@ import { resolveApp } from '@/lib/build/app-registry'
 export const STALE_IN_PROGRESS_MS = 30 * 60 * 1000
 
 /**
+ * #2105 — the minimum amount of the nightly-loop route's shared wall-clock
+ * budget that must remain before STARTING another resolveTask() call.
+ * Below this, a task is deferred (left `todo`, never written to
+ * `in_progress`) rather than attempted, because resolveTask() itself can
+ * plausibly use up to:
+ *
+ *   - a Gitea issue-create + repo-read round trip (network, seconds)
+ *   - a real LLM implement call (no hard timeout of its own; tens of
+ *     seconds is typical, but not bounded)
+ *   - a Gitea commit + PR (network, seconds)
+ *   - coverage-runner's own RUN_TIMEOUT_MS (120_000ms) verify run, OR an
+ *     equivalent build-check run when there's no test suite
+ *   - a best-effort auto-merge + redeploy (network, seconds)
+ *
+ * 150s is deliberately generous relative to just the one hard-bounded step
+ * (coverage-runner's 120s) so the unbounded LLM-call and network steps have
+ * real headroom too — the goal is "comfortably finishes before the
+ * platform's own maxDuration kill," not "exactly matches one component's
+ * timeout." A single resolution that still somehow runs long is not newly
+ * at risk either way; this constant only decides whether a NEW one is
+ * safe to START.
+ */
+export const MIN_REMAINING_MS_FOR_TASK_RESOLUTION = 150_000
+
+/**
  * PURE — whether a task is an orphaned `in_progress` row that should be
  * reaped rather than left stuck forever. See STALE_IN_PROGRESS_MS's doc.
  */
@@ -198,13 +223,29 @@ export function maxTasksForTier(tier: string | null | undefined): number {
  * committed and hoped for." Observability only: does NOT change which tasks
  * get merged/redeployed — that auto-merge policy question is a human
  * decision, out of scope here.
+ *
+ * `deadlineMs` (#2105) — the CALLER's own real platform-kill deadline
+ * (epoch ms), e.g. the nightly-loop route's `startedAt + maxDuration`. Not
+ * the earlier company-admission budget that route already enforces via
+ * mapWithConcurrency — this is a second, later check, because an admitted
+ * company's resolution pass was previously unbounded and could still run
+ * past the shared maxDuration on its own (see MIN_REMAINING_MS_FOR_TASK_
+ * RESOLUTION's doc). Omitted, this function is unbounded, same as before
+ * this fix — every existing caller/test keeps working unchanged.
+ *
+ * `deferred` — how many due `todo` tasks were skipped THIS run because too
+ * little of `deadlineMs`'s budget remained to safely start them (see
+ * MIN_REMAINING_MS_FOR_TASK_RESOLUTION). A deferred task is left `todo`
+ * with an honest note and is NOT counted in `attempted` — it is picked up
+ * for real on a future run, not lost.
  */
 export async function runTaskResolutions(
   scopeKey: string,
   slug: string,
   planTier?: string | null,
-): Promise<{ attempted: number; completed: number; merged: number; redeployed: number; reaped: number; completedNoCoverage: number }> {
-  if (!scopeKey || !slug) return { attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0, completedNoCoverage: 0 }
+  deadlineMs?: number,
+): Promise<{ attempted: number; completed: number; merged: number; redeployed: number; reaped: number; completedNoCoverage: number; deferred: number }> {
+  if (!scopeKey || !slug) return { attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0, completedNoCoverage: 0, deferred: 0 }
 
   const limit = maxTasksForTier(planTier)
   let attempted = 0
@@ -213,6 +254,7 @@ export async function runTaskResolutions(
   let redeployed = 0
   let reaped = 0
   let completedNoCoverage = 0
+  let deferred = 0
   try {
     const tasks = await listTasks(scopeKey)
 
@@ -275,7 +317,47 @@ export async function runTaskResolutions(
       .sort((a, b) => new Date(a.createdAt || 0).getTime() - new Date(b.createdAt || 0).getTime())
       .slice(0, limit)
 
-    for (const task of due) {
+    for (let i = 0; i < due.length; i++) {
+      // #2105 — the shared nightly-loop route's `deadlineMs` is its own
+      // real platform-kill time (startedAt + maxDuration), not the earlier
+      // company-ADMISSION budget mapWithConcurrency already enforces in
+      // route.ts. Once admitted, a company's pipeline (including this
+      // function) previously ran unbounded: resolveTask() does an LLM
+      // implement call, a Gitea commit+PR, and up to coverage-runner's own
+      // 120s RUN_TIMEOUT_MS verify run — comfortably enough, on its own, to
+      // run past whatever's left of the route's 300s maxDuration when a
+      // company is admitted late in the sweep. When that happened, the
+      // platform hard-killed the whole function mid-resolveTask(), leaving
+      // the task stuck at the `in_progress` resolveTask() had already
+      // written — invisible to every future run (which only selects
+      // `todo`) until the 30-minute stale-in_progress reaper above finally
+      // caught up, a day later, with a generic "timeout or crash" message
+      // that gave no real signal.
+      //
+      // So: before STARTING another resolveTask() call, check there's
+      // enough of the shared budget left to plausibly finish one — if not,
+      // defer every remaining due task honestly (stage stays `todo`, never
+      // written to `in_progress`) with a specific reason, rather than
+      // starting one the platform would likely kill mid-flight. Omitted
+      // deadlineMs (any caller/test that doesn't pass one) is unbounded,
+      // same as before this fix.
+      if (deadlineMs !== undefined && deadlineMs - Date.now() < MIN_REMAINING_MS_FOR_TASK_RESOLUTION) {
+        for (const remaining of due.slice(i)) {
+          deferred += 1
+          try {
+            await updateTask(scopeKey, remaining.id, {
+              output: 'Deferred — insufficient time remaining in this run’s shared budget to safely attempt it; it stays queued and will be retried on a future run.',
+            })
+          } catch {
+            /* best-effort — a failed note leaves the row untouched (still
+             * `todo`), never `in_progress`, so it is still safely retryable
+             * next run either way. */
+          }
+        }
+        break
+      }
+
+      const task = due[i]
       attempted += 1
       try {
         const result = await resolveTask(scopeKey, task, slug)
@@ -291,5 +373,5 @@ export async function runTaskResolutions(
   } catch {
     /* listing failure is non-fatal */
   }
-  return { attempted, completed, merged, redeployed, reaped, completedNoCoverage }
+  return { attempted, completed, merged, redeployed, reaped, completedNoCoverage, deferred }
 }

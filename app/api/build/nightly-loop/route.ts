@@ -116,6 +116,8 @@ interface CompanyOutcome {
   tasksReaped: number
   /** #1914 — of tasksCompleted, how many had no test suite to verify against; see runTaskResolutions(). */
   tasksCompletedNoCoverage: number
+  /** #2105 — of this company's due tasks, how many were deferred (left `todo`, never attempted) because too little of the shared maxDuration budget remained; see runTaskResolutions(). */
+  tasksDeferredForBudget: number
   commsSent: boolean
   stalled: boolean
 }
@@ -130,6 +132,13 @@ export async function GET(request: NextRequest) {
   const startedAt = Date.now()
   const budgetMs = nightlyLoopBudgetMs()
   const deadline = startedAt + budgetMs
+  // #2105 — the REAL platform-kill deadline, distinct from `deadline` above
+  // (which only gates company ADMISSION into the worker pool, well before
+  // this). Threaded down to runTaskResolutions() so an already-admitted
+  // company's task resolution can't itself run past the point the platform
+  // would hard-kill this whole function — see task-resolution-loop.ts's
+  // MIN_REMAINING_MS_FOR_TASK_RESOLUTION doc.
+  const platformKillDeadline = startedAt + maxDuration * 1000
 
   // Read before the try block (pure URL parsing, cannot throw on its own)
   // so a crash during listEnrolled() or anything else below still lets the
@@ -194,7 +203,7 @@ export async function GET(request: NextRequest) {
     const outcomes = await mapWithConcurrency(
       batch,
       NIGHTLY_COMPANY_CONCURRENCY,
-      (e) => runForCompany(e, resolvePlanTier),
+      (e) => runForCompany(e, resolvePlanTier, platformKillDeadline),
       { deadline },
     )
 
@@ -212,6 +221,7 @@ export async function GET(request: NextRequest) {
     const tasksRedeployed = completed.reduce((n, o) => n + (o.value?.tasksRedeployed || 0), 0)
     const tasksReaped = completed.reduce((n, o) => n + (o.value?.tasksReaped || 0), 0)
     const tasksCompletedNoCoverage = completed.reduce((n, o) => n + (o.value?.tasksCompletedNoCoverage || 0), 0)
+    const tasksDeferredForBudget = completed.reduce((n, o) => n + (o.value?.tasksDeferredForBudget || 0), 0)
     const commsSent = completed.filter((o) => o.value?.commsSent).length
     const stalledCompanies = completed.filter((o) => o.value?.stalled).length
 
@@ -226,7 +236,7 @@ export async function GET(request: NextRequest) {
     logger.info('Nightly autonomous loop complete', {
       dispatched, total: results.length, processed: completed.length, deferred,
       failedCompanies, reportsWritten, mediaGenerated, tasksAttempted, tasksCompleted,
-      tasksMerged, tasksRedeployed, tasksReaped, tasksCompletedNoCoverage,
+      tasksMerged, tasksRedeployed, tasksReaped, tasksCompletedNoCoverage, tasksDeferredForBudget,
       commsSent, stalledCompanies, elapsedMs, budgetExhausted,
     })
     if (stalledCompanies > 0) {
@@ -240,6 +250,17 @@ export async function GET(request: NextRequest) {
       // line so this doesn't just blend into the aggregate above.
       logger.warn('Nightly loop: recovered orphaned in_progress tasks from a prior crashed/killed run', {
         tasksReaped,
+      })
+    }
+    if (tasksDeferredForBudget > 0) {
+      // #2105 — a non-zero count here means the NEW per-task deadline check
+      // is doing its job: at least one due task was deliberately skipped
+      // (left `todo`, never attempted) rather than risking the platform
+      // killing it mid-resolveTask(). Distinct, specific signal from
+      // tasksReaped above (which means a PAST run already got killed) —
+      // this one means a kill was just avoided.
+      logger.warn('Nightly loop: deferred due tasks because too little of the shared budget remained to safely attempt them', {
+        tasksDeferredForBudget,
       })
     }
 
@@ -261,6 +282,7 @@ export async function GET(request: NextRequest) {
       tasksRedeployed,
       tasksReaped,
       tasksCompletedNoCoverage,
+      tasksDeferredForBudget,
       stalledCompanies,
       elapsedMs,
     })
@@ -284,6 +306,7 @@ export async function GET(request: NextRequest) {
       tasksRedeployed,
       tasksReaped,
       tasksCompletedNoCoverage,
+      tasksDeferredForBudget,
       commsSent,
       stalledCompanies,
       results,
@@ -315,6 +338,7 @@ export async function GET(request: NextRequest) {
       tasksRedeployed: 0,
       tasksReaped: 0,
       tasksCompletedNoCoverage: 0,
+      tasksDeferredForBudget: 0,
       stalledCompanies: 0,
       elapsedMs: Date.now() - startedAt,
       crashed: true,
@@ -336,11 +360,12 @@ export async function GET(request: NextRequest) {
 async function runForCompany(
   e: LoopEnrollment,
   resolvePlanTier: (ownerKey: string | undefined) => Promise<string | null>,
+  taskResolutionDeadline: number,
 ): Promise<CompanyOutcome> {
   const outcome: CompanyOutcome = {
     result: { companyId: e.companyId, briefing: null, taskId: null, status: 'error', detail: 'not run' },
     reportWritten: false, mediaGenerated: 0, tasksAttempted: 0, tasksCompleted: 0,
-    tasksMerged: 0, tasksRedeployed: 0, tasksReaped: 0, tasksCompletedNoCoverage: 0,
+    tasksMerged: 0, tasksRedeployed: 0, tasksReaped: 0, tasksCompletedNoCoverage: 0, tasksDeferredForBudget: 0,
     commsSent: false, stalled: false,
   }
 
@@ -637,13 +662,14 @@ async function runForCompany(
     try {
       const scopeKey = chatScopeKey(e.ownerKey, e.companyId)
       const planTier = await resolvePlanTier(e.ownerKey).catch(() => null)
-      const t = await runTaskResolutions(scopeKey, e.companyId, planTier)
+      const t = await runTaskResolutions(scopeKey, e.companyId, planTier, taskResolutionDeadline)
       outcome.tasksAttempted += t.attempted
       outcome.tasksCompleted += t.completed
       outcome.tasksMerged += t.merged || 0
       outcome.tasksRedeployed += t.redeployed || 0
       outcome.tasksReaped += t.reaped || 0
       outcome.tasksCompletedNoCoverage += t.completedNoCoverage || 0
+      outcome.tasksDeferredForBudget += t.deferred || 0
     } catch (err) {
       logger.warn('Task resolution run failed', { companyId: e.companyId, err: (err as Error)?.message })
     }

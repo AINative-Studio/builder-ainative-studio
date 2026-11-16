@@ -339,6 +339,16 @@ export interface NightlyRunHealth {
    * never mistaken for an explicit 0.
    */
   tasksCompletedNoCoverage?: number
+  /**
+   * #2105 — of this run's due tasks, how many were deferred (left `todo`,
+   * never attempted) because too little of the shared maxDuration budget
+   * remained to safely start another resolveTask() call — see
+   * task-resolution-loop.ts's MIN_REMAINING_MS_FOR_TASK_RESOLUTION. Optional
+   * for the same reason as tasksMerged/tasksRedeployed/tasksReaped/
+   * tasksCompletedNoCoverage above — an older/pre-this-field row is never
+   * mistaken for an explicit 0.
+   */
+  tasksDeferredForBudget?: number
   stalledCompanies: number
   elapsedMs: number
   /**
