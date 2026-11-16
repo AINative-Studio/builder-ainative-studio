@@ -112,6 +112,50 @@ export default function App() {
     expect(() => JSON.stringify(built)).not.toThrow()
   })
 
+  it('still catches the #2013 luminary repro end-to-end through the real pipeline, where fixMissingExports() patches in an `export` keyword BEFORE stubTruncatedFiles() runs and would otherwise erase SIGNAL 2 (no-export) without the component ever having reached its own return/JSX', () => {
+    // Verbatim live repro (2026-11-16): luminary's durable
+    // ContactFormSection.tsx, still unrepaired in production 3 days after
+    // #2013/#2023 landed a generation-time-only gate. Passed through the
+    // REAL buildSandpackFiles() — not findTruncatedFiles() directly — so
+    // this proves the full repair pipeline's own ordering (fixMissingExports
+    // + fixExportShapeMismatches run first) doesn't defeat the net.
+    const LUMINARY_CONTACT_FORM_RAW = `import React, { useState } from 'react';
+import Label from './ui/Label';
+import Input from './ui/Input';
+import Textarea from './ui/Textarea';
+import Button from './ui/Button';
+
+const ContactFormSection = () => {
+  const [formData, setFormData] = useState({
+    name: '', email: '', phone: '', zipCode: '', subject: '', message: '',
+  });
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+}
+}`
+    const built = buildSandpackFiles({
+      '/src/App.tsx': [
+        "import ContactFormSection from './components/ContactFormSection'",
+        'export default function App(){ return <ContactFormSection/> }',
+      ].join('\n'),
+      '/src/components/ContactFormSection.tsx': LUMINARY_CONTACT_FORM_RAW,
+    })
+
+    const stubbed = built['/src/components/ContactFormSection.tsx']
+    // Must be replaced with an inert, parseable stub — not left as a
+    // component that compiles but returns nothing (which React rejects
+    // with "Nothing was returned from render").
+    expect(stubbed).toContain('Auto-stubbed')
+    expect(stubbed).toContain('=> null')
+    expect(stubbed).not.toContain('e.preventDefault')
+  })
+
   it('leaves a component-shaped file with zero export alone when a real sibling file elsewhere already exports under its OWN name — only a path with no clean declaration-to-export match gets stubbed', () => {
     // A file with a real, finished, exported component must never be
     // touched even when unrelated truncation is happening elsewhere in the
