@@ -2658,7 +2658,19 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
           clearInterval(keepaliveInterval)
           try { controller.close() } catch (_) { /* already closed */ }
         } catch (error) {
-          console.error('Streaming error:', error)
+          // #2094: the client only ever sees a generic 'Stream failed' (or the
+          // capacity-exhausted message) for any non-capacity failure here, so
+          // the server-side log line is the ONLY place the real cause is ever
+          // recorded. Without responseId it can't be correlated to the chat
+          // session a founder is looking at, and without the error's own
+          // message/name a human reading logs can't tell a validation failure
+          // from a network timeout from a thrown string apart from re-reading
+          // the raw object dump.
+          console.error(`[chat-ws] Streaming error for ${responseId}:`, {
+            name: error instanceof Error ? error.name : typeof error,
+            message: error instanceof Error ? error.message : String(error),
+            stack: error instanceof Error ? error.stack : undefined,
+          })
           keepaliveActive = false
           clearInterval(keepaliveInterval)
           // #1802: tell the founder this was an upstream capacity limit, not a
