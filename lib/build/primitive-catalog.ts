@@ -212,7 +212,16 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'AI-native CRM + sales pipeline: deals, stages, customers, revenue analytics',
     url: `${DOCS}/business-ops/zeropipeline`,
     apiBase: 'https://pipeline.ainative.studio/api/v1',
-    triggers: ['crm', 'sales', 'pipeline', 'leads', 'lead', 'customers', 'deals', 'prospects', 'b2b', 'outreach', 'account', 'sell to businesses'] },
+    // #2091: 'customers' alone used to trigger ZeroPipeline for ANY idea that
+    // mentions customers — e.g. "customers submit feedback" for a cafe
+    // feedback board has nothing to do with a sales pipeline. Per this
+    // primitive's own canonical doc entry (docs/AINATIVE_PRIMITIVES.md's
+    // composition table: "customers / leads / sales pipeline"), "customers"
+    // was only ever meant to co-occur with real sales/pipeline language, not
+    // stand alone — removed as its own trigger; 'crm'/'sales'/'pipeline'/
+    // 'leads'/'lead'/'deals'/'prospects' etc. still correctly match a real
+    // sales-pipeline idea.
+    triggers: ['crm', 'sales', 'pipeline', 'leads', 'lead', 'deals', 'prospects', 'b2b', 'outreach', 'account', 'sell to businesses'] },
   { name: 'ZeroInvoice', category: 'business-ops',
     purpose: 'Invoicing + billing: Stripe payments, QuickBooks sync, customer portals',
     url: `${DOCS}/business-ops/zeroinvoice`,
@@ -421,7 +430,18 @@ export const PRIMITIVE_CATALOG: CatalogPrimitive[] = [
     purpose: 'Two-sided marketplace: agents broadcast goals, businesses respond with agent-readable services',
     url: `${DOCS}/marketplace/overview`,
     apiBase: 'https://api.ainative.studio/v1/public/intents',
-    triggers: ['marketplace', 'two-sided', 'match', 'matching', 'buyers and sellers', 'services', 'gig', 'booking'] },
+    // #2091: 'booking' alone used to trigger this two-sided AI-agent
+    // marketplace for ANY idea that mentions booking — e.g. "clients pick an
+    // available time slot and book it" for a simple hairdresser appointment
+    // widget has nothing to do with agents broadcasting goals / businesses
+    // responding with agent-readable services (this primitive's own doc
+    // description — docs/AINATIVE_PRIMITIVES.md). A plain scheduling/calendar
+    // idea needs no special primitive at all (ZeroDB tables are sufficient,
+    // confirmed live). Removed 'booking' and 'services' (too generic — every
+    // business idea "provides services") as standalone triggers; the
+    // remaining triggers still correctly match a genuine two-sided-matching
+    // idea.
+    triggers: ['marketplace', 'two-sided', 'match', 'matching', 'buyers and sellers', 'gig'] },
   { name: 'AINativeNGO', category: 'business-ops',
     // "InstitutionOS" — 8-layer OS for AI-native institutions. Live API verified at
     // ngo.ainative.studio (openapi.json, 360 endpoints): grants, impact, donors,
