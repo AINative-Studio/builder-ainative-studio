@@ -98,33 +98,33 @@ describe('GET /api/build/nightly-loop — plan-tier-aware task throughput (#908)
     h.fetchPlanByEmail.mockResolvedValue({ plan: 'enterprise', email: 'founder@beacon.co', verified: true })
     await GET(req())
     expect(h.fetchPlanByEmail).toHaveBeenCalledWith('founder@beacon.co')
-    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', 'enterprise')
+    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', 'enterprise', expect.any(Number))
   })
 
   it('normalizes a core alias (launch/company) before passing it through', async () => {
     h.fetchPlanByEmail.mockResolvedValue({ plan: 'launch', email: 'founder@beacon.co', verified: true })
     await GET(req())
-    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', 'pro')
+    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', 'pro', expect.any(Number))
   })
 
   it('a plan-lookup that could not verify (verified:false) degrades to null — never fabricates a tier', async () => {
     h.fetchPlanByEmail.mockResolvedValue({ plan: null, email: null, verified: false, reason: 'http_500' })
     await GET(req())
-    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null)
+    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null, expect.any(Number))
   })
 
   it('a fetchPlanByEmail rejection degrades to null rather than throwing out of the loop', async () => {
     h.fetchPlanByEmail.mockRejectedValue(new Error('core unreachable'))
     const res = await GET(req())
     expect(res.status).toBe(200)
-    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null)
+    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null, expect.any(Number))
   })
 
   it('a guest ownerKey (no real email) skips the lookup entirely and degrades to null', async () => {
     h.listEnrolled.mockResolvedValue([{ ...APP_ENROLLMENT, ownerKey: 'guest:anon' }])
     await GET(req())
     expect(h.fetchPlanByEmail).not.toHaveBeenCalled()
-    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null)
+    expect(h.runTaskResolutions).toHaveBeenCalledWith(expect.any(String), 'beacon', null, expect.any(Number))
   })
 
   it('a missing ownerKey skips the lookup and degrades to null (runTaskResolutions itself already no-ops without ownerKey upstream)', async () => {
