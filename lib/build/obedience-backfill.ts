@@ -73,12 +73,14 @@
  *    granularity instead of company granularity.
  */
 
-import { listAllAppsWithStatus, type AppEntry } from '@/lib/build/app-registry'
-import { loadGeneration } from '@/lib/zerodb-store'
+import { listAllAppsWithStatus, resolveAppVerified, type AppEntry } from '@/lib/build/app-registry'
+import { loadGeneration, listGenerations } from '@/lib/zerodb-store'
 import { checkObedience } from '@/lib/build/obedience-gate'
 import { createTask, listTasksForCompany } from '@/lib/build/task-store'
 import { openIssueForNewTask } from '@/lib/build/task-resolver'
 import { chatScopeKey } from '@/lib/build/chat-store'
+import { generateSlug, looksLikeUnsubstitutedPlaceholder, extractShowcaseTitle } from '@/lib/showcase-data'
+import { isQualityApp } from '@/lib/showcase-quality'
 
 /** Same posture as MAX_BACKFILLS_PER_RUN in zerodb-key-backfill.ts. */
 export const MAX_TASKS_FILED_PER_RUN = 50
@@ -312,6 +314,228 @@ export async function runObedienceBackfillSweep(
     // list (not just the ones acted on) so existing callers that print it —
     // and the CLI wrapper's own per-reason bullet list — keep seeing the
     // company's complete current gap set, same as before this fix.
+    const disposition: ObedienceBackfillDisposition = anyFailed
+      ? 'file_failed'
+      : anyFiled
+        ? 'filed_task'
+        : anyCapped
+          ? 'capped'
+          : 'already_tracked'
+    record({
+      slug,
+      disposition,
+      reasons,
+      ...(anyCapped && !anyFiled && !anyFailed
+        ? { reason: `per-run cap of ${MAX_TASKS_FILED_PER_RUN} reached — re-run to continue` }
+        : {}),
+    })
+  }
+
+  return {
+    ok: true,
+    dryRun,
+    registryOk: true,
+    checked,
+    gapsFound,
+    tasksFiled,
+    failed,
+    byDisposition,
+    results,
+  }
+}
+
+/**
+ * #2126 — the sweep above iterates `listAllAppsWithStatus()`, i.e. only
+ * companies that went through `registerApp()`. But `/showcase`
+ * (app/api/showcase/route.ts) independently lists generations straight from
+ * `listGenerations()` and SYNTHESIZES a display slug for any generation that
+ * passes `isQualityApp()`/`is_showcase` — including a fully anonymous,
+ * never-registered, never-claimed chat session. That synthesized slug gets
+ * its own real, public, linkable `/build/{slug}` page (a different
+ * resolution path than the registry — `resolveAppVerified()` only matches
+ * registry rows), but is structurally invisible to `runObedienceBackfillSweep`
+ * above AND to the nightly loop (also registry-derived) — so a real
+ * `fakeLeadCaptureGap`-class bug on one of these pages has NO remediation
+ * path, ever, no matter how many times either sweep runs.
+ *
+ * Confirmed live (#2126): 82% of showcase entries match this unregistered
+ * pattern; two sampled ones have the exact same silent-no-op email-capture
+ * bug #1954/#2089 already fixed on registered companies.
+ *
+ * This sweep closes that gap by walking the SAME `listGenerations()` rows
+ * and the SAME eligibility/slug-synthesis `/showcase` uses, skipping any row
+ * whose synthesized slug already resolves to a real registry entry (that
+ * one is the OTHER sweep's job — never double-file for it here), and running
+ * the same `checkObedience()` + per-reason `createTask()` pipeline as above.
+ *
+ * SCOPE KEY: there is no `app` row and no `ownerEmail` for an unregistered
+ * generation, so this always scopes as `chatScopeKey('guest:anon', slug)` —
+ * the same anonymous-session convention `deriveOwnerKey()`
+ * (lib/build/chat-store.ts) falls back to for a guest with no stable id.
+ *
+ * GITEA ISSUE: there is no `app.gitOrg` either — `openIssueForNewTask()`
+ * already treats an absent `gitOrg` as "not git-provisioned yet" and
+ * no-ops (same as the registry sweep's own un-provisioned-company case), so
+ * no new fallback logic is needed; the task is still filed and visible on
+ * the founder's Tasks panel once/if the generation is ever claimed and
+ * provisioned.
+ *
+ * SAFETY — same posture as the sweep above: dry-run by default, idempotent
+ * per reason (never double-files a gap that's already tracked), capped
+ * per run, and a `listGenerations()` read that comes back empty is reported
+ * as `registryOk: false` rather than "nothing to check" — `listGenerations()`
+ * itself never throws (it falls back to a stale cache or `[]` on a real
+ * failure), so an empty result here is genuinely ambiguous between "no
+ * showcase-eligible generations exist" and "the read failed" — treating it
+ * as a possible failure is the safer default for a sweep that can never tell
+ * the difference from its own inputs alone.
+ */
+export async function runShowcaseObedienceBackfillSweep(
+  opts: { dryRun?: boolean; onlySlugs?: string[] } = {},
+): Promise<ObedienceBackfillSweepResult> {
+  const dryRun = opts.dryRun !== false
+  const only = (opts.onlySlugs || []).map((s) => (s || '').trim()).filter(Boolean)
+  const onlySet = only.length ? new Set(only) : null
+
+  const empty = (registryOk: boolean): ObedienceBackfillSweepResult => ({
+    ok: true,
+    dryRun,
+    registryOk,
+    checked: 0,
+    gapsFound: 0,
+    tasksFiled: 0,
+    failed: 0,
+    byDisposition: {},
+    results: [],
+  })
+
+  let rows: any[]
+  try {
+    rows = await listGenerations(1000)
+  } catch {
+    rows = []
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    console.error(
+      '[obedience-backfill:showcase] ABORTED — generation list read returned nothing. ' +
+        'listGenerations() never throws and falls back to a stale cache on failure, so an ' +
+        'empty result here cannot be told apart from a real read failure; re-run rather than ' +
+        'treating this as "no showcase-eligible generations exist".',
+    )
+    return empty(false)
+  }
+
+  const results: ObedienceBackfillCompanyResult[] = []
+  const byDisposition: Record<string, number> = {}
+  let checked = 0
+  let gapsFound = 0
+  let tasksFiled = 0
+  let failed = 0
+
+  const record = (r: ObedienceBackfillCompanyResult) => {
+    results.push(r)
+    byDisposition[r.disposition] = (byDisposition[r.disposition] || 0) + 1
+  }
+
+  for (const r of rows) {
+    const chatId = String(r?.chat_id || '').trim()
+    const code = r?.generated_code || ''
+    // Same eligibility gate /showcase applies before an entry is ever
+    // surfaced/synthesized a slug at all — a generation that would not even
+    // appear on the public gallery is out of scope for this sweep too.
+    if (r?.is_showcase === false) continue
+    if (!isQualityApp(code, chatId)) continue
+    const title = r?.title || extractShowcaseTitle(r?.prompt || '')
+    if (looksLikeUnsubstitutedPlaceholder(title)) continue
+
+    const slug = `${generateSlug(title)}-${chatId.slice(0, 6)}`
+    if (onlySet && !onlySet.has(slug)) continue
+
+    // Skip anything that already resolves to a real registry entry — that
+    // company is the OTHER sweep's job (runObedienceBackfillSweep above);
+    // double-checking it here would risk filing a duplicate task under a
+    // DIFFERENT scope key (guest:anon vs. the company's real ownerEmail).
+    const { entry, verified } = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+    if (!verified) {
+      // Could not confirm either way — fail closed (never silently treat an
+      // unconfirmed registry read as "definitely unregistered").
+      record({ slug, disposition: 'no_code', reason: 'could not verify registry status' })
+      continue
+    }
+    if (entry) continue
+
+    let gen: Awaited<ReturnType<typeof loadGeneration>>
+    try {
+      gen = await loadGeneration(chatId)
+    } catch (e: any) {
+      record({ slug, disposition: 'no_code', reason: String(e?.message || e).slice(0, 160) })
+      continue
+    }
+    const fullCode = gen ? codeForObedienceCheck(gen) : code
+    if (!fullCode.trim()) {
+      record({ slug, disposition: 'no_code' })
+      continue
+    }
+
+    checked++
+
+    const idea = gen?.prompt || r?.prompt || slug
+    const obedience = checkObedience(fullCode, idea, undefined, { landingPageOnly: true })
+    if (obedience.ok) {
+      record({ slug, disposition: 'clean' })
+      continue
+    }
+
+    gapsFound++
+    const reasons = obedience.reasons.length > 0 ? obedience.reasons : ['obedience-gate check failed']
+
+    if (dryRun) {
+      record({ slug, disposition: 'would_file_task', reasons })
+      continue
+    }
+
+    const scopeKey = chatScopeKey('guest:anon', slug)
+    const existing = await listTasksForCompany(slug)
+    const filedThisPass = new Set<string>()
+    let anyFiled = false
+    let anyCapped = false
+    let anyFailed = false
+
+    for (const reason of reasons) {
+      const reasonTitle = taskTitleFor(reason)
+      if (filedThisPass.has(reasonTitle) || hasOpenTaskForReason(existing, reason)) {
+        continue
+      }
+
+      if (tasksFiled >= MAX_TASKS_FILED_PER_RUN) {
+        anyCapped = true
+        continue
+      }
+
+      const task = await createTask(scopeKey, {
+        title: reasonTitle,
+        detail: reason,
+        stage: 'todo',
+        source: 'cody',
+      }).catch(() => null)
+
+      if (!task) {
+        anyFailed = true
+        failed++
+        continue
+      }
+
+      // No app-registry row ⇒ no gitOrg ⇒ this no-ops exactly like a
+      // not-yet-git-provisioned registered company (openIssueForNewTask's
+      // own documented behavior) — the task is still filed and will get a
+      // real Gitea issue later if/when this generation is ever claimed.
+      void openIssueForNewTask(scopeKey, undefined, slug, task)
+
+      tasksFiled++
+      anyFiled = true
+      filedThisPass.add(reasonTitle)
+    }
+
     const disposition: ObedienceBackfillDisposition = anyFailed
       ? 'file_failed'
       : anyFiled

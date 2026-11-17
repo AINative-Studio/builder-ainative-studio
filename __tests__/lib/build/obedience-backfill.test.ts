@@ -507,3 +507,195 @@ describe('runObedienceBackfillSweep — idempotency and failure handling', () =>
     expect(loadGeneration).toHaveBeenCalledTimes(1)
   })
 })
+
+/**
+ * #2126 — `/showcase` lists real, publicly-linkable `/build/{slug}` pages for
+ * anonymous, never-registered generations (synthesizing a display slug from
+ * the title + chatId), but `runObedienceBackfillSweep` above only ever
+ * iterates the app REGISTRY — so a real obedience-gate gap on one of these
+ * pages has no remediation path, ever, no matter how many sweeps run.
+ * `runShowcaseObedienceBackfillSweep` closes that gap by walking the SAME
+ * `listGenerations()` rows and the SAME eligibility/slug-synthesis
+ * `/showcase` itself uses, skipping anything that already resolves to a real
+ * registry entry (that's the OTHER sweep's job).
+ */
+const SHOWCASE_PADDING = 'x'.repeat(2000) // isQualityApp() requires code.length >= 2000
+
+async function loadShowcase(opts: {
+  rows: Array<{
+    chat_id: string
+    generated_code: string
+    prompt?: string
+    title?: string
+    is_showcase?: boolean
+  }>
+  registryEntries?: Record<string, { entry: unknown; verified: boolean }>
+  generations?: Record<string, { prompt?: string; generatedCode?: string; files?: Record<string, string> | null } | null>
+  existingTasksBySlug?: Record<string, { stage: string; title: string }[]>
+  createTaskFails?: boolean
+}) {
+  const listGenerations = vi.fn(async () => opts.rows)
+  const resolveAppVerified = vi.fn(async (slug: string) => {
+    const r = (opts.registryEntries || {})[slug]
+    return r || { entry: null, verified: true }
+  })
+  const loadGeneration = vi.fn(async (chatId: string) => {
+    const gens = opts.generations || {}
+    if (!(chatId in gens)) return null
+    const gen = gens[chatId]
+    if (gen === null) throw new Error('durable read blew up')
+    return gen
+  })
+  const createTask = vi.fn(async (_scopeKey: string, input: any) => {
+    if (opts.createTaskFails) return null
+    return { id: 't_fake', scopeKey: _scopeKey, stage: 'todo', source: 'cody', ...input }
+  })
+  const listTasksForCompany = vi.fn(async (slug: string) => (opts.existingTasksBySlug || {})[slug] || [])
+  const chatScopeKey = (ownerKey: string, companySlug: string) => `${ownerKey}::${companySlug}`
+  const openIssueForNewTask = vi.fn(async (_scopeKey: string, _gitOrg: unknown, _slug: string, task: unknown) => task)
+
+  vi.doMock('@/lib/build/app-registry', () => ({ listAllAppsWithStatus: vi.fn(), resolveAppVerified }))
+  vi.doMock('@/lib/zerodb-store', () => ({ loadGeneration, listGenerations }))
+  vi.doMock('@/lib/build/task-store', () => ({ createTask, listTasksForCompany }))
+  vi.doMock('@/lib/build/task-resolver', () => ({ openIssueForNewTask }))
+  vi.doMock('@/lib/build/chat-store', () => ({ chatScopeKey }))
+
+  const mod = await import('@/lib/build/obedience-backfill')
+  return {
+    ...mod,
+    listGenerations,
+    resolveAppVerified,
+    loadGeneration,
+    createTask,
+    listTasksForCompany,
+    openIssueForNewTask,
+  }
+}
+
+describe('runShowcaseObedienceBackfillSweep — unregistered showcase generations (#2126)', () => {
+  it('fails closed (registryOk: false) when the generation list read comes back empty — never reports "nothing to check" as success', async () => {
+    const { runShowcaseObedienceBackfillSweep } = await loadShowcase({ rows: [] })
+
+    const r = await runShowcaseObedienceBackfillSweep({ dryRun: false })
+
+    expect(r.registryOk).toBe(false)
+    expect(r.checked).toBe(0)
+  })
+
+  it('skips a row that is not showcase-eligible (is_showcase: false)', async () => {
+    const { runShowcaseObedienceBackfillSweep, resolveAppVerified } = await loadShowcase({
+      rows: [{ chat_id: 'chat-1', generated_code: SHOWCASE_PADDING + FAKE_LEAD_CAPTURE_CODE, title: 'Quill', is_showcase: false }],
+    })
+
+    const r = await runShowcaseObedienceBackfillSweep({ dryRun: false })
+
+    expect(r.checked).toBe(0)
+    expect(resolveAppVerified).not.toHaveBeenCalled()
+  })
+
+  it('skips a row whose code fails isQualityApp (too short / no chatId)', async () => {
+    const { runShowcaseObedienceBackfillSweep } = await loadShowcase({
+      rows: [{ chat_id: 'chat-1', generated_code: 'too short', title: 'Quill', is_showcase: true }],
+    })
+
+    const r = await runShowcaseObedienceBackfillSweep({ dryRun: false })
+
+    expect(r.checked).toBe(0)
+  })
+
+  it('skips a row that already resolves to a real registry entry — that company is the OTHER sweep\'s job, never double-filed here', async () => {
+    const { runShowcaseObedienceBackfillSweep, createTask, loadGeneration } = await loadShowcase({
+      rows: [{ chat_id: 'chat-wrench', generated_code: SHOWCASE_PADDING + FAKE_LEAD_CAPTURE_CODE, title: 'Wrench', is_showcase: true }],
+      registryEntries: { 'wrench-chat-w': { entry: { slug: 'wrench-chat-w', chatId: 'chat-wrench' }, verified: true } },
+    })
+
+    const r = await runShowcaseObedienceBackfillSweep({ dryRun: false })
+
+    expect(r.checked).toBe(0)
+    expect(loadGeneration).not.toHaveBeenCalled()
+    expect(createTask).not.toHaveBeenCalled()
+  })
+
+  it('checks and files a task for a real gap on a genuinely unregistered generation', async () => {
+    const { runShowcaseObedienceBackfillSweep, createTask, resolveAppVerified } = await loadShowcase({
+      rows: [{ chat_id: 'chat-quill', generated_code: SHOWCASE_PADDING + FAKE_LEAD_CAPTURE_CODE, prompt: 'a lead capture landing page', title: 'Quill', is_showcase: true }],
+      registryEntries: { 'quill-chat-q': { entry: null, verified: true } },
+      generations: { 'chat-quill': { generatedCode: FAKE_LEAD_CAPTURE_CODE } },
+    })
+
+    const r = await runShowcaseObedienceBackfillSweep({ dryRun: false })
+
+    expect(resolveAppVerified).toHaveBeenCalledWith('quill-chat-q')
+    expect(r.checked).toBe(1)
+    expect(r.gapsFound).toBe(1)
+    expect(r.tasksFiled).toBeGreaterThan(0)
+    expect(r.results[0]).toMatchObject({ slug: 'quill-chat-q', disposition: 'filed_task' })
+    expect(createTask).toHaveBeenCalledWith(
+      'guest:anon::quill-chat-q',
+      expect.objectContaining({ title: expect.stringContaining('Fix generation compliance gap:') }),
+    )
+  })
+
+  it('dry run reports would_file_task and files nothing', async () => {
+    const { runShowcaseObedienceBackfillSweep, createTask } = await loadShowcase({
+      rows: [{ chat_id: 'chat-quill', generated_code: SHOWCASE_PADDING + FAKE_LEAD_CAPTURE_CODE, title: 'Quill', is_showcase: true }],
+      registryEntries: { 'quill-chat-q': { entry: null, verified: true } },
+      generations: { 'chat-quill': { generatedCode: FAKE_LEAD_CAPTURE_CODE } },
+    })
+
+    const r = await runShowcaseObedienceBackfillSweep({ dryRun: true })
+
+    expect(r.dryRun).toBe(true)
+    expect(r.gapsFound).toBe(1)
+    expect(r.results[0].disposition).toBe('would_file_task')
+    expect(createTask).not.toHaveBeenCalled()
+  })
+
+  it('never double-files a gap that already has an open task for the same reason (idempotent re-run)', async () => {
+    const { runShowcaseObedienceBackfillSweep, createTask } = await loadShowcase({
+      rows: [{ chat_id: 'chat-quill', generated_code: SHOWCASE_PADDING + FAKE_LEAD_CAPTURE_CODE, title: 'Quill', is_showcase: true }],
+      registryEntries: { 'quill-chat-q': { entry: null, verified: true } },
+      generations: { 'chat-quill': { generatedCode: FAKE_LEAD_CAPTURE_CODE } },
+      existingTasksBySlug: {
+        'quill-chat-q': [
+          { stage: 'todo', title: 'Fix generation compliance gap: Email/waitlist capture form never persists the email it collects — must save via /api/db.' },
+        ],
+      },
+    })
+
+    const r = await runShowcaseObedienceBackfillSweep({ dryRun: false })
+
+    // FAKE_LEAD_CAPTURE_CODE trips multiple simultaneous reasons (same
+    // #1951-class behavior the registry sweep's own tests document above) —
+    // marking ONE reason already-tracked still correctly files the
+    // company's other, genuinely new reasons in the same pass. The specific
+    // already-tracked reason itself must never be re-filed.
+    expect(createTask).not.toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ title: expect.stringContaining('Email/waitlist capture form never persists') }),
+    )
+  })
+
+  it('--only scopes the sweep to named (synthesized) slugs', async () => {
+    const { runShowcaseObedienceBackfillSweep, loadGeneration } = await loadShowcase({
+      rows: [
+        { chat_id: 'chat-quill', generated_code: SHOWCASE_PADDING + FAKE_LEAD_CAPTURE_CODE, title: 'Quill', is_showcase: true },
+        { chat_id: 'chat-ridge', generated_code: SHOWCASE_PADDING + FAKE_LEAD_CAPTURE_CODE, title: 'Ridgeline', is_showcase: true },
+      ],
+      registryEntries: {
+        'quill-chat-q': { entry: null, verified: true },
+        'ridgeline-chat-r': { entry: null, verified: true },
+      },
+      generations: {
+        'chat-quill': { generatedCode: FAKE_LEAD_CAPTURE_CODE },
+        'chat-ridge': { generatedCode: FAKE_LEAD_CAPTURE_CODE },
+      },
+    })
+
+    const r = await runShowcaseObedienceBackfillSweep({ dryRun: true, onlySlugs: ['ridgeline-chat-r'] })
+
+    expect(r.checked).toBe(1)
+    expect(r.results.map((x) => x.slug)).toEqual(['ridgeline-chat-r'])
+    expect(loadGeneration).toHaveBeenCalledTimes(1)
+  })
+})
