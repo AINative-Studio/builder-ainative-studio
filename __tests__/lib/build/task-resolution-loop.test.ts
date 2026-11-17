@@ -123,10 +123,14 @@ describe('runTaskResolutions (#433)', () => {
     await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 0, completed: 0, merged: 0, redeployed: 0, reaped: 0, completedNoCoverage: 0, deferred: 0 })
   })
 
-  it('never throws when resolveTask itself throws — continues to the next task', async () => {
+  it('never throws when resolveTask itself throws — continues to the next task, and reverts the row to todo instead of leaving it stuck in_progress', async () => {
     h.listTasks.mockResolvedValue([task({ id: 't1' })])
     h.resolveTask.mockRejectedValue(new Error('llm call exploded'))
-    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0, reaped: 0, completedNoCoverage: 0, deferred: 0 })
+    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0, reaped: 0, completedNoCoverage: 0, deferred: 1 })
+    // #2089 — an uncaught resolveTask() rejection must not leave the row
+    // stuck at `in_progress` for a full night; it needs the same immediate
+    // todo-revert the timeout path already gets.
+    expect(h.updateTask).toHaveBeenCalledWith('a::b', 't1', expect.objectContaining({ stage: 'todo' }))
   })
 
   it('returns 0/0 when there are no tasks at all', async () => {

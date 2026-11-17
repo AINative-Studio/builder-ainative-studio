@@ -354,6 +354,28 @@ export async function runTaskResolutions(
  * simply gets overwritten by the next run's attempt, which is the same
  * "last write wins, never fabricates success" behavior this store already
  * has for every other race in this pipeline.
+ *
+ * Found during an overnight render/dashboard-integrity sweep (#2089's
+ * thread): the timeout branch above was the ONLY path that reverted the
+ * row. resolveTask() writes `stage: 'in_progress'` as its very first step
+ * and only reaches one of its own terminal fail()/defer()/success writes at
+ * the end — every one of those writes is wrapped in a try/catch inside
+ * resolveTask() itself, EXCEPT the un-wrapped calls in between (Gitea repo
+ * reads, the LLM implement call, the coverage run). If any of those threw
+ * instead of returning a result object, resolveTask()'s promise rejects
+ * with no terminal write ever having happened. The caller
+ * (runTaskResolutions' `for (const task of due)` loop) already catches that
+ * rejection so the loop survives — confirmed by this file's own existing
+ * "never throws when resolveTask itself throws" test — but that catch block
+ * never touches the row. The result: a row stuck at `in_progress` with NO
+ * recovery until isStaleInProgress's reaper next runs — which in practice is
+ * the FOLLOWING night's cron (there is no intra-night retry), not the
+ * reaper's nominal 30-minute threshold. Live evidence of exactly this shape
+ * (fresh `in_progress` rows, `updatedAt` frozen seconds after creation,
+ * unresolved for 15h+) was confirmed on `shingle`/`lumeo`/`beacon` — see
+ * #2089's comment thread. Catching the rejection here and reverting
+ * immediately, the same way the timeout branch already does, closes that
+ * gap without waiting out a whole extra night.
  */
 async function raceTaskResolution(
   scopeKey: string,
@@ -364,9 +386,25 @@ async function raceTaskResolution(
   const timeout = new Promise<'timed-out'>((resolve) => {
     timer = setTimeout(() => resolve('timed-out'), PER_TASK_TIMEOUT_MS)
   })
-  const result = await Promise.race([resolveTask(scopeKey, task, slug), timeout]).finally(() => {
+  let result: Awaited<ReturnType<typeof resolveTask>> | 'timed-out'
+  try {
+    result = await Promise.race([resolveTask(scopeKey, task, slug), timeout]).finally(() => {
+      clearTimeout(timer!)
+    })
+  } catch (err) {
     clearTimeout(timer!)
-  })
+    // resolveTask() rejected before writing any terminal stage — see this
+    // function's doc comment above. Revert to `todo` immediately rather
+    // than leaving the row stuck at `in_progress` for a full night.
+    // Best-effort: if this write itself fails, the row stays `in_progress`
+    // and isStaleInProgress's reaper is still the fallback — never worse
+    // than before this fix.
+    await updateTask(scopeKey, task.id, {
+      stage: 'todo',
+      output: `Deferred — resolution threw an unexpected error (${err instanceof Error ? err.message : String(err)}). Will retry next run.`,
+    }).catch(() => {})
+    return 'timed-out'
+  }
   if (result === 'timed-out') {
     // resolveTask() already wrote `in_progress` before starting its real
     // work (see its own doc comment) and keeps running in the background —
