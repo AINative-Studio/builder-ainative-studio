@@ -1,1 +1,1837 @@
-PLACEHOLDER
+/**
+ * App registry (#207 · FIX-2) — maps a company/app brand slug to the generated
+ * app's preview chatId, so the subdirectory URL /build/{slug} resolves to the
+ * REAL running app. Persisted to ZeroDB (table: builder_app_registry) so the
+ * link survives restarts and is shareable. Falls back to null when unconfigured.
+ */
+
+import { getAinativeApiKey } from '@/lib/build/env-keys'
+// The ONE consolidated paid-tier vocabulary (#762). Imported rather than
+// re-implemented so the registry's stored `plan` and every gate that reads it
+// back can never drift apart on what "paid" means (#1012 review finding 1/3).
+import { isPaidTier, normalizeTier } from '@/lib/ainative/plan'
+// #2126 follow-up (resolveShowcaseOnlyBySlug) — same filters app/api/showcase/
+// route.ts applies, imported rather than re-implemented so a slug only ever
+// resolves here to exactly what's already publicly listed on /showcase.
+import { listGenerations } from '@/lib/zerodb-store'
+import { isQualityApp } from '@/lib/showcase-quality'
+import { generateSlug, extractShowcaseTitle } from '@/lib/showcase-data'
+import { looksLikeUnsubstitutedPlaceholder } from '@/lib/build/placeholder-guard'
+
+const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
+const API_KEY = getAinativeApiKey()
+const PROJECT_ID = process.env.ZERODB_PROJECT_ID || ''
+const TABLE = 'builder_app_registry'
+
+function rowsUrl(): string {
+  return `${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${TABLE}/rows`
+}
+function headers(): Record<string, string> {
+  return { Authorization: `Bearer ${API_KEY}`, 'X-API-Key': API_KEY, 'Content-Type': 'application/json' }
+}
+function configured(): boolean {
+  return Boolean(API_KEY && PROJECT_ID)
+}
+
+export interface AppEntry {
+  slug: string
+  chatId: string
+  name?: string
+  tagline?: string
+  color?: string
+  track?: string
+  // The founder's original idea text (#660). Never persisted anywhere durable
+  // before this — Live.tsx's real-product-generation trigger
+  // (POST /api/build/company-product) gates on client-only `state.idea`,
+  // which a fresh page load/new tab/returning visit never has, so product
+  // generation silently never fired for any real company. Set at first
+  // registration (register-app/company-app/company-product all know it),
+  // so a later Live.tsx mount can hydrate it from here instead of only
+  // ever trusting in-memory reducer state.
+  idea?: string
+  // Owner association (#253) — the AINative account email that built/claimed this
+  // company. Set from the signed-in session at registration/plan/provision time.
+  // Enables the "my companies" index (listAppsForOwner) so a founder can find their
+  // built companies again. Absent for companies built anonymously (never signed in).
+  ownerEmail?: string
+  domain?: string  // custom domain purchased for this company (#240), if any
+  // Bring-your-own connected domain (#53) — a domain the founder ALREADY owns and
+  // wired to their provisioned Railway service via customDomainCreate. `byoDomain`
+  // is the host; `byoDomainId` is the Railway customDomain id (for idempotent status
+  // polls + re-opens); `byoDomainStatus` is the last-observed honest lifecycle state
+  // (pending → verifying → live). Distinct from `domain` (a PURCHASED domain, #240).
+  byoDomain?: string
+  byoDomainId?: string
+  byoDomainStatus?: 'pending' | 'verifying' | 'live' | 'error'
+  byoDomainConnectedAt?: string
+  plan?: string    // active subscription plan id (pro|business|enterprise) after checkout (#241)
+  // Explicit subdomain claim (#78). The company's {slug}.ainative.studio host must NOT
+  // resolve until the founder is on a PAID plan AND has explicitly claimed it (mirrors
+  // how custom-domain / BYO-domain #53/#240 are paid-gated). Default false/undefined →
+  // the subdomain does not resolve; the shareable preview stays the /build/{slug} path.
+  // Set true only via claimSubdomain() after a paid-plan check.
+  subdomainClaimed?: boolean
+  subdomainClaimedAt?: string
+  enrolled?: boolean  // Business+ auto-enrolled into the nightly loop (#241; cron itself is #243)
+  // Persistent cloud provisioning (#243) — the REAL per-company data layer, created
+  // via AINative Instant DB (POST /api/v1/public/instant-db). Present once provisioned.
+  zerodbProjectId?: string
+  provisionedAt?: string
+  // The AINative Builder workspace (core Organization) this company's project is
+  // filed under (#250). Set once the project has been (or was requested to be)
+  // parented to the Builder workspace. `workspaceFiled` records whether the
+  // re-parent actually stuck (admin-owned projects) vs is still pending core support.
+  workspaceId?: string
+  workspaceFiled?: boolean
+  // When a tmp_ trial project expires (ISO, from Instant DB's real expires_at —
+  // ~24h, #1579/#1602). Undefined for permanent projects. Drives the "trial
+  // expires in X — upgrade to keep it" UI (#207).
+  trialExpiresAt?: string
+  // Which kind of Instant DB key backs this project (#243, per user directive):
+  //  'tmp'       — UNPAID provision → tmp_ key, ~24h trial, must be claimed on payment.
+  //  'permanent' — PAID provision (sk_ key) OR a tmp_ project already claimed.
+  keyKind?: 'tmp' | 'permanent'
+  // Claim token for a tmp_ project, needed to upgrade tmp_ → permanent on payment
+  // via /api/v1/public/instant-db/claim (#243). Only set while keyKind === 'tmp'.
+  // NOTE: this is the *claim* secret, NOT the data-plane api_key. The raw sk_/tmp_
+  // key is intentionally NOT persisted in this shared registry (see setAppProvisioned).
+  claimToken?: string
+  claimedAt?: string
+  // ZeroPipeline (CRM primitive) provisioning (#243, directive C). True once a real
+  // pipeline was created for the company via the founder's JWT. Requires a signed-in
+  // founder (ZeroPipeline is JWT-auth, not api-key). Absent/false = still simulated.
+  pipelineProvisioned?: boolean
+  pipelineId?: string
+  // ZeroCommerce (ecommerce primitive) provisioning (#417, child of #414). Same
+  // JWT-auth pattern as ZeroPipeline — true once a real store was created for
+  // the company. Absent/false = still simulated.
+  commerceProvisioned?: boolean
+  commerceStoreId?: string
+  // OpenCapStack (cap table primitive) provisioning (#427, child of #414/#422).
+  // Unlike ZeroPipeline/ZeroCommerce, auth is a dedicated service account (no
+  // AINative-federated auth on OpenCapStack's side) — true once a real company
+  // record was created there. Absent/false = still simulated.
+  capstackProvisioned?: boolean
+  capstackCompanyId?: string
+  // ZeroForms (online-forms primitive) provisioning (#421, child of #414). Same
+  // JWT-auth pattern as ZeroPipeline/ZeroCommerce — true once a real default
+  // form was created for the company. Absent/false = still simulated.
+  formsProvisioned?: boolean
+  formsFormId?: string
+  // AgentFlow (visual agent-workflow primitive) provisioning (#419, child of
+  // #414). Same direct-JWT-auth pattern as ZeroPipeline/ZeroCommerce/ZeroForms
+  // — true once a real default project was created for the company.
+  // Absent/false = still simulated.
+  agentflowProvisioned?: boolean
+  agentflowProjectId?: string
+  // ZeroERP (accounting/ERP primitive) provisioning (#439, child of
+  // #414/#422). UNLIKE ZeroPipeline/ZeroCommerce/ZeroForms/AgentFlow,
+  // ZeroERP's onboarding endpoint takes NO auth (public, confirmed via
+  // source) but needs the founder's email to invite as admin — gated on a
+  // signed-in founder's email, not the JWT. `zeroerpInviteToken` is a raw,
+  // currently-UNREDEEMABLE token (AINative-Studio/ZeroERP#1094 — no
+  // accept-invite endpoint exists yet on ZeroERP's side) — never surface it
+  // as a working link until that's resolved. Absent/false = still simulated.
+  zeroerpProvisioned?: boolean
+  zeroerpOrgId?: string
+  zeroerpInviteToken?: string
+  // ZeroCRM (#414) — needs no explicit provisioning call; its own get-or-create
+  // auth auto-creates the Org+User from the founder's AINative identity on
+  // the runtime proxy's FIRST request. Absent/false = still simulated (no
+  // credential captured yet, e.g. no signed-in founder at provision time).
+  zerocrmProvisioned?: boolean
+  // ZeroInvoice (#638/#639) — like ZeroCRM, needs no explicit provisioning
+  // call; its real backend resolves the founder's tenant directly from their
+  // AINative JWT on first authenticated request. Absent/false = still
+  // simulated (no credential captured yet, e.g. no signed-in founder at
+  // provision time).
+  zeroinvoiceProvisioned?: boolean
+  // ServiceOS (#642) — same shape as ZeroInvoice/ZeroCRM: no explicit
+  // provisioning call, tenant resolves directly from the founder's AINative
+  // JWT. Absent/false = still simulated.
+  serviceosProvisioned?: boolean
+  // Live Streaming, Social Graph (#644) — same shape: no explicit
+  // provisioning call needed. Absent/false = still simulated.
+  livestreamingProvisioned?: boolean
+  socialgraphProvisioned?: boolean
+  // Content Workflow (#644 follow-up) — UNLIKE every founder-scoped
+  // primitive above, this uses Builder's own service-level AINATIVE_API_KEY
+  // (X-API-Key auth, not a per-founder JWT), so there is no
+  // FounderScopedPrimitive credential to capture. The only thing that needs
+  // durable, per-company storage is the auto-provisioned AI twin/persona id
+  // every calendar entry requires — created lazily on first real proxy call
+  // (see the runtime proxy route's contentworkflow case) and cached here so
+  // it's never recreated on every request.
+  contentWorkflowTwinId?: string
+  // OpenCapStack (#427, child of #414). provisionCapTable's real companyId
+  // was computed at checkout and returned once in the provision response,
+  // but never durably stored — a runtime proxy has no way to know which
+  // OpenCapStack company a given app maps to without this. Absent = either
+  // never provisioned, or provisioned before this field existed (pre-dates
+  // this fix; falls back to the simulated card, matches every other
+  // "provisioned but not backfilled" primitive's existing behavior here).
+  opencapstackCompanyId?: string
+  // ZeroVoice (telephony primitive) provisioning (#415, child of #414). UNLIKE
+  // every other primitive here, this carries a REAL recurring cost — never
+  // auto-provisioned in provision/route.ts's checkout flow. Only set via an
+  // explicit founder-triggered action (a real button, paid-tier + opt-in
+  // env-flag gated). Absent/false = not provisioned (default for everyone).
+  zerovoiceProvisioned?: boolean
+  zerovoiceNumberId?: string
+  zerovoiceE164?: string
+  // Growth module: automated ad-testing (#449) — a real, human-reviewable
+  // PAUSED Meta Ads campaign created for this company. Never auto-activated;
+  // a founder must launch it themselves. Explicit founder-triggered action,
+  // paid-tier + opt-in env-flag gated, same posture as ZeroVoice above.
+  growthAdTestCampaignId?: string
+  growthAdTestCreatedAt?: string
+  // Real funding for the campaign above: builder charges the founder the
+  // FULL requested amount but only ever submits 80% of it as the real Meta
+  // budget (the 20% margin is captured by never telling Meta the full
+  // amount) — computed server-side on core, never trusted from the client.
+  // Set once core's webhook confirms the Stripe payment actually succeeded.
+  growthAdBudgetPaymentIntentId?: string
+  growthAdBudgetRequestedCents?: number
+  growthAdBudgetRealCents?: number
+  growthAdBudgetFundedAt?: string
+  // Last-synced reporting snapshot pulled from Meta's Insights API — display
+  // only, refreshed on demand from the Live dashboard, never used to compute
+  // billing (billing is fixed at purchase time above).
+  growthAdTestClicks?: number
+  growthAdTestCpcCents?: number
+  growthAdTestInsightsSyncedAt?: string
+  // ZeroInvoice connect (#418, child of #414). UNLIKE every other primitive
+  // here, ZeroInvoice's real auth is a browser-redirect OAuth 2.1+PKCE flow
+  // that hands the founder off to ZeroInvoice's OWN frontend/dashboard —
+  // confirmed via source: ZeroInvoice's real callback handler sets its own
+  // cookies and redirects to ITS OWN /dashboard, never back to builder.
+  // Builder structurally cannot observe whether the flow completed (no
+  // callback, no token, no verify endpoint exists) — re-confirmed live
+  // against ZeroInvoice's own openapi.json: its FreshBooks/QuickBooks/Xero
+  // integrations each expose a real `/status` endpoint, but its OWN
+  // AINative-identity login does not. zeroinvoiceConnectedAt is therefore an
+  // HONEST "founder clicked Connect" signal, not a confirmed-connected state
+  // — never presented as verified.
+  zeroinvoiceConnectClickedAt?: string
+  // Real bug (live): after clicking Connect and finishing the OAuth flow in
+  // the new tab, the founder had NO way to tell builder they were done — the
+  // UI stayed at "Connect requested" forever, reading as stuck/broken even
+  // though ZeroInvoice's own side had genuinely succeeded. Since builder
+  // cannot verify the connection server-side (see zeroinvoiceConnectClickedAt
+  // doc), the honest fix is a founder SELF-confirmation, clearly labeled as
+  // self-reported rather than platform-verified.
+  zeroinvoiceConnectConfirmedAt?: string
+  // The persistent hosting target for the company app (#243). Today this is the
+  // durable preview URL; the deploy seam swaps in a real Railway/*.ainative.studio host.
+  deployUrl?: string
+  // Dedicated per-company Railway service (#243, heavy PAID-only option). Set once a
+  // verified-paid company gets its OWN Railway service provisioned (its own backend,
+  // custom-domain-bindable via #240). Presence makes the deploy idempotent: the verify
+  // trigger skips creation when this is already set, so a re-run never creates a second
+  // billable service. `railwayDeployedAt` records when it was first provisioned.
+  railwayServiceId?: string
+  railwayDeployedAt?: string
+  // Per-company Gitea repository (#354, GIT-1). One private repo per company slug,
+  // under one Gitea org per AINative workspace (org-per-workspace, epic #349). Set
+  // once the repo is provisioned via lib/git/gitea-client (provisionCompanyRepo).
+  // `gitRepoUrl` is the https clone URL, `gitRepoId` the numeric Gitea repo id
+  // (stringified), `gitOrg` the workspace's Gitea org name. Presence makes repo
+  // provisioning idempotent — the provisioner skips creation when already set.
+  gitRepoUrl?: string
+  gitRepoId?: string
+  gitOrg?: string
+  gitProvisionedAt?: string
+  // Company lifecycle (#57, Danger Zone). Absent/'active' = the company is live and
+  // its app is served. 'offline' = the founder took the app offline (kept, but not
+  // served). 'deleted' = the founder deleted the company (soft delete — the row is
+  // retained for audit; resolveApp() treats it as gone). The nightly loop is paused
+  // separately via loop-enrollment (setLoopEnabled), which is orthogonal to this.
+  lifecycleStatus?: 'active' | 'offline' | 'deleted'
+  lifecycleAt?: string
+  // Founder-uploaded logo / brand mark (#492). `logoUrl` is the durable serve
+  // route (logoAssetUrl in logo-upload.ts) that redirects to a fresh presigned
+  // ZeroDB files URL on every request; `logoFileId` is the underlying ZeroDB
+  // file id (kept so a future re-upload/removal can target the right file).
+  // SCOPE (#492): persisted + founder-visible on the dashboard; NOT yet wired
+  // into an already-deployed company's live generated site (see logo-upload.ts
+  // for why — that requires a separate single-file-patch primitive for an
+  // arbitrary existing Gitea repo, which doesn't exist yet).
+  logoUrl?: string
+  logoFileId?: string
+  logoUpdatedAt?: string
+  // Founder-facing "don't proactively contact me" opt-out (#742). Covers any
+  // automated outreach Cody initiates on its own initiative (nightly-loop
+  // comms outreach today; #743's agile-standup/pair-programming digest email
+  // checks this same field — see runCommsDigestSweep in
+  // app/api/cron/comms-digest). Absent/false = proactive outreach is allowed
+  // (opt-out, not opt-in — matches every other default-on automation in this
+  // registry, e.g. `enrolled`). Does NOT affect outreach the founder
+  // explicitly triggers themselves (e.g. company-comms used from a
+  // founder-initiated chat action).
+  commsOptOut?: boolean
+  commsOptOutAt?: string
+  // Founder-facing comms cadence mode (#743). Absent/'agile' = the default:
+  // Cody emails a morning "yesterday / today / blockers" standup, grounded in
+  // the nightly loop's own real per-company results (see the #743 cron for
+  // where this is read). 'pairProgramming' switches the digest to a
+  // GitHub-style commit/PR activity summary sourced from the company's Gitea
+  // repo instead. Every enrolled company gets ONE of these by default — no
+  // opt-in required (per the issue's explicit "ideally it's set in agile mode
+  // by default").
+  commsMode?: 'agile' | 'pairProgramming'
+  // Delta marker for the pair-programming digest (#743): the last time a
+  // comms digest was successfully SENT for this company, so the next run's
+  // getCommitsSince() call is a true delta (only new activity) rather than
+  // always re-summarizing the repo's entire history. Updated by the cron
+  // AFTER a successful sendCompanyEmail — never advanced on a failed send, so
+  // a transient failure doesn't silently drop that day's activity.
+  lastDigestAt?: string
+  // Delta marker for the trial re-engagement email (#1607) — a SEPARATE
+  // cron/audience from comms-digest's lastDigestAt above (deliberately not
+  // reused: different trigger — trial/renewal state, not loop enrollment —
+  // and different content — real signup/visit activity, not a dev standup).
+  // The last instant this cron successfully SENT for this company; the next
+  // run's activity window is [this value, now). Advanced ONLY after a
+  // confirmed send, same discipline as lastDigestAt.
+  lastTrialEngagementEmailAt?: string
+  // Real, durable "this recipient is undeliverable" flag (#840) — set ONLY
+  // from a verified Resend webhook event (a permanent `email.bounced`, or
+  // `email.complained`), never speculatively. Before this, Resend returned a
+  // clean 2xx at send time for a suppressed/hard-bounced recipient and then
+  // silently dropped the email server-side — confirmed live: admin@ainative.
+  // studio (an Enterprise account owning ~30 companies) got ZERO daily
+  // digest emails, with the digest cron reporting every one of those 28
+  // sends as `sent: true`. `emailUndeliverableReason` carries Resend's own
+  // bounce subType/message (or 'complained') for an honest, non-fabricated
+  // UI string — never a guess. Checked by the comms-digest cron BEFORE
+  // attempting a send (see app/api/cron/comms-digest) and surfaced on the
+  // Live dashboard (see Live.tsx's nightly-run card + GET /api/build/
+  // resolve-app) so a founder whose email is bouncing actually finds out,
+  // instead of the failure being invisible everywhere. No code path clears
+  // this yet (a `suppression.removed` handler is out of scope for #840's
+  // first pass — see the webhook route's own doc comment).
+  emailUndeliverableAt?: string
+  emailUndeliverableReason?: string
+  // PRIMITIVE WIRING (#1056) — a real, honest signal distinct from the
+  // `*Provisioned` flags above. `*Provisioned` means "a real credential was
+  // issued"; `*Wired` means "the generated app's own rendered source
+  // genuinely calls this primitive" (a real /api/primitive/{name}/... fetch
+  // found via lib/build/primitive-wiring's extractWiredPrimitives). A real
+  // enterprise company (`mendr`) had 6 primitives provisioned with ZERO
+  // wired — the registry had no way to tell a founder "you have a key but
+  // your app never uses it" apart from a genuinely wired integration.
+  //
+  // A follow-up spot-check on track:'app' companies found this gap is
+  // per-generation, not track-specific: some app-track companies
+  // (`flashpoint`, `habanero-hub`) ARE genuinely wired, others (`castlo`,
+  // `aerosol`) are provisioned but not wired, same as mendr. So these flags
+  // are computed fresh at every register-app call (see runWiringScan in
+  // register-app-core.ts) rather than inferred from track or assumed.
+  //
+  // Absent/false = not detected as wired (default for every company created
+  // before this field existed, and for any company whose code genuinely
+  // never calls the primitive). These are ADDITIVE ONLY — never read as a
+  // substitute for the existing `*Provisioned` flags, which #1044's Live/
+  // Planned badge logic already depends on.
+  pipelineWired?: boolean
+  zeroinvoiceWired?: boolean
+  commerceWired?: boolean
+  capstackWired?: boolean
+  serviceosWired?: boolean
+  zerovoiceWired?: boolean
+  livestreamingWired?: boolean
+  socialgraphWired?: boolean
+  zerocrmWired?: boolean
+  agentflowWired?: boolean
+  formsWired?: boolean
+  contentWorkflowWired?: boolean
+  // When the wiring scan last ran for this company (set by runWiringScan,
+  // called from register-app on every registration/regeneration).
+  wiringScannedAt?: string
+  createdAt: string
+}
+
+/**
+ * Thrown by every `setApp*` setter below when the registry lookup it needs
+ * BEFORE writing could not be completed at all (#1486).
+ *
+ * WHY THIS EXISTS: each setter is shaped
+ * `const existing = await resolveApp(slug); if (!existing) return false`, and
+ * `resolveApp()` returns the SAME `null` for "no such company" and "the
+ * registry read itself failed" (the #832 anti-pattern). A transient ZeroDB
+ * hiccup therefore made every one of these setters return `false` — reported
+ * up to the caller as a generic WRITE failure ("I couldn't save that logo")
+ * when nothing was ever wrong with the write: the READ never completed, so
+ * the setter correctly refused to act and then lied about why.
+ *
+ * This bug class fails SAFE (a failed lookup can only make a setter no-op,
+ * never silently write wrong data onto the wrong company), so the fix keeps
+ * every setter's `Promise<boolean>` signature — changing ~20 setters' return
+ * types would ripple through every real caller at once. Instead the two cases
+ * that already behave correctly are untouched (confirmed success → `true`,
+ * confirmed absence → `false`) and the previously-silent third case becomes a
+ * real, named, catchable error: visible in logs/Sentry, distinguishable with
+ * `isRegistryLookupUnverified(err)` by any caller that wants to retry, and
+ * already swallowed by the many callers that invoke these setters as
+ * `.catch(() => false)` best-effort writes.
+ */
+export class RegistryLookupUnverifiedError extends Error {
+  readonly slug: string
+  readonly setter: string
+  constructor(setter: string, slug: string) {
+    super(`[app-registry] registry lookup unverified for ${setter}(${slug}) — the registry read itself failed, the write was not attempted`)
+    this.name = 'RegistryLookupUnverifiedError'
+    this.slug = slug
+    this.setter = setter
+  }
+}
+
+/** True when `err` is the distinct "the registry read failed, so this write
+ *  was never attempted" signal thrown by the `setApp*` setters (#1486) — as
+ *  opposed to a confirmed "no such company" (which is still a plain `false`
+ *  return) or any other real error. Lets a caller that cares retry/surface a
+ *  503 instead of reporting a bogus write failure. */
+export function isRegistryLookupUnverified(err: unknown): err is RegistryLookupUnverifiedError {
+  return err instanceof RegistryLookupUnverifiedError
+}
+
+/**
+ * The ONE lookup every `setApp*` setter below performs before writing
+ * (#1486). Returns the confirmed entry, or `null` for a CONFIRMED "no such
+ * company"; throws `RegistryLookupUnverifiedError` when the read itself could
+ * not be completed, so an unverified lookup can never be reported as a write
+ * failure. Replaces the `const existing = await resolveApp(slug)` /
+ * `if (!existing) return false` pair that collapsed the two.
+ */
+async function requireVerifiedApp(setter: string, slug: string): Promise<AppEntry | null> {
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) throw new RegistryLookupUnverifiedError(setter, slug)
+  return lookup.entry
+}
+
+/**
+ * Register (or update) a slug → chatId mapping. Appends a row; latest wins on read.
+ *
+ * #1542 (side-finding): `createdAt` was unconditionally restamped to "now" on
+ * EVERY call, including every edit of an already-registered company — so a
+ * company's registry `createdAt` drifted forward on each change rather than
+ * preserving its real original creation time, meaning "when was this company
+ * created" had no honest answer anywhere in the registry. Every setApp* caller
+ * that's updating an EXISTING entry already spreads `...existing` (which
+ * carries the real original `createdAt`) into this call — only stamp "now"
+ * when the caller didn't supply one, i.e. a genuinely new registration.
+ */
+export async function registerApp(e: Omit<AppEntry, 'createdAt'> & { createdAt?: string }): Promise<boolean> {
+  if (!configured() || !e.slug || !e.chatId) return false
+  try {
+    const { createdAt, ...rest } = e
+    const res = await fetch(rowsUrl(), {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({ row_data: { ...rest, createdAt: createdAt || new Date().toISOString() } }),
+      signal: AbortSignal.timeout(15000),
+    })
+    // #1172: registerApp is the ONE write chokepoint every setApp* helper
+    // routes through. A caller that writes then immediately reads back (e.g.
+    // reconcilePlanFulfillment's setAppPlan → claimCompanyProject sequence)
+    // must see its own write — drop the shared read cache on every
+    // successful write so the next resolveApp() call is a real, fresh fetch
+    // instead of a stale pre-write snapshot still inside the cache window.
+    if (res.ok) registryCache = null
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
+/**
+ * Persist a founder-uploaded logo / brand mark on a company (#492). Appends an
+ * updated row carrying the existing entry plus the new logoUrl/logoFileId, so
+ * resolveApp() (latest-wins) surfaces it on the next dashboard load. No-op
+ * (false) if the slug isn't registered.
+ *
+ * Idempotent no-op success (true) when the SAME fileId is already stored, so
+ * re-reading the current logo never appends a churn row.
+ */
+export async function setAppLogo(
+  slug: string,
+  fields: { logoUrl: string; logoFileId?: string },
+): Promise<boolean> {
+  const logoUrl = (fields.logoUrl || '').trim()
+  if (!logoUrl) return false
+  const existing = await requireVerifiedApp('setAppLogo', slug)
+  if (!existing) return false
+  if (existing.logoUrl === logoUrl && existing.logoFileId === fields.logoFileId) return true
+  return registerApp({
+    ...existing,
+    logoUrl,
+    logoFileId: fields.logoFileId,
+    logoUpdatedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Record a real Resend bounce/complaint for ONE company (#840). Appends an
+ * updated row carrying the existing entry plus the new
+ * emailUndeliverable{At,Reason} fields, so resolveApp() (latest-wins)
+ * surfaces it to the digest cron's pre-send check and the Live dashboard's
+ * honest notice. Idempotent: no-op success (true) when already flagged with
+ * the SAME reason (no churn row) — a redelivered webhook (Resend's own
+ * "delivered at least once" guarantee) or a second distinct bounce with a
+ * different reason still updates the timestamp/reason. No-op (false) if the
+ * slug isn't registered.
+ */
+export async function setAppEmailUndeliverable(
+  slug: string,
+  reason: string,
+): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppEmailUndeliverable', slug)
+  if (!existing) return false
+  if (existing.emailUndeliverableReason === reason && existing.emailUndeliverableAt) return true
+  return registerApp({
+    ...existing,
+    emailUndeliverableAt: new Date().toISOString(),
+    emailUndeliverableReason: reason,
+  })
+}
+
+/**
+ * Flag EVERY company owned by a given recipient email as undeliverable
+ * (#840) — the real shape of the reported bug: Resend's bounce/complaint
+ * events carry the recipient ADDRESS, not a company slug, and one address
+ * can own many companies (confirmed live: admin@ainative.studio owns ~30).
+ * Reuses the same real, already-working listAllAppsWithStatus() read
+ * (latest-wins per slug) and matches client-side — identical approach to
+ * listAppsForOwner()/resolveAppByZeroVoiceNumber() above, for the same
+ * reason (this table's read path has no confirmed server-side filter on an
+ * arbitrary row_data field).
+ *
+ * Returns the slugs that were actually (re)flagged. Silently returns an
+ * empty array on an empty address or a failed underlying read — a webhook
+ * handler must never throw on a transient registry hiccup (Resend will just
+ * retry the delivery).
+ */
+export async function markEmailUndeliverableForAddress(
+  email: string,
+  reason: string,
+): Promise<string[]> {
+  const target = (email || '').trim().toLowerCase()
+  if (!target) return []
+  const { apps, ok } = await listAllAppsWithStatus()
+  if (!ok) return []
+  const owned = apps.filter(
+    (a) => (a.ownerEmail || '').toLowerCase() === target && (a.lifecycleStatus || 'active') !== 'deleted',
+  )
+  const flagged: string[] = []
+  for (const app of owned) {
+    const didFlag = await setAppEmailUndeliverable(app.slug, reason).catch(() => false)
+    if (didFlag) flagged.push(app.slug)
+  }
+  return flagged
+}
+
+/**
+ * Set (or clear) a founder's "don't proactively contact me" preference (#742).
+ * Appends an updated row carrying the existing entry plus the new commsOptOut
+ * flag, so resolveApp() (latest-wins) surfaces it and any automated-outreach
+ * caller (nightly-loop comms policy today, #743's digest cron in future) can
+ * check it before sending. Idempotent: no-op success (true) when already at
+ * the requested value (no churn row). No-op (false) if the slug isn't
+ * registered.
+ */
+export async function setAppCommsOptOut(slug: string, optOut: boolean): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppCommsOptOut', slug)
+  if (!existing) return false
+  if ((existing.commsOptOut ?? false) === optOut) return true
+  return registerApp({
+    ...existing,
+    commsOptOut: optOut,
+    commsOptOutAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Attach a purchased custom domain to a company (#240). Appends an updated row
+ * carrying the existing chatId + brand plus the new domain, so resolveApp()
+ * (latest-wins) surfaces it. No-op (returns false) if the slug isn't registered.
+ */
+export async function setAppDomain(slug: string, domain: string): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppDomain', slug)
+  if (!existing) return false
+  return registerApp({ ...existing, domain })
+}
+
+/**
+ * Backfill a company's `idea` (#660/#696, landed 2026-09-11) onto a registry
+ * row created before that fix shipped (#1102/#1113 follow-up). `idea` is
+ * what Live.tsx's company-app/company-product generation triggers gate on
+ * (`state.idea && state.appSub`, see components/build/screens/Live.tsx) —
+ * a pre-#660 row with no `idea` at all silently never fires EITHER
+ * generation, regardless of track. Real root cause of habanero-hub never
+ * getting a landing page: not a track-based design choice, a one-day-early
+ * registration that missed the field entirely.
+ */
+export async function setAppIdea(slug: string, idea: string): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppIdea', slug)
+  if (!existing) return false
+  if (existing.idea) return true // already has one — never overwrite a real idea
+  return registerApp({ ...existing, idea })
+}
+
+/**
+ * Set a company's lifecycle state (#57, Danger Zone) — 'offline' (take the app
+ * out of service, keep the company) or 'deleted' (soft-delete the company).
+ * Appends an updated row carrying the existing chatId + brand plus the new
+ * lifecycle status, so resolveApp() (latest-wins) reflects it. No-op (returns
+ * false) if the slug isn't registered / already gone. Idempotent: re-setting the
+ * same status is a successful no-op (no churn row).
+ */
+export async function setAppLifecycle(
+  slug: string,
+  status: 'active' | 'offline' | 'deleted',
+): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppLifecycle', slug)
+  if (!existing) return false
+  if ((existing.lifecycleStatus || 'active') === status) return true
+  return registerApp({ ...existing, lifecycleStatus: status, lifecycleAt: new Date().toISOString() })
+}
+
+/**
+ * Persist a bring-your-own connected domain on a company (#53). Appends an updated
+ * row carrying the existing entry plus the founder's connected domain, the Railway
+ * customDomain id, and the last-observed status, so resolveApp() (latest-wins)
+ * surfaces the connection and re-opening the modal shows current status (idempotent).
+ *
+ * Idempotent no-op success (true) when the same domain + status is already stored, so
+ * repeated status polls never append churn rows. No-op (false) if slug isn't registered.
+ */
+export async function setAppByoDomain(
+  slug: string,
+  fields: { domain: string; byoDomainId?: string; status?: 'pending' | 'verifying' | 'live' | 'error' },
+): Promise<boolean> {
+  const host = (fields.domain || '').trim().toLowerCase()
+  if (!host) return false
+  const existing = await requireVerifiedApp('setAppByoDomain', slug)
+  if (!existing) return false
+  // Nothing changed → skip the write (avoid churn on repeat polls).
+  if (
+    (existing.byoDomain || '').toLowerCase() === host &&
+    existing.byoDomainId === fields.byoDomainId &&
+    existing.byoDomainStatus === fields.status
+  ) {
+    return true
+  }
+  return registerApp({
+    ...existing,
+    byoDomain: host,
+    byoDomainId: fields.byoDomainId ?? existing.byoDomainId,
+    byoDomainStatus: fields.status ?? existing.byoDomainStatus,
+    byoDomainConnectedAt: existing.byoDomainConnectedAt || new Date().toISOString(),
+  })
+}
+
+/**
+ * Record a real ZeroVoice number provisioned for a company (#415) — a
+ * separate, explicit founder-triggered action outside provision/route.ts's
+ * checkout flow, so it gets its own setter (same shape as setAppByoDomain)
+ * rather than growing setAppProvisioned's checkout-batch param bag.
+ */
+export async function setAppZeroVoice(
+  slug: string,
+  fields: { numberId: string; e164: string },
+): Promise<boolean> {
+  if (!fields.numberId || !fields.e164) return false
+  const existing = await requireVerifiedApp('setAppZeroVoice', slug)
+  if (!existing) return false
+  // Already recorded this exact number → nothing to write.
+  if (existing.zerovoiceNumberId === fields.numberId) return true
+  return registerApp({
+    ...existing,
+    zerovoiceProvisioned: true,
+    zerovoiceNumberId: fields.numberId,
+    zerovoiceE164: fields.e164,
+  })
+}
+
+/**
+ * Persist a founder's chosen comms cadence mode (#743) — the dashboard
+ * "Agile standup" / "Pair programming" selector. Same shape as
+ * setAppZeroVoice: its own setter rather than growing setAppProvisioned's
+ * checkout-batch param bag. Idempotent (no-op success) when already set to
+ * the same mode, so re-selecting the current mode never appends a churn row.
+ * No-op (false) if the slug isn't registered or the mode is invalid.
+ */
+export async function setAppCommsMode(
+  slug: string,
+  mode: 'agile' | 'pairProgramming',
+): Promise<boolean> {
+  if (mode !== 'agile' && mode !== 'pairProgramming') return false
+  const existing = await requireVerifiedApp('setAppCommsMode', slug)
+  if (!existing) return false
+  if ((existing.commsMode || 'agile') === mode) return true
+  return registerApp({ ...existing, commsMode: mode })
+}
+
+/**
+ * Record a successful comms-digest send (#743) — advances `lastDigestAt` so
+ * the NEXT pair-programming digest's getCommitsSince() call is a true delta.
+ * Called ONLY after sendCompanyEmail() actually succeeds — never advanced on
+ * a failed send, so a transient failure doesn't silently drop that day's
+ * activity from the following digest.
+ */
+export async function setAppLastDigestAt(slug: string, atIso: string): Promise<boolean> {
+  if (!atIso) return false
+  const existing = await requireVerifiedApp('setAppLastDigestAt', slug)
+  if (!existing) return false
+  return registerApp({ ...existing, lastDigestAt: atIso })
+}
+
+/**
+ * Record a successful trial re-engagement send (#1607) — advances
+ * lastTrialEngagementEmailAt so the NEXT run's activity-since window starts
+ * from here. Called ONLY after a confirmed send, mirroring
+ * setAppLastDigestAt's own discipline (never advanced on a failed send).
+ */
+export async function setAppLastTrialEngagementEmailAt(slug: string, atIso: string): Promise<boolean> {
+  if (!atIso) return false
+  const existing = await requireVerifiedApp('setAppLastTrialEngagementEmailAt', slug)
+  if (!existing) return false
+  return registerApp({ ...existing, lastTrialEngagementEmailAt: atIso })
+}
+
+/**
+ * Persist the `*Wired` flags computed by a fresh wiring scan (#1056) —
+ * see the `*Wired` fields' own doc comment above for why these are a
+ * separate, additive signal from `*Provisioned`. Called from
+ * runWiringScan (lib/build/register-app-core.ts) on every registration/
+ * regeneration, so the flags always reflect the CURRENT generated code,
+ * never a stale scan from an earlier version of the app.
+ *
+ * Idempotent-ish: still appends a fresh row every call (this runs once per
+ * register-app call already, same cadence as the existing seeded-data
+ * check, so no extra dedup is needed here) but short-circuits to a no-op
+ * success when every flag is already at the exact same value AND a scan
+ * timestamp already exists, so a register-app retry with unchanged code
+ * doesn't churn the registry.
+ */
+export async function setAppWiring(
+  slug: string,
+  flags: Record<string, boolean>,
+): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppWiring', slug)
+  if (!existing) return false
+  const existingRecord = existing as unknown as Record<string, unknown>
+  const unchanged = existing.wiringScannedAt && Object.entries(flags).every(
+    ([k, v]) => Boolean(existingRecord[k]) === v,
+  )
+  if (unchanged) return true
+  return registerApp({
+    ...existing,
+    ...flags,
+    wiringScannedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Record a real, PAUSED Meta Ads test campaign created for a company (#449) —
+ * a separate, explicit founder-triggered action, same shape as
+ * setAppZeroVoice (its own setter rather than growing setAppProvisioned's
+ * checkout-batch param bag).
+ */
+export async function setAppGrowthAdTest(
+  slug: string,
+  fields: { campaignId: string },
+): Promise<boolean> {
+  if (!fields.campaignId) return false
+  const existing = await requireVerifiedApp('setAppGrowthAdTest', slug)
+  if (!existing) return false
+  if (existing.growthAdTestCampaignId === fields.campaignId) return true
+  return registerApp({
+    ...existing,
+    growthAdTestCampaignId: fields.campaignId,
+    growthAdTestCreatedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Record a confirmed ad-budget payment (#449) — called ONLY from the
+ * core-verified webhook callback (app/api/webhooks/ad-budget-confirmed),
+ * never from anything client-triggered. Idempotent on paymentIntentId so a
+ * webhook redelivery doesn't double-record.
+ */
+export async function setAppGrowthAdBudgetFunded(
+  slug: string,
+  fields: { paymentIntentId: string; requestedCents: number; realCents: number },
+): Promise<boolean> {
+  if (!fields.paymentIntentId) return false
+  const existing = await requireVerifiedApp('setAppGrowthAdBudgetFunded', slug)
+  if (!existing) return false
+  if (existing.growthAdBudgetPaymentIntentId === fields.paymentIntentId) return true
+  return registerApp({
+    ...existing,
+    growthAdBudgetPaymentIntentId: fields.paymentIntentId,
+    growthAdBudgetRequestedCents: fields.requestedCents,
+    growthAdBudgetRealCents: fields.realCents,
+    growthAdBudgetFundedAt: new Date().toISOString(),
+  })
+}
+
+/** Record a refreshed clicks/CPC snapshot from Meta's Insights API (#449). */
+export async function setAppGrowthAdInsights(
+  slug: string,
+  fields: { clicks: number; cpcCents: number },
+): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppGrowthAdInsights', slug)
+  if (!existing) return false
+  return registerApp({
+    ...existing,
+    growthAdTestClicks: fields.clicks,
+    growthAdTestCpcCents: fields.cpcCents,
+    growthAdTestInsightsSyncedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Record that a founder clicked "Connect ZeroInvoice" (#418) — an honest,
+ * unverified click signal, never a confirmed-connected state (see the
+ * zeroinvoiceConnectClickedAt field doc for why builder cannot verify this
+ * server-side). Best-effort; a persistence hiccup must not block the
+ * redirect itself.
+ */
+export async function setAppZeroInvoiceConnectClicked(slug: string): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppZeroInvoiceConnectClicked', slug)
+  if (!existing) return false
+  return registerApp({
+    ...existing,
+    zeroinvoiceConnectClickedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Persist the auto-provisioned Content Workflow AI twin id for a company
+ * (#644 follow-up) — best-effort, idempotent (a re-set just overwrites with
+ * the same value in practice, since the caller only sets this once per
+ * company, right after successfully creating a twin).
+ */
+export async function setAppContentWorkflowTwinId(slug: string, twinId: string): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppContentWorkflowTwinId', slug)
+  if (!existing) return false
+  return registerApp({
+    ...existing,
+    contentWorkflowTwinId: twinId,
+  })
+}
+
+/**
+ * Record that the founder SELF-CONFIRMED they finished connecting ZeroInvoice
+ * (real bug fix: the UI had no way to move past "Connect requested" even
+ * after a founder genuinely completed the OAuth flow — see
+ * zeroinvoiceConnectConfirmedAt's field doc). Best-effort; never a
+ * platform-verified state, only ever a founder's own honest report.
+ */
+export async function setAppZeroInvoiceConnectConfirmed(slug: string): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppZeroInvoiceConnectConfirmed', slug)
+  if (!existing) return false
+  return registerApp({
+    ...existing,
+    zeroinvoiceConnectConfirmedAt: new Date().toISOString(),
+  })
+}
+
+/**
+ * Associate a company with its owner's AINative account email (#253). Appends an
+ * updated row carrying the existing entry plus ownerEmail, so resolveApp()
+ * (latest-wins) surfaces it and listAppsForOwner() can find it. Idempotent no-op
+ * (returns true) when the owner is already set to the same email. No-op (false)
+ * if the slug isn't registered or no email is given.
+ */
+export async function setAppOwner(slug: string, ownerEmail: string): Promise<boolean> {
+  const email = (ownerEmail || '').trim().toLowerCase()
+  if (!email) return false
+  const existing = await requireVerifiedApp('setAppOwner', slug)
+  if (!existing) return false
+  if ((existing.ownerEmail || '').toLowerCase() === email) return true
+  return registerApp({ ...existing, ownerEmail: email })
+}
+
+/**
+ * Migrate anonymous guest-built companies to a real AINative account (#49).
+ *
+ * When a founder builds a company as an anonymous guest and THEN registers or
+ * logs in, their in-progress work must not be lost: this claims the given guest
+ * company slugs for the now-authenticated account by stamping ownerEmail, so the
+ * companies surface in listAppsForOwner() (the "my companies" index) under the
+ * real account.
+ *
+ * SAFETY — only UNOWNED companies are claimed. A row that already carries a
+ * DIFFERENT ownerEmail is skipped (never stolen); a row already owned by THIS
+ * email is a no-op success (idempotent, so re-running the migration on repeat
+ * logins is harmless). Unregistered slugs are skipped. Returns the slugs that
+ * were newly migrated, the ones skipped (confirmed unowned-by-someone-else or
+ * confirmed never registered), and the ones whose lookup itself failed, so the
+ * caller can log without failing the sign-in path.
+ *
+ * #832-class bug (found 2026-10-24 sweeping other `resolveApp(...).catch(() =>
+ * null)` call sites after #1434/PR #1435): this used to resolve each slug with
+ * plain `resolveApp(slug).catch(() => null)`, whose single `null` collapses
+ * "confirmed not registered" with "the registry read itself failed." A
+ * transient hiccup during sign-in — exactly when this runs — silently dropped
+ * a founder's real, in-progress guest company into the same `skipped` bucket
+ * as a slug that is genuinely someone else's or never existed, with nothing
+ * in the response to tell the caller it's worth retrying. Using
+ * resolveAppVerified() lets a failed lookup land in its own `failed` bucket
+ * instead.
+ */
+export async function migrateGuestCompanies(
+  slugs: string[],
+  ownerEmail: string,
+): Promise<{ migrated: string[]; skipped: string[]; failed: string[] }> {
+  const email = (ownerEmail || '').trim().toLowerCase()
+  const migrated: string[] = []
+  const skipped: string[] = []
+  const failed: string[] = []
+  if (!email || !Array.isArray(slugs) || slugs.length === 0) {
+    return { migrated, skipped, failed }
+  }
+  // De-duplicate + drop empties so a repeated slug isn't processed twice.
+  const unique = Array.from(new Set(slugs.map((s) => (s || '').trim()).filter(Boolean)))
+  for (const slug of unique) {
+    const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+    if (!lookup.verified) {
+      failed.push(slug)
+      continue
+    }
+    const existing = lookup.entry
+    if (!existing) {
+      skipped.push(slug)
+      continue
+    }
+    const currentOwner = (existing.ownerEmail || '').toLowerCase()
+    // Already owned by this account → nothing to do (idempotent).
+    if (currentOwner === email) {
+      migrated.push(slug)
+      continue
+    }
+    // Owned by SOMEONE ELSE → never steal it.
+    if (currentOwner && currentOwner !== email) {
+      skipped.push(slug)
+      continue
+    }
+    // Unowned (built as guest) → claim it for this account.
+    const ok = await registerApp({ ...existing, ownerEmail: email }).catch(() => false)
+    if (ok) migrated.push(slug)
+    else skipped.push(slug)
+  }
+  return { migrated, skipped, failed }
+}
+
+/**
+ * List the companies owned by a given AINative account email (#253) — the data
+ * behind the "my companies" index. Reads all registry rows, keeps only the
+ * latest row per slug (latest-wins, matching resolveApp), then filters to those
+ * whose ownerEmail matches. Returns most-recently-created first. Empty on any
+ * error or when unconfigured, so the surface degrades gracefully.
+ */
+export async function listAppsForOwner(ownerEmail: string): Promise<AppEntry[]> {
+  const result = await listAppsForOwnerWithStatus(ownerEmail)
+  return result.apps
+}
+
+/** Same as listAppsForOwner(), but reports whether the underlying read
+ *  genuinely succeeded — see listAllAppsWithStatus()'s doc comment for why
+ *  this distinction matters (a real DB outage must never look like "you
+ *  have zero companies"). */
+export async function listAppsForOwnerWithStatus(ownerEmail: string): Promise<{ apps: AppEntry[]; ok: boolean }> {
+  const email = (ownerEmail || '').trim().toLowerCase()
+  if (!configured() || !email) return { apps: [], ok: false }
+  const result = await listAllAppsWithStatus()
+  return { apps: result.apps.filter((e) => (e.ownerEmail || '').toLowerCase() === email), ok: result.ok }
+}
+
+/**
+ * Every registered company, collapsed to the latest row per slug (latest-wins,
+ * matching resolveApp), most-recently-created first. Empty on any error or when
+ * unconfigured. Used by the winback sweep (#344) to find dormant owners; the
+ * caller applies its own filters (has ownerEmail, not deleted, inactive N days).
+ */
+export async function listAllApps(): Promise<AppEntry[]> {
+  const result = await listAllAppsWithStatus()
+  return result.apps
+}
+
+/**
+ * ZeroDB's rows endpoint caps `limit` at 1000 per request (1001+ → 422, see
+ * learning.ts's own note on this same cap). `builder_app_registry` is
+ * append-only — every update (domain change, plan change, logo change, a new
+ * lifecycle row, etc.) appends a brand-new row rather than mutating one in
+ * place (see registerApp) — and has grown well past a single 1000-row page
+ * in production (#1106, filed 2026-10-16). A fixed single-page `?limit=1000`
+ * fetch silently clips whichever rows fall past that boundary, with no error
+ * surfaced anywhere: depending on which window a given read happens to land
+ * in, an old-enough company's entire row history (every field update it ever
+ * had) could go invisible to resolveApp/resolveAppVerified — turning a real
+ * owner's danger-zone action into a false "not_owner", or /build/{slug} into
+ * an unpredictable 404 for a real, live company.
+ *
+ * Pages through with `skip`, same `?limit=N&skip=page*N` convention already
+ * proven working against this same rows API on a sibling table (see
+ * loop-enrollment.ts's fetchAllRows(), built for the identical append-only
+ * single-page-clipping bug on `builder_loop_enrollments`). Capped at
+ * MAX_REGISTRY_PAGES (not truly unbounded) so a pathological table still
+ * can't hang a request indefinitely.
+ *
+ * Returns `ok: false` (never a silently-partial row list) if any page fails
+ * to fetch — every caller here already fails closed on `ok: false` rather
+ * than treating an incomplete read as a confirmed answer.
+ */
+const MAX_REGISTRY_PAGES = 50
+const REGISTRY_PAGE_SIZE = 1000
+
+// #1172: resolveApp()/resolveAppVerified() — meant to look up ONE company by
+// slug — each call this full-table scan independently. The nightly loop
+// calls resolveApp() twice per company with NIGHTLY_COMPANY_CONCURRENCY=8
+// companies resolving in parallel; that's dozens of concurrent multi-page
+// fetchAllRegistryRows() calls against the same ZeroDB rows endpoint inside
+// one 60s window, confirmed live blowing through its 60 req/min rate limit
+// (every call failing closed with ok:false) and taking tasksCompleted to 0
+// of 31 attempted for an entire nightly run. A short-lived shared-promise
+// cache collapses any burst of concurrent callers onto a single real fetch —
+// long enough to cover one nightly-loop batch, short enough that a normal
+// (non-burst) caller is never more than a few seconds stale, which already
+// matches the staleness every caller here tolerates (an in-flight registry
+// write from the same moment isn't guaranteed visible to a concurrent read
+// either way).
+const REGISTRY_CACHE_MS = 5_000
+let registryCache: { at: number; promise: Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> } | null = null
+
+/** Test-only: clears the shared registry-fetch cache so each test's own mocked
+ * fetch response is actually exercised rather than silently reused from a
+ * previous test within the same file (module state persists across `it()`
+ * blocks in the same test file — see #1172). Call from `afterEach`/`beforeEach`
+ * in any suite asserting on `fetch` call counts or specific mocked responses
+ * for resolveApp/resolveAppVerified/listAllApps. */
+export function __resetRegistryCacheForTests(): void {
+  registryCache = null
+}
+
+async function fetchAllRegistryRows(): Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> {
+  const now = Date.now()
+  if (registryCache && now - registryCache.at < REGISTRY_CACHE_MS) {
+    return registryCache.promise
+  }
+  const promise = fetchAllRegistryRowsUncached()
+  registryCache = { at: now, promise }
+  // A failed fetch must not poison the cache for the full window — the next
+  // caller should get a fresh attempt, not a repeated ok:false. Must handle
+  // BOTH branches here (a plain `.then(onFulfilled)` with no onRejected still
+  // creates its own unobserved rejection when the underlying fetch throws —
+  // confirmed live via vitest's "Unhandled Rejection" on a mocked network
+  // failure — even though the original `promise` returned to the real caller
+  // below is independently awaited/caught by them).
+  promise.then(
+    (r) => {
+      if (!r.ok && registryCache?.promise === promise) registryCache = null
+    },
+    () => {
+      if (registryCache?.promise === promise) registryCache = null
+    },
+  )
+  return promise
+}
+
+async function fetchAllRegistryRowsUncached(): Promise<{ rows: Array<{ row_data?: AppEntry }>; ok: boolean }> {
+  const all: Array<{ row_data?: AppEntry }> = []
+  for (let page = 0; page < MAX_REGISTRY_PAGES; page++) {
+    const skip = page * REGISTRY_PAGE_SIZE
+    const res = await fetch(`${rowsUrl()}?limit=${REGISTRY_PAGE_SIZE}&skip=${skip}`, {
+      headers: headers(), signal: AbortSignal.timeout(20000),
+    })
+    if (!res.ok) {
+      console.error(`[app-registry] fetchAllRegistryRows failed on page ${page}: ${res.status} ${await res.text().catch(() => '')}`.slice(0, 300))
+      return { rows: all, ok: false }
+    }
+    const data = JSON.parse(await res.text())
+    const rows = Array.isArray(data) ? data : data.data || data.rows || []
+    all.push(...rows)
+    const hasMore = Array.isArray(data) ? rows.length === REGISTRY_PAGE_SIZE : Boolean(data?.has_more)
+    if (!hasMore || rows.length < REGISTRY_PAGE_SIZE) break
+  }
+  return { rows: all, ok: true }
+}
+
+/**
+ * Same real read as listAllApps(), but tells the caller WHETHER the empty
+ * result is genuine (no rows) or the read itself failed (real bug found
+ * live, 2026-09-13: core#7395 — Builder's own ZeroDB project started
+ * returning 403 "not scoped to this project" on every call, platform-wide,
+ * and this same read's own `if (!res.ok) return []` silently presented that
+ * outage as "you have zero companies" — a real founder (arif@8genc.com)
+ * reported their projects had "disappeared," when in fact the read itself
+ * was failing, not returning a genuine empty list).
+ *
+ * Callers that must not lie to a founder about their own data (my-companies)
+ * should use this instead of listAllApps() and surface `ok:false` as a real
+ * error state, never as "you have no companies."
+ */
+export async function listAllAppsWithStatus(): Promise<{ apps: AppEntry[]; ok: boolean }> {
+  if (!configured()) return { apps: [], ok: false }
+  try {
+    const { rows, ok } = await fetchAllRegistryRows()
+    if (!ok) return { apps: [], ok: false }
+    const entries: AppEntry[] = rows
+      .map((r: { row_data?: AppEntry }) => r.row_data)
+      .filter((rd: AppEntry | undefined): rd is AppEntry => !!rd?.slug && !!rd?.chatId)
+    // Collapse to the latest row per slug (latest createdAt wins).
+    const latest = new Map<string, AppEntry>()
+    for (const e of entries) {
+      const prev = latest.get(e.slug)
+      if (!prev || (e.createdAt || '').localeCompare(prev.createdAt || '') > 0) latest.set(e.slug, e)
+    }
+    // Real bug (#1106, found live): a soft-deleted company (lifecycleStatus
+    // 'deleted', set by Danger Zone — see setAppLifecycle) still showed up
+    // here, even though resolveAppVerified() (the single-slug read every
+    // OTHER code path in this file uses) already excludes it. The founder
+    // could see a deleted company in "My Companies" and click its own
+    // delete button — which then genuinely fails with "not_owner", since
+    // resolveApp() correctly can't find a live entry to act on. At least 5
+    // separate callers (winback-email, registration-reconcile,
+    // zerodb-key-backfill, loop-backfill, paid-founder-plan-backfill) were
+    // already re-implementing this exact filter themselves on this
+    // function's output — centralizing it here fixes every caller at once,
+    // including the ones that never added the workaround (this one,
+    // /api/build/my-companies, app-by-project).
+    const live = Array.from(latest.values()).filter((e) => (e.lifecycleStatus || 'active') !== 'deleted')
+    return {
+      apps: live.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || '')),
+      ok: true,
+    }
+  } catch (e) {
+    console.error('[app-registry] listAllApps threw:', e)
+    return { apps: [], ok: false }
+  }
+}
+
+/**
+ * Persist the active subscription plan on a company (#241), mirroring
+ * setAppDomain. Appends an updated row carrying the existing chatId + brand
+ * (and any domain/provisioning) plus the new plan, so resolveApp() (latest-wins)
+ * surfaces it. `enrolled` is set for Pro+ tiers (#841 — was Business+) —
+ * auto-enrollment intent into the nightly loop (the cron itself is #243).
+ * No-op (false) if slug isn't registered.
+ */
+export async function setAppPlan(slug: string, plan: string): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppPlan', slug)
+  if (!existing) return false
+  // #841: Pro and up auto-enroll into the nightly improvement loop (was
+  // Business+ only).
+  //
+  // This was a hand-written ||-chain over literal plan ids
+  // (pro/business/enterprise/cody_vcto/cody__your_virtual_cto) and was one of
+  // the readers that silently disagreed with the rest of the repo (#1012 review
+  // finding 1): it had no case for core's `launch`/`company` aliases, so a
+  // founder on Launch got `enrolled: false` and the nightly loop never picked
+  // their company up — with nothing logged. It now asks the SAME consolidated
+  // predicate (#762) every other paid gate asks, which normalizes those aliases
+  // first. Membership is unchanged for every id the chain already covered.
+  const enrolled = isPaidTier(plan)
+  return registerApp({ ...existing, plan, enrolled })
+}
+
+/**
+ * Claim a company's {slug}.ainative.studio subdomain (#78) — the paid-gated action
+ * behind the "claim your subdomain" button on Live. Sets subdomainClaimed=true so the
+ * edge middleware (subdomainServable) begins serving the host. PAID-ONLY: mirrors how
+ * custom-domain / BYO-domain (#53/#240) are gated — the claim is refused unless the
+ * company is on a paid plan. The plan is re-read from the registry entry (the source of
+ * truth persisted by setAppPlan) rather than trusted from the client.
+ *
+ * Idempotent: no-op success (true) when already claimed. Returns { ok, claimed, reason }
+ * so the caller can surface an honest message (not_registered / not_paid) without throwing.
+ */
+export async function claimSubdomain(
+  slug: string,
+): Promise<{ ok: boolean; claimed: boolean; reason?: string }> {
+  // #832-class bug (#1454): this used to resolve with a plain `resolveApp(slug)`,
+  // whose single `null` collapses "confirmed not registered" with "the registry
+  // read itself failed." A transient ZeroDB hiccup therefore returned
+  // `not_registered`, which the POST route maps to a 404 — telling a real,
+  // paying founder mid-claim that their own company doesn't exist. Same fix
+  // already applied to fulfillPaidPlan() below and connect-domain's routes.
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) return { ok: false, claimed: false, reason: 'lookup_failed' }
+  const existing = lookup.entry
+  if (!existing) return { ok: false, claimed: false, reason: 'not_registered' }
+  // Paid gate — a subdomain can only be claimed on a paid plan (#78). Asks the
+  // consolidated predicate (#762) rather than a local literal set, which used to
+  // return `not_paid` to a founder whose row held an un-normalized core alias
+  // (#1012 review finding 1). Normalization now happens on the write side too,
+  // so this is belt-and-braces for rows already written before that fix.
+  if (!isPaidTier(existing.plan)) return { ok: false, claimed: false, reason: 'not_paid' }
+  // Already claimed → idempotent success, no churn row.
+  if (existing.subdomainClaimed === true) return { ok: true, claimed: true }
+  const ok = await registerApp({
+    ...existing,
+    subdomainClaimed: true,
+    subdomainClaimedAt: existing.subdomainClaimedAt || new Date().toISOString(),
+  })
+  return { ok, claimed: ok, reason: ok ? undefined : 'write_failed' }
+}
+
+/**
+ * Attach persistent-cloud provisioning to a company (#243). Appends an updated
+ * row carrying the existing chatId + brand plus the provisioned Instant DB project
+ * id, key kind, and (for tmp_ keys) the claim token, so resolveApp() (latest-wins)
+ * surfaces it. No-op (false) if the slug isn't registered.
+ *
+ * SECURITY NOTE: we deliberately do NOT persist the raw Instant DB api_key
+ * (sk_/tmp_) in this shared registry table — it is a data-plane secret. The
+ * generated company app receives/uses its key server-side (env / secret store),
+ * and the Live dashboard reads the company's data with the Builder's own server
+ * key scoped by project_id. Only the project_id (an identifier) and the claim
+ * token (needed to upgrade tmp_ → permanent on payment) are stored here.
+ */
+export async function setAppProvisioned(
+  slug: string,
+  fields: {
+    zerodbProjectId?: string
+    deployUrl?: string
+    provisionedAt?: string
+    trialExpiresAt?: string
+    keyKind?: 'tmp' | 'permanent'
+    claimToken?: string
+    /**
+     * #1014: the founder's REAL, live plan, as confirmed from core at
+     * provisioning time. Before this, `plan` was only ever written by the
+     * post-Stripe-checkout `subscription/verify` redirect (#1012) and two
+     * internal loop jobs — never from the founder's actual account tier — so a
+     * founder who was already paid before creating the company had an empty
+     * `plan` here forever. The provision route only writes a CONFIRMED paid
+     * tier, so an unresolved/unpaid read can never clobber a real Stripe stamp.
+     */
+    plan?: string
+    pipelineProvisioned?: boolean
+    pipelineId?: string
+    commerceProvisioned?: boolean
+    commerceStoreId?: string
+    capstackProvisioned?: boolean
+    capstackCompanyId?: string
+    formsProvisioned?: boolean
+    formsFormId?: string
+    agentflowProvisioned?: boolean
+    agentflowProjectId?: string
+    zerocrmProvisioned?: boolean
+    zeroinvoiceProvisioned?: boolean
+    serviceosProvisioned?: boolean
+    livestreamingProvisioned?: boolean
+    socialgraphProvisioned?: boolean
+    zeroerpProvisioned?: boolean
+    zeroerpOrgId?: string
+    zeroerpInviteToken?: string
+    workspaceId?: string
+    workspaceFiled?: boolean
+    railwayServiceId?: string
+    railwayDeployedAt?: string
+  },
+): Promise<boolean> {
+  const existing = await requireVerifiedApp('setAppProvisioned', slug)
+  if (!existing) return false
+  return registerApp({
+    ...existing,
+    ...fields,
+    // capstackCompanyId (the provision-response field name, matched to
+    // provision/route.ts's existing capstack.companyId shape) durably lands
+    // on AppEntry.opencapstackCompanyId — was being spread into `fields` and
+    // silently dropped (not a real AppEntry key) before this fix (#503),
+    // leaving the runtime proxy with no way to resolve which OpenCapStack
+    // company a given app maps to.
+    opencapstackCompanyId: fields.capstackCompanyId || existing.opencapstackCompanyId,
+    provisionedAt: fields.provisionedAt || new Date().toISOString(),
+  })
+}
+
+/**
+ * Persist a company's dedicated per-company Railway service (#243) after a
+ * verified-paid deploy. Appends an updated row carrying the existing entry plus the
+ * new railwayServiceId (+ the real deploy URL, which supersedes the durable preview
+ * URL) so resolveApp() (latest-wins) and Live surface the real host.
+ *
+ * IDEMPOTENCY: no-op success (returns true) when the same railwayServiceId is already
+ * stored — the verify trigger checks the registry before creating, but this guards the
+ * write path too, so a re-run never appends a churn row. No-op (false) if the slug
+ * isn't registered.
+ */
+export async function setAppRailwayService(
+  slug: string,
+  fields: { railwayServiceId: string; deployUrl?: string; domain?: string },
+): Promise<boolean> {
+  if (!fields.railwayServiceId) return false
+  const existing = await requireVerifiedApp('setAppRailwayService', slug)
+  if (!existing) return false
+  // Already recorded this exact service → nothing to write.
+  if (existing.railwayServiceId === fields.railwayServiceId) return true
+  return registerApp({
+    ...existing,
+    railwayServiceId: fields.railwayServiceId,
+    railwayDeployedAt: existing.railwayDeployedAt || new Date().toISOString(),
+    // A real Railway host supersedes the durable-preview deployUrl.
+    deployUrl: fields.deployUrl || existing.deployUrl,
+    domain: fields.domain || existing.domain,
+  })
+}
+
+/**
+ * Attach a per-company Gitea repository to a company (#354, GIT-1). Appends an updated
+ * row with the git fields so resolveApp() (latest-wins) surfaces the repo handle.
+ *
+ * IDEMPOTENCY: no-op success (returns true) when the same gitRepoId is already stored —
+ * provisionCompanyRepo checks the registry before creating, but this guards the write
+ * path too, so a re-run never appends a churn row. No-op (false) if the slug isn't
+ * registered or required fields are missing.
+ */
+export async function setAppGitRepo(
+  slug: string,
+  fields: { gitRepoUrl: string; gitRepoId: string; gitOrg: string },
+): Promise<boolean> {
+  if (!fields.gitRepoUrl || !fields.gitRepoId || !fields.gitOrg) return false
+  const existing = await requireVerifiedApp('setAppGitRepo', slug)
+  if (!existing) return false
+  // Already recorded this exact repo → nothing to write.
+  if (existing.gitRepoId === fields.gitRepoId) return true
+  return registerApp({
+    ...existing,
+    gitRepoUrl: fields.gitRepoUrl,
+    gitRepoId: fields.gitRepoId,
+    gitOrg: fields.gitOrg,
+    gitProvisionedAt: existing.gitProvisionedAt || new Date().toISOString(),
+  })
+}
+
+/**
+ * Upgrade a company's tmp_ Instant DB project to a PERMANENT one on payment (#243).
+ *
+ * When an anonymous founder provisions, they get a tmp_ key (~24h expiry, #1579/#1602). Once they
+ * pay and have an account, the #241 post-checkout return path calls this with the
+ * founder's AINative JWT: it hits /api/v1/public/instant-db/claim with the stored
+ * {project_id, token} to associate the project to their account and mint a permanent
+ * key, then flips keyKind → 'permanent' on the registry so it never expires.
+ *
+ * Idempotent: no-op success if already permanent or nothing to claim. Returns
+ * { ok, claimed, reason? } so the caller can log without failing checkout.
+ *
+ * #1492 (follow-up to #1486/#832): this used to resolve with a plain,
+ * unverified `resolveApp(slug)`, whose single `null` collapsed "confirmed not
+ * registered" with "the registry read itself failed." A transient hiccup
+ * therefore returned `not_registered` — telling a real, paying founder mid-
+ * claim that their own company doesn't exist, the same anti-pattern already
+ * fixed on claimSubdomain/fulfillPaidPlan. Now distinguishable via the
+ * `lookup_failed` reason, left out of #1486's setter sweep only because this
+ * function already returns a structured result rather than a bare boolean.
+ */
+export async function claimCompanyProject(
+  slug: string,
+  jwt: string,
+): Promise<{ ok: boolean; claimed: boolean; reason?: string }> {
+  const { entry: existing, verified } = await resolveAppVerified(slug)
+  if (!verified) return { ok: false, claimed: false, reason: 'lookup_failed' }
+  if (!existing) return { ok: false, claimed: false, reason: 'not_registered' }
+  // Nothing to claim: never provisioned, or already permanent.
+  if (!existing.zerodbProjectId || existing.keyKind !== 'tmp') {
+    return { ok: true, claimed: false, reason: existing.keyKind === 'permanent' ? 'already_permanent' : 'not_tmp' }
+  }
+  if (!existing.claimToken) return { ok: false, claimed: false, reason: 'no_claim_token' }
+  if (!jwt) return { ok: false, claimed: false, reason: 'no_jwt' }
+
+  try {
+    const res = await fetch(`${AINATIVE_API}/api/v1/public/instant-db/claim`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${jwt}`, 'Content-Type': 'application/json' },
+      // The core claim endpoint expects { token, project_id } (verified live).
+      body: JSON.stringify({ token: existing.claimToken, project_id: existing.zerodbProjectId }),
+      signal: AbortSignal.timeout(20000),
+    })
+    const data = await res.json().catch(() => null)
+    // 409 = already claimed → treat as success (idempotent), just record permanence.
+    const alreadyClaimed = res.status === 409
+    if (!res.ok && !alreadyClaimed) {
+      return { ok: false, claimed: false, reason: String(data?.detail || res.status).slice(0, 120) }
+    }
+
+    // REAL BUG FIX (found live, agentive/amador@selfpreneur.com, a real Pro
+    // customer whose landing page's waitlist form had been silently failing
+    // every signup): this claim call minted a real, permanent sk_ api_key —
+    // the response's own `api_key` field — but NOTHING downstream of it ever
+    // persisted that key anywhere. Every company that ever went through this
+    // upgrade path stayed permanently unable to satisfy #806's per-company
+    // key store, which fails CLOSED (502) on any /api/db call against a
+    // project with no stored key — so a "successfully upgraded to
+    // permanent" company's real /api/db writes (waitlist signups, visitor
+    // tracking, any app-generated record) kept silently failing anyway,
+    // completely independent of whether the founder had paid.
+    //
+    // Only store when the claim response actually carries a fresh key — a
+    // 409 (already claimed) legitimately has no new key to store (whatever
+    // key resulted from the ORIGINAL claim, made elsewhere/earlier, should
+    // already be in the store; this call has nothing new to add).
+    const newApiKey = typeof data?.api_key === 'string' ? data.api_key : undefined
+    if (newApiKey && existing.zerodbProjectId) {
+      // Dynamic import (real bug found live, this session — mirrors
+      // ./instant-db's own dynamic import a few lines below, for the exact
+      // same reason): company-zerodb-credentials.ts pulls in Node-only APIs
+      // (crypto, a Drizzle/Postgres client) transitively. A static top-level
+      // import here got bundled into EVERY consumer of this file, including
+      // middleware.ts (Edge runtime) — which broke the Railway build with
+      // "A Node.js API is used (process.cwd) which is not supported in the
+      // Edge Runtime," confirmed via the actual failed deployment's logs.
+      try {
+        const { storeCompanyZerodbKey } = await import('./company-zerodb-credentials')
+        // #1606: deliberately no usageTier here — this IS the real claim/
+        // payment event, so the stored row has no 'trial' tag at all, which
+        // the write-cap check (trial-write-cap.ts) reads as unlimited.
+        await storeCompanyZerodbKey(existing.zerodbProjectId, newApiKey, {
+          slug, keyKind: 'permanent',
+        })
+      } catch { /* best-effort — a store failure must never fail the claim */ }
+    }
+
+    // #250: now that the project is claimed (associated to a real account and
+    // permanent), re-attempt filing it under the Builder workspace. Best-effort —
+    // must never fail the claim. Dynamic import avoids a static import cycle
+    // (instant-db.ts is otherwise only imported by the provision route).
+    let workspaceFiled = existing.workspaceFiled
+    try {
+      const { fileProjectUnderBuilderWorkspace, BUILDER_WORKSPACE_ID } = await import('./instant-db')
+      const filed = await fileProjectUnderBuilderWorkspace(existing.zerodbProjectId)
+      workspaceFiled = filed.filed
+      // Persist the intended workspace even if the re-parent is still blocked, so a
+      // migration sweep can find it.
+      ;(existing as AppEntry).workspaceId = existing.workspaceId || BUILDER_WORKSPACE_ID
+    } catch { /* best-effort */ }
+
+    // Flip to permanent; drop the now-spent claim token.
+    await registerApp({
+      ...existing,
+      keyKind: 'permanent',
+      claimToken: undefined,
+      claimedAt: new Date().toISOString(),
+      workspaceFiled,
+    })
+    return { ok: true, claimed: !alreadyClaimed }
+  } catch (e: any) {
+    return { ok: false, claimed: false, reason: String(e?.message || e).slice(0, 120) }
+  }
+}
+
+/**
+ * Reconcile a company's stale plan/key state against its founder's REAL,
+ * CURRENT core plan (real, live bug fix — agentive/amador@selfpreneur.com,
+ * a real paying Pro customer whose company registry still said `plan: null`
+ * and `keyKind: 'tmp'` well after they'd paid).
+ *
+ * ROOT CAUSE THIS CLOSES: `setAppPlan()` and `claimCompanyProject()` — the
+ * only two places that ever stamp a real plan / upgrade a project to a
+ * permanent key — are BOTH called from exactly one place,
+ * `POST /api/build/subscription/verify`, which itself only ever runs when
+ * the founder's browser completes the full Stripe-redirect round-trip back
+ * to `/build?screen=live&...&upgraded=1&session_id=...` (see that route's
+ * own doc comment: "Return-URL verification is the MVP path; a hardened
+ * Stripe webhook is deferred"). Core never calls Builder back — there is no
+ * webhook. A closed tab, a network blip, or an ad-blocker on that ONE
+ * redirect means a real, paying founder gets NONE of it: no plan stamped,
+ * no permanent key, no loop enrollment — forever, since nothing else ever
+ * retries it. Confirmed live: agentive's own registry history has 7 rows
+ * spanning creation to hours before this fix, EVERY one still `keyKind:
+ * "tmp"` with an unused `claimToken` sitting there, while every real
+ * `/api/db` write for their live landing page's waitlist form was silently
+ * 502ing (fail-closed per #806) the entire time.
+ *
+ * THIS FUNCTION is the retroactive, session-based reconciliation: called
+ * from `GET /api/build/subscription/status` (which already resolves the
+ * REAL signed-in founder's REAL current plan on every Live dashboard load,
+ * independent of any Stripe redirect) whenever that founder is genuinely
+ * paid AND the named company's own registry state disagrees. It repeats
+ * exactly the same two fulfillment steps `subscription/verify` performs —
+ * `setAppPlan` and, if still on a `tmp_` key, `claimCompanyProject` — using
+ * the CALLER'S OWN real session token (never impersonation, never an
+ * anonymous/service-level path — CODY.md Rule 5). This is why the fix lives
+ * on a per-request, session-bound reconciliation rather than an offline
+ * cron sweep: `claimCompanyProject` requires the founder's own bearer token
+ * (the claim associates a project to a specific real account), which no
+ * background job can legitimately borrow.
+ *
+ * Best-effort and silent on failure — this must never turn a plain page
+ * load into a visible error. Only acts when `corePlan` is a real, paid
+ * plan id; never triggered by a free/hobbyist account.
+ *
+ * #1022: those last two sentences were the DOC's claim only — nothing here
+ * actually enforced either one. The paid-only property was entirely a
+ * property of the single caller's own gate, and the plan was written RAW.
+ * Both are now enforced in this function, next to the write they protect:
+ *
+ *   - `isPaidPlanId` rejects a free/hobbyist/unknown id outright, so this can
+ *     never stamp a non-paid tier onto a company (same guard, same reason, as
+ *     `fulfillPaidPlan`'s `not_a_paid_plan`).
+ *   - `canonicalPaidPlan` normalizes before persisting, so an alias
+ *     (`launch`/`company`/`cody__your_virtual_cto`/`admin`) can't land on the
+ *     row as a string that `deploy.ts`'s `isPaidPlan`, `claimSubdomain` and
+ *     `setAppPlan`'s `enrolled` flag each read as UNPAID — the exact
+ *     accepted-but-unnormalized defect #1012's review found in `isPaidPlanId`
+ *     and fixed in `fulfillPaidPlan`, left unfixed on this path.
+ */
+export async function reconcilePlanFulfillment(
+  slug: string,
+  corePlan: string,
+  jwt: string,
+): Promise<{ planFixed: boolean; keyClaimed: boolean; lookupFailed?: boolean }> {
+  let planFixed = false
+  let keyClaimed = false
+  // #1492 (follow-up to #1486/#832): a transient registry-read failure used to
+  // be indistinguishable from "nothing to reconcile" — both silently returned
+  // {planFixed:false, keyClaimed:false}. The sole current caller
+  // (subscription/status/route.ts) discards this return value entirely
+  // (`.catch(() => {})`), so this stays best-effort and still never throws;
+  // `lookupFailed` exists so a future caller, or logging, can tell a real
+  // hiccup apart from a confirmed no-op.
+  let lookupFailed = false
+  if (!slug || !corePlan || !jwt) return { planFixed, keyClaimed }
+  // Never stamp a non-paid tier (enforced here, not merely assumed of callers).
+  if (!isPaidPlanId(corePlan)) return { planFixed, keyClaimed }
+
+  // The canonical vocabulary every registry READER already compares against.
+  const plan = canonicalPaidPlan(corePlan)
+
+  try {
+    const { entry: existing, verified } = await resolveAppVerified(slug)
+    if (!verified) return { planFixed, keyClaimed, lookupFailed: true }
+    if (!existing) return { planFixed, keyClaimed }
+
+    if (existing.plan !== plan) {
+      planFixed = await setAppPlan(slug, plan).catch(() => false)
+    }
+
+    if (existing.zerodbProjectId && existing.keyKind === 'tmp' && existing.claimToken) {
+      const claim = await claimCompanyProject(slug, jwt).catch(() => null)
+      keyClaimed = Boolean(claim?.ok && claim.claimed)
+      if (claim?.reason === 'lookup_failed') lookupFailed = true
+    }
+  } catch {
+    /* best-effort — a reconciliation hiccup must never surface to the founder */
+  }
+
+  return lookupFailed ? { planFixed, keyClaimed, lookupFailed } : { planFixed, keyClaimed }
+}
+
+/**
+ * True when `plan` is a real, paid core plan id — delegated to `isPaidTier`,
+ * the ONE consolidated paid-tier predicate (#762, lib/ainative/plan.ts).
+ *
+ * THIS USED TO BE ITS OWN `PAID_PLAN_IDS` Set, and that was the bug (#1012
+ * review finding 1/3). That set listed core's alias ids (`launch`, `company`)
+ * as accepted values alongside the canonical ones, which is correct for
+ * "may I act on this?" but catastrophic as a gate in front of a WRITE: every
+ * registry CONSUMER compares the stored string against canonical ids only, so
+ * an accepted-but-unnormalized alias produced a row that this predicate called
+ * paid and `lib/build/deploy.ts`'s `isPaidPlan` called unpaid. #762 created
+ * `isPaidTier` precisely so that one plan id can never mean two different
+ * things depending on which code path reads it; a sixth private copy of the
+ * answer defeated that. Normalization now happens in `fulfillPaidPlan` before
+ * the write, so acceptance and storage can no longer disagree.
+ *
+ * Semantics are unchanged for every id this previously accepted: `isPaidTier`
+ * funnels through `normalizeTier`, whose TIER_ALIASES map launch→pro,
+ * company→business, cody__your_virtual_cto→cody_vcto, and whose PAID_TIERS is
+ * the same pro|business|enterprise|cody_vcto membership. `hobbyist` and the $20
+ * `starter` remain NOT paid.
+ */
+export function isPaidPlanId(plan: string | undefined | null): boolean {
+  return isPaidTier(plan)
+}
+
+/**
+ * The canonical plan string to PERSIST for a paid core plan id (#1012 review
+ * finding 1).
+ *
+ * `plan` on a registry row is read back by several independent paid gates that
+ * each compare it against canonical ids — `lib/build/deploy.ts`'s `isPaidPlan`
+ * (which `subdomainServable` and therefore middleware's wildcard-host serving
+ * depends on), `claimSubdomain`'s own check, and `setAppPlan`'s `enrolled`
+ * computation. Writing core's raw alias (`launch`/`company`) satisfied NONE of
+ * them: a founder who genuinely paid for Launch got `{slug}.ainative.studio`
+ * never served, `reason: 'not_paid'` on their subdomain claim, and no nightly
+ * loop enrollment. Normalizing on the way in means the registry holds exactly
+ * the vocabulary every reader already expects.
+ */
+function canonicalPaidPlan(plan: string | undefined | null): string {
+  return normalizeTier(plan)
+}
+
+export interface FulfillPaidPlanResult {
+  /** The fulfillment was accepted and acted on (plan already correct counts). */
+  ok: boolean
+  /** A plan row was actually appended on this call. */
+  planSet: boolean
+  /** The tmp_ Instant DB project was upgraded to permanent on this call. */
+  keyClaimed: boolean
+  /**
+   * The company STILL sits on an unclaimed tmp_ key. Load-bearing honesty
+   * signal: a webhook has no founder token, so it cannot finish this step —
+   * reporting it lets the caller log/alert instead of pretending fulfillment
+   * was complete.
+   */
+  keyClaimPending: boolean
+  reason?: string
+}
+
+/**
+ * Stamp a VERIFIED-PAID plan onto a company and, when possible, upgrade its
+ * tmp_ Instant DB project to permanent (#1012).
+ *
+ * WHY THIS EXISTS: these two steps (`setAppPlan` + `claimCompanyProject`) were
+ * the entirety of paid fulfillment, and both were reachable from exactly ONE
+ * place — POST /api/build/subscription/verify — which only ever runs if the
+ * founder's browser survives the full Stripe→Builder redirect round-trip. A
+ * closed tab, a network blip, or an ad-blocker on that single redirect left a
+ * genuinely paying founder permanently on `plan: null` and a 72h tmp_ key that
+ * silently expires. Production evidence (2026-10-08, 338 registry rows across
+ * 17 real accounts): exactly one company ever had `plan` set, via an internal
+ * staff enterprise bypass — ZERO real external Stripe purchases had ever
+ * round-tripped. #855's `reconcilePlanFulfillment` (above) retries on Live
+ * dashboard load, which helps only founders who revisit that one screen.
+ *
+ * This function is that same fulfillment, extracted so a browser-independent
+ * caller (POST /api/webhooks/stripe) performs the IDENTICAL steps rather than
+ * a second, drifting copy of them. It deliberately composes the existing,
+ * already-proven `setAppPlan` / `claimCompanyProject` rather than re-writing
+ * their registry semantics.
+ *
+ * `jwt` IS OPTIONAL AND THAT IS THE WHOLE POINT. Core's
+ * /api/v1/public/instant-db/claim associates a project to a SPECIFIC real
+ * account and requires that account's own bearer token; a webhook has none,
+ * and CODY.md Rule 5 forbids borrowing/impersonating one or falling back to an
+ * anonymous service-level provisioning path. So the webhook path stamps the
+ * plan (the part that unblocks every paid gate and was the actual reported
+ * breakage) and reports `keyClaimPending: true`; the founder's very next
+ * authenticated Live load finishes the claim through
+ * `reconcilePlanFulfillment`, which now finds a correct plan already in place.
+ *
+ * Idempotent: a re-delivered webhook for an already-fulfilled company appends
+ * no churn row (`planSet: false`, `ok: true`) because `setAppPlan` is only
+ * called when the stored plan actually differs, and `claimCompanyProject` is
+ * itself a no-op once `keyKind === 'permanent'`.
+ *
+ * Refuses (`ok: false`, `reason: 'not_a_paid_plan'`) on a free/hobbyist plan id
+ * so a webhook can never stamp a non-paid tier onto a company.
+ */
+export async function fulfillPaidPlan(
+  slug: string,
+  corePlan: string,
+  jwt?: string,
+): Promise<FulfillPaidPlanResult> {
+  const base: FulfillPaidPlanResult = { ok: false, planSet: false, keyClaimed: false, keyClaimPending: false }
+  const rawPlan = String(corePlan || '').trim()
+  if (!slug || !rawPlan) return { ...base, reason: 'missing_args' }
+  if (!isPaidPlanId(rawPlan)) return { ...base, reason: 'not_a_paid_plan' }
+
+  // NORMALIZE BEFORE WRITING (#1012 review finding 1). `corePlan` arrives as
+  // core's own raw plan_id, which may be an alias (`launch`/`company`/
+  // `cody__your_virtual_cto`). Every consumer of the stored `plan` — deploy.ts's
+  // isPaidPlan → subdomainServable → middleware's wildcard-host serving,
+  // claimSubdomain's paid gate, and setAppPlan's `enrolled` flag — compares it
+  // against CANONICAL ids, so persisting the raw alias left a genuinely paying
+  // founder's company reading as unpaid everywhere it mattered. The canonical
+  // form is what lands on the row from here on.
+  const plan = canonicalPaidPlan(rawPlan)
+
+  // #832-class bug: the caller (POST /api/webhooks/stripe) already confirms
+  // this slug exists via resolveAppVerified() before calling in — but this
+  // function used to re-resolve it with a plain `resolveApp(slug).catch(() =>
+  // null)`, whose single `null` collapses "confirmed not registered" with "the
+  // registry read itself failed." A transient hiccup on THIS second lookup
+  // reported `not_registered`, which the webhook route treats as a
+  // deterministic refusal (200 ack, no retry) — silently discarding a real
+  // payment for a company the caller had just verified exists. Using
+  // resolveAppVerified() here too lets the caller distinguish the two.
+  const lookup = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+  if (!lookup.verified) return { ...base, reason: 'lookup_failed' }
+  const existing = lookup.entry
+  if (!existing) return { ...base, reason: 'not_registered' }
+
+  let planSet = false
+  if (existing.plan !== plan) {
+    planSet = await setAppPlan(slug, plan).catch(() => false)
+  }
+
+  // Does this company still need its tmp_ project claimed at all?
+  const needsClaim = Boolean(existing.zerodbProjectId && existing.keyKind === 'tmp' && existing.claimToken)
+
+  let keyClaimed = false
+  if (needsClaim && jwt) {
+    const claim = await claimCompanyProject(slug, jwt).catch(() => null)
+    keyClaimed = Boolean(claim?.ok && claim.claimed)
+  }
+
+  return {
+    // Plan is correct either because we just wrote it or because it already was.
+    ok: planSet || existing.plan === plan,
+    planSet,
+    keyClaimed,
+    // Still pending if a claim was needed and we didn't (or couldn't) complete it.
+    keyClaimPending: needsClaim && !keyClaimed,
+    reason: planSet ? undefined : existing.plan === plan ? 'already_fulfilled' : 'plan_write_failed',
+  }
+}
+
+/**
+ * Reverse-lookup a company by its own ZeroVoice inbound number (#744 — SMS to
+ * Cody becomes a real Gitea issue). `e164` is the SMS webhook's `To` field
+ * (the company's own provisioned number, set via setAppZeroVoice).
+ *
+ * QUERY STRATEGY: this table (builder_app_registry) is read everywhere else
+ * in this file via the plain rows endpoint + a full client-side scan/collapse
+ * (see listAllAppsWithStatus, resolveApp) — there is no evidence this table's
+ * read path supports a server-side `filters` query the way the separate
+ * `/database/tables/{table}/query` endpoint does for other tables in this
+ * codebase (document-store.ts, task-store.ts, etc. — and even THAT endpoint's
+ * `filters` only reliably matches TOP-LEVEL indexed fields; document-store.ts
+ * found live that filtering on an arbitrary row_data field like `id` silently
+ * returns zero rows). Rather than risk the same silent-empty-result failure
+ * mode against an unconfirmed filter key, this reuses the SAME real,
+ * already-working listAllAppsWithStatus() read (latest-wins per slug) and
+ * matches client-side — identical approach to listAppsForOwner() above.
+ *
+ * Returns null on no match, on an empty e164, or if the underlying read
+ * itself fails (never fabricates a match). Never returns a soft-deleted
+ * company (matches resolveApp()'s own contract) — a Gitea issue must never
+ * be filed against a company the founder deleted.
+ */
+export async function resolveAppByZeroVoiceNumber(e164: string): Promise<AppEntry | null> {
+  const number = (e164 || '').trim()
+  if (!number) return null
+  const { apps, ok } = await listAllAppsWithStatus()
+  if (!ok) return null
+  const match = apps.find(
+    (a) => a.zerovoiceE164 === number && (a.lifecycleStatus || 'active') !== 'deleted',
+  )
+  return match || null
+}
+
+/**
+ * Resolve a chatId back to its owning app entry (#1138), or null.
+ *
+ * Every other lookup in this file goes slug -> entry; nothing previously
+ * went the other direction even though chat-ws/route.ts has had `chatId`
+ * on every request since the route existed. Needed so a compliance gap
+ * found mid-generation (obedience-gate.ts) can be filed as a real backlog
+ * task scoped to the right {owner, company} — the task-store scopeKey
+ * convention (chat-store.ts's chatScopeKey) needs both. Same client-side-
+ * match-over-listAllAppsWithStatus() approach as resolveAppByZeroVoiceNumber
+ * above, for the same reason: no confirmed server-side filter on this
+ * table. Never returns a soft-deleted company (matches resolveApp()'s own
+ * contract) — a Gitea issue must never be filed against a deleted company.
+ */
+export async function resolveAppByChatId(chatId: string): Promise<AppEntry | null> {
+  const id = (chatId || '').trim()
+  if (!id) return null
+  const { apps, ok } = await listAllAppsWithStatus()
+  if (!ok) return null
+  const match = apps.find(
+    (a) => a.chatId === id && (a.lifecycleStatus || 'active') !== 'deleted',
+  )
+  return match || null
+}
+
+/** Resolve a slug to its most recent app entry (chatId + brand), or null. */
+export async function resolveApp(slug: string): Promise<AppEntry | null> {
+  const { entry } = await resolveAppVerified(slug)
+  return entry
+}
+
+/**
+ * Same resolution as `resolveApp`, plus whether this answer is a REAL,
+ * confirmed result vs. a fallback after an upstream failure (#807/#832).
+ *
+ * `resolveApp`'s plain `null` return is ambiguous by design for its many
+ * existing callers (most just want "do I have a usable entry or not," and
+ * failing closed to null/not-found is the right default for them). But a
+ * caller deciding whether to REDIRECT a founder away from a screen because
+ * their company "doesn't exist" needs to tell "confirmed gone" apart from
+ * "the registry fetch timed out" — collapsing those bounced a real,
+ * signed-in customer off their own company's dashboard back to the
+ * companies list on nothing more than a transient upstream hiccup.
+ */
+export async function resolveAppVerified(slug: string): Promise<{ entry: AppEntry | null; verified: boolean }> {
+  // Real gap found live (2026-09-30, a misconfigured local dev environment):
+  // `!configured()` used to return `verified: true` — "confirmed doesn't
+  // exist" — for a slug this environment genuinely never checked at all
+  // (missing ZERODB_PROJECT_ID/API key). That's the exact anti-pattern #807/
+  // #832 fixed for the network-failure branch below, just left unfixed here:
+  // "couldn't check" must never look identical to "confirmed gone," since a
+  // caller (e.g. contexts/build-context.tsx's deep-link-not-found redirect)
+  // treats `verified: true` + no entry as license to bounce a founder off
+  // their own real company. Production is always configured, so this never
+  // fires there — but any genuinely unconfigured environment hit this exact
+  // false-confirmed-miss. `!slug` stays `verified: true` (an empty slug is a
+  // real, confirmed "nothing to look up", not an infrastructure gap).
+  if (!slug) return { entry: null, verified: true }
+  if (!configured()) return { entry: null, verified: false }
+  try {
+    // #1106: a single `?limit=1000` page can silently miss this slug's real
+    // history once the table grows past one page — see fetchAllRegistryRows()'s
+    // doc comment above listAllAppsWithStatus().
+    const { rows, ok } = await fetchAllRegistryRows()
+    if (!ok) return { entry: null, verified: false }
+    const matches = rows
+      .map((r: { row_data?: AppEntry }) => r.row_data)
+      .filter((rd: AppEntry | undefined): rd is AppEntry => rd?.slug === slug && !!rd?.chatId)
+    if (!matches.length) return { entry: null, verified: true }
+    matches.sort((a: AppEntry, b: AppEntry) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    const latest = matches[0]
+    // A soft-deleted company (#57 Danger Zone) is treated as gone — the /build/{slug}
+    // route then 404s honestly instead of serving a deleted app.
+    if (latest.lifecycleStatus === 'deleted') return { entry: null, verified: true }
+    return { entry: latest, verified: true }
+  } catch {
+    return { entry: null, verified: false }
+  }
+}
+
+/**
+ * #2126 follow-up — bridges the gap #2126 found: `/showcase` lists plenty of
+ * real, complete, publicly-linked generations that were never `registerApp()`-
+ * ed (anonymous/unclaimed — a `builder_app_registry` row only gets written on
+ * first claim/registration). `resolveAppVerified` above only ever reads that
+ * registry, so for one of these the public `/build/{slug}` page's `entry?.chatId`
+ * is permanently null and a real visitor sees "This preview is still being
+ * built" forever — confirmed live for 8/8 freshly sampled unregistered
+ * showcase entries (several with complete, correct, multi-file code sitting
+ * right there in `/api/generation/{chatId}/files`), not just a rare edge case.
+ *
+ * This is intentionally NOT a registry write and NOT a backlog/obedience-gate
+ * fix — #2126 explicitly leaves "are these companies in scope for obedience-
+ * gate remediation at all" as a human product decision, and this function
+ * doesn't touch that question. It only lets the public page render the exact
+ * same content `/showcase` already links real visitors to, instead of lying
+ * that it doesn't exist yet. Mirrors `/api/showcase`'s own filters (is_showcase
+ * gate, isQualityApp, placeholder-title exclusion) and its exact slug synthesis
+ * (`generateSlug(title) + '-' + chatId.slice(0,6)`) so this only ever resolves
+ * a slug to something already publicly listed there — never a wider surface.
+ */
+export async function resolveShowcaseOnlyBySlug(slug: string): Promise<{ chatId: string; name: string; idea: string } | null> {
+  if (!slug) return null
+  try {
+    const rows = await listGenerations(1000)
+    for (const r of rows) {
+      if (r?.is_showcase !== true && r?.is_showcase !== undefined) continue
+      if (!isQualityApp(r.generated_code || '', r.chat_id)) continue
+      const title = r.title || extractShowcaseTitle(r.prompt || '')
+      if (looksLikeUnsubstitutedPlaceholder(title)) continue
+      if (!r.chat_id) continue
+      const candidateSlug = generateSlug(title) + '-' + String(r.chat_id).slice(0, 6)
+      if (candidateSlug === slug) {
+        return { chatId: r.chat_id, name: title, idea: r.prompt || '' }
+      }
+    }
+    return null
+  } catch {
+    return null
+  }
+}
