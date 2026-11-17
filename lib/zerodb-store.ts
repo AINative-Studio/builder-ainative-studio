@@ -8,6 +8,8 @@
  * Table: generations
  */
 
+import { isQualityApp } from '@/lib/showcase-quality'
+
 const ZERODB_API = 'https://api.ainative.studio/api'
 // Use env var for project ID — different keys have different projects
 const PROJECT_ID = process.env.ZERODB_PROJECT_ID || '5dfbc60c-7463-4e21-ac68-9bbe536f9adf'
@@ -227,12 +229,42 @@ export async function loadGeneration(chatId: string): Promise<{
       // older rows until one has non-empty generated_code; if every row for
       // this chat_id is empty, keep the prior behavior (use the newest) so
       // nothing regresses for a chat that genuinely never produced code.
+      //
+      // #2134 — that "non-empty" bar is weaker than real-world junk: a later
+      // turn's row can be non-empty (`trim().length > 0`) without being a
+      // real app at all (a short failed-retry error string, an aborted
+      // edit's partial reply) — confirmed live for 2/25 sampled showcase
+      // entries (graintrack, a-waitlist-landing-page-for-a-premium-coffee),
+      // both still showcase-eligible (proving a real, ≥2000-char row exists
+      // for that chat_id — app/api/showcase/route.ts's `hasCode` gate
+      // requires isQualityApp() to have passed on SOME row) yet permanently
+      // "Preview Unavailable" live, because a newer short junk row passed
+      // the old `hasContent` check and shadowed the real generation beneath
+      // it — the exact #2000 failure shape, one step short of what that fix
+      // covered. First pass now prefers a row clearing the SAME bar
+      // showcase already uses (isQualityApp — length >= 2000 + structural
+      // check) before falling back to the weaker non-empty check, so a
+      // short junk row can never outrank a real generation sitting right
+      // below it. The weaker fallback stays as the last resort so a chat
+      // that only ever produced a short (but genuinely real) single-file
+      // app still restores instead of regressing to null.
       const hasContent = (r: any) => typeof r.generated_code === 'string' && r.generated_code.trim().length > 0
+      const isQuality = (r: any) => hasContent(r) && isQualityApp(r.generated_code, chatId)
       let row = rows[rows.length - 1]
+      let picked = false
       for (let i = rows.length - 1; i >= 0; i--) {
-        if (hasContent(rows[i])) {
+        if (isQuality(rows[i])) {
           row = rows[i]
+          picked = true
           break
+        }
+      }
+      if (!picked) {
+        for (let i = rows.length - 1; i >= 0; i--) {
+          if (hasContent(rows[i])) {
+            row = rows[i]
+            break
+          }
         }
       }
       console.log(`[ZeroDB] Loaded generation ${chatId} (${row.code_length || '?'} chars)`)
