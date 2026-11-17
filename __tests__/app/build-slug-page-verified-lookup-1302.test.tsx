@@ -1,5 +1,5 @@
 // @vitest-environment node
-import { describe, it, expect, vi, beforeAll } from 'vitest'
+import { describe, it, expect, vi, beforeAll, beforeEach } from 'vitest'
 import React from 'react'
 
 beforeAll(() => {
@@ -17,7 +17,7 @@ beforeAll(() => {
  * built" to a visitor.
  */
 
-vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: vi.fn() }))
+vi.mock('@/lib/build/app-registry', () => ({ resolveAppVerified: vi.fn(), resolveShowcaseOnlyBySlug: vi.fn() }))
 
 vi.mock('@/components/build/StandalonePreviewRegenerate', () => ({
   StandalonePreviewRegenerate: () => null,
@@ -27,8 +27,14 @@ vi.mock('@/components/build/StandalonePreviewFrame', () => ({
 }))
 
 import AppSubdirPage from '@/app/build/[slug]/page'
-import { resolveAppVerified as resolveAppVerifiedImport } from '@/lib/build/app-registry'
+import { resolveAppVerified as resolveAppVerifiedImport, resolveShowcaseOnlyBySlug as resolveShowcaseOnlyBySlugImport } from '@/lib/build/app-registry'
 const resolveAppVerified = vi.mocked(resolveAppVerifiedImport)
+const resolveShowcaseOnlyBySlug = vi.mocked(resolveShowcaseOnlyBySlugImport)
+
+beforeEach(() => {
+  resolveShowcaseOnlyBySlug.mockReset()
+  resolveShowcaseOnlyBySlug.mockResolvedValue(null)
+})
 
 function renderToText(node: React.ReactNode): string {
   const parts: string[] = []
@@ -76,6 +82,50 @@ describe('/build/[slug] page — verified vs. unverified registry miss (#1302)',
     const text = renderToText(tree)
     expect(text).not.toContain('still being built')
     expect(text).not.toContain("couldn't load this preview")
+  })
+})
+
+/**
+ * #2126 follow-up: a confirmed registry miss used to always render "still
+ * being built", even for a real, complete, never-registered showcase
+ * generation (confirmed live for 8/8 freshly sampled unregistered showcase
+ * entries — see #2126's comment thread). `resolveShowcaseOnlyBySlug` gives
+ * this page a second, narrower chance to resolve exactly what `/showcase`
+ * already publicly lists before giving up.
+ */
+describe('/build/[slug] page — showcase-only fallback for a never-registered generation (#2126 follow-up)', () => {
+  it('renders the real preview via the showcase-only fallback on a confirmed registry miss', async () => {
+    resolveAppVerified.mockResolvedValueOnce({ entry: null, verified: true })
+    resolveShowcaseOnlyBySlug.mockResolvedValueOnce({ chatId: 'chat-showcase-1', name: 'Quill', idea: 'an idea' })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'quill-pHi9Mh' }) })
+    const text = renderToText(tree)
+    expect(text).not.toContain('still being built')
+    expect(text).not.toContain("couldn't load this preview")
+  })
+
+  it('still shows "still being built" when the showcase-only fallback also finds nothing', async () => {
+    resolveAppVerified.mockResolvedValueOnce({ entry: null, verified: true })
+    resolveShowcaseOnlyBySlug.mockResolvedValueOnce(null)
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'never-existed' }) })
+    const text = renderToText(tree)
+    expect(text).toContain('still being built')
+  })
+
+  it('never tries the showcase-only fallback on a transient registry failure (verified: false)', async () => {
+    resolveAppVerified.mockResolvedValueOnce({ entry: null, verified: false })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'acme' }) })
+    const text = renderToText(tree)
+    expect(text).toContain("couldn't load this preview")
+    expect(resolveShowcaseOnlyBySlug).not.toHaveBeenCalled()
+  })
+
+  it('never consults the showcase-only fallback when the registry already has a real chatId', async () => {
+    resolveAppVerified.mockResolvedValueOnce({
+      entry: { chatId: 'chat-1', name: 'Acme', color: '#2f6d86', idea: 'an idea', track: 'company', slug: 'acme', createdAt: new Date().toISOString() },
+      verified: true,
+    })
+    await AppSubdirPage({ params: Promise.resolve({ slug: 'acme' }) })
+    expect(resolveShowcaseOnlyBySlug).not.toHaveBeenCalled()
   })
 })
 
