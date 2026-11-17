@@ -19,22 +19,30 @@ export const metadata: Metadata = {
   },
 }
 
-function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
+/**
+ * Every SEED_SHOWCASE entry carries a legacy `chatId` field (several predate
+ * the real per-chat ZeroDB generation flow entirely — e.g.
+ * 'agent-swarm-dashboard' isn't even a real chat id), but none of those
+ * chat ids resolve to a loadGeneration() row today — confirmed live,
+ * 2026-11-17: /api/preview/{chatId} returns the permanent "Preview
+ * Unavailable" page and /api/generation/{chatId}/files returns
+ * {files:null} for all 11. CommunityCard (showcase-client.tsx) already
+ * gets this right by branching on an explicit `isSeed` flag rather than
+ * `Boolean(entry.chatId)` — seeds always link to their reliable, build-time
+ * static /showcase/{slug} page. This card (used only for the Featured
+ * strip) must use the SAME isSeed-based branch, not chatId-presence, or the
+ * Featured strip's seed fallback (getRecentApps() returning <3 results —
+ * the exact degraded moment the fallback exists for) routes every seed card
+ * straight into that same dead end instead of the page that actually works.
+ */
+export function getShowcaseCardHref(entry: ShowcaseEntry, isSeed: boolean): string {
+  return isSeed ? `/showcase/${entry.slug}` : `/preview/${entry.chatId}`
+}
+
+function ShowcaseCard({ entry, isSeed }: { entry: ShowcaseEntry; isSeed: boolean }) {
   const category = SHOWCASE_CATEGORIES.find(c => c.id === entry.category)
-  // Seeds have a pre-built /showcase/{slug} detail page; dynamic apps do NOT
-  // (that route 404s for them). Dynamic apps link to /preview/{chatId}
-  // instead (#1068) — NOT /api/preview/{chatId} directly, which always
-  // flattened a multi-file app into one Babel module and could show a
-  // fabricated "build failed" error for an app that was completely fine
-  // (#1066). /preview/{chatId} already does the correct shouldUseSandpack()
-  // routing (#729) and is keyed purely by chatId, unlike /build/{slug} —
-  // this entry's `slug` is a synthetic display id the showcase API derives
-  // fresh (title + first 6 chars of chatId, app/api/showcase/route.ts), NOT
-  // the real app-registry slug /build/{slug} needs to resolve a chatId; a
-  // first attempt at this fix wrongly assumed they were the same value and
-  // 404'd every dynamic showcase entry.
-  const isDynamic = Boolean(entry.chatId)
-  const href = isDynamic ? `/preview/${entry.chatId}` : `/showcase/${entry.slug}`
+  const isDynamic = !isSeed
+  const href = getShowcaseCardHref(entry, isSeed)
 
   return (
     <Link
@@ -54,7 +62,7 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
             {(entry.title || '?').charAt(0).toUpperCase()}
           </span>
         </div>
-        {entry.chatId ? (
+        {isDynamic && entry.chatId ? (
           // Dynamic app: render the ACTUAL generated app as a live, non-interactive
           // thumbnail. Scaled to 1/2.5 and pinned so the full app fits the card.
           // #1068: routed through ShowcaseThumbnail (shouldUseSandpack-gated,
@@ -67,7 +75,9 @@ function ShowcaseCard({ entry }: { entry: ShowcaseEntry }) {
             <ShowcaseThumbnail chatId={entry.chatId} title={entry.title} />
           </div>
         ) : (
-          // Seed: fast pre-rendered PNG screenshot.
+          // Seed: fast pre-rendered PNG screenshot — also the fallback for any
+          // seed entry that still carries a legacy chatId (see getShowcaseCardHref
+          // above), since that chatId doesn't resolve to a real generation.
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={`/showcase-thumbnails/${entry.slug}.png`}
@@ -131,7 +141,8 @@ export default async function ShowcasePage() {
   const recent = await getRecentApps()
   const bestThumbnails = ['agent-swarm-dashboard', 'analytics-dashboard', 'kanban-task-board', 'saas-landing-page', 'team-directory']
   const seedFeatured = SEED_SHOWCASE.filter(e => bestThumbnails.includes(e.slug))
-  const featured = (recent.length >= 3 ? recent.slice(0, 6) : seedFeatured)
+  const usingSeedFallback = recent.length < 3
+  const featured = (usingSeedFallback ? seedFeatured : recent.slice(0, 6))
   const all = SEED_SHOWCASE
 
   return (
@@ -165,7 +176,7 @@ export default async function ShowcasePage() {
           <h2 style={{ fontFamily: 'var(--font-heading)', fontWeight: 700, fontSize: 20, marginBottom: 24 }}>Featured</h2>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: 24 }}>
             {featured.map(entry => (
-              <ShowcaseCard key={entry.slug} entry={entry} />
+              <ShowcaseCard key={entry.slug} entry={entry} isSeed={usingSeedFallback} />
             ))}
           </div>
         </section>
