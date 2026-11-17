@@ -26,6 +26,7 @@ const h = vi.hoisted(() => ({
   enrollCompany: vi.fn(),
   isEnrolled: vi.fn(),
   syncEnrollmentOwnerKey: vi.fn(),
+  syncEnrollmentTrack: vi.fn(),
   auth: vi.fn(),
 }))
 
@@ -41,6 +42,7 @@ vi.mock('@/lib/git/company-repo', () => ({
 vi.mock('@/lib/build/instant-db', () => ({ BUILDER_WORKSPACE_ID: 'builder-ws-default' }))
 vi.mock('@/lib/build/loop-enrollment', () => ({
   enrollCompany: h.enrollCompany, isEnrolled: h.isEnrolled, syncEnrollmentOwnerKey: h.syncEnrollmentOwnerKey,
+  syncEnrollmentTrack: h.syncEnrollmentTrack,
 }))
 
 import { POST } from '@/app/api/build/register-app/route'
@@ -70,6 +72,8 @@ describe('POST /api/build/register-app — auto-enroll into the nightly loop', (
     h.auth.mockResolvedValue(null)
     h.enrollCompany.mockResolvedValue(true)
     h.isEnrolled.mockResolvedValue(false)
+    h.syncEnrollmentOwnerKey.mockResolvedValue(true)
+    h.syncEnrollmentTrack.mockResolvedValue(true)
   })
   afterEach(() => {
     vi.restoreAllMocks()
@@ -129,6 +133,28 @@ describe('POST /api/build/register-app — auto-enroll into the nightly loop', (
     await POST(req({ slug: 'acme', chatId: 'chat-2', name: 'Acme', track: 'app' }))
     await flush()
     expect(h.syncEnrollmentOwnerKey).not.toHaveBeenCalled()
+  })
+
+  // #2132/#2133-adjacent: a founder who pivots track on a later regeneration
+  // (e.g. company → app, or vice versa) must have the ENROLLMENT's track
+  // corrected too, or the nightly loop keeps running the wrong per-company
+  // branch (app-track resolver pipeline vs company-track backlog seeding)
+  // forever after the pivot. See syncEnrollmentTrack's doc comment.
+  it('syncs the enrollment track on a regeneration of an already-enrolled company, even with no owner', async () => {
+    h.isEnrolled.mockResolvedValue(true)
+    h.resolveApp.mockResolvedValue({ slug: 'tidemark', chatId: 'chat-2', name: 'Tidemark', track: 'company' })
+    await POST(req({ slug: 'tidemark', chatId: 'chat-2', name: 'Tidemark', track: 'app' }))
+    await flush()
+    expect(h.syncEnrollmentTrack).toHaveBeenCalledWith('tidemark', 'app')
+    expect(h.enrollCompany).not.toHaveBeenCalled()
+  })
+
+  it('does not call syncEnrollmentTrack on a brand-new (not-yet-enrolled) registration', async () => {
+    h.isEnrolled.mockResolvedValue(false)
+    await POST(req({ slug: 'acme', chatId: 'chat-1', name: 'Acme', track: 'app' }))
+    await flush()
+    expect(h.syncEnrollmentTrack).not.toHaveBeenCalled()
+    expect(h.enrollCompany).toHaveBeenCalled()
   })
 
   it('falls back to the slug as companyName when no name is given', async () => {

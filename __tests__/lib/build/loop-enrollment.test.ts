@@ -293,6 +293,108 @@ describe('syncEnrollmentOwnerKey', () => {
   })
 })
 
+// ---------- syncEnrollmentTrack (#2132/#2133-adjacent) ----------
+describe('syncEnrollmentTrack', () => {
+  afterEach(() => {
+    vi.resetModules()
+    delete process.env.ZERODB_API_KEY
+    delete process.env.ZERODB_PROJECT_ID
+  })
+
+  it('returns false without fetch when not configured', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const { syncEnrollmentTrack } = await freshUnconfigured()
+    expect(await syncEnrollmentTrack('tidemark', 'app')).toBe(false)
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('returns false when companyId is empty', async () => {
+    const fn = mockFetch(() => ({ ok: true }))
+    const { syncEnrollmentTrack } = await freshConfigured()
+    expect(await syncEnrollmentTrack('', 'app')).toBe(false)
+    expect(fn).not.toHaveBeenCalled()
+  })
+
+  it('is a no-op (true, no write) when the company has no enrollment row at all', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [] } }))
+    const { syncEnrollmentTrack } = await freshConfigured()
+    expect(await syncEnrollmentTrack('tidemark', 'app')).toBe(true)
+    expect(fn.mock.calls.every((c) => !c[1] || c[1].method !== 'POST')).toBe(true)
+  })
+
+  it('is a no-op (true, no write) when the latest row already carries this track', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'tidemark', track: 'app', enrolledAt: '2026-11-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentTrack } = await freshConfigured()
+    expect(await syncEnrollmentTrack('tidemark', 'app')).toBe(true)
+    expect(fn.mock.calls.every((c) => !c[1] || c[1].method !== 'POST')).toBe(true)
+  })
+
+  // ---- The real bug this repairs: a founder pivots a company's track on a
+  // later regeneration (register-app writes the fresh track onto the
+  // registry row every call), but the append-only enrollment row — which
+  // the nightly loop actually branches on — is never touched again after
+  // its first enrollment, routing the company through the wrong per-company
+  // branch indefinitely.
+  it('appends a corrected row when the latest enrollment has a DIFFERENT track, preserving ownerKey/enabled/companyName', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'tidemark', companyName: 'Tidemark', track: 'company', enabled: true,
+        ownerKey: 'greg.c.rose@gmail.com', enrolledAt: '2026-09-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentTrack } = await freshConfigured()
+    expect(await syncEnrollmentTrack('tidemark', 'app')).toBe(true)
+    const postCall = fn.mock.calls.find((c) => c[1]?.method === 'POST')
+    expect(postCall).toBeTruthy()
+    const body = JSON.parse(postCall![1]!.body as string)
+    expect(body.row_data).toMatchObject({
+      companyId: 'tidemark', companyName: 'Tidemark', track: 'app', enabled: true, ownerKey: 'greg.c.rose@gmail.com',
+    })
+  })
+
+  it('picks the LATEST row (by enrolledAt) to compare/correct, not just the first in the list', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'tidemark', track: 'app', enrolledAt: '2026-09-01T00:00:00Z' }),
+      makeEnrollmentRow({ companyId: 'tidemark', track: 'company', enrolledAt: '2026-11-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentTrack } = await freshConfigured()
+    await syncEnrollmentTrack('tidemark', 'app')
+    const postCall = fn.mock.calls.find((c) => c[1]?.method === 'POST')
+    expect(postCall).toBeTruthy() // the LATEST row (company) differs from 'app', so a correction is written
+  })
+
+  it('ignores a different company`s rows', async () => {
+    const fn = mockFetch(() => ({ ok: true, body: { data: [
+      makeEnrollmentRow({ companyId: 'other-co', track: 'company', enrolledAt: '2026-11-01T00:00:00Z' }),
+    ] } }))
+    const { syncEnrollmentTrack } = await freshConfigured()
+    expect(await syncEnrollmentTrack('tidemark', 'app')).toBe(true)
+    expect(fn.mock.calls.every((c) => !c[1] || c[1].method !== 'POST')).toBe(true)
+  })
+
+  it('returns false (never throws) when fetch throws', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('net') }))
+    const { syncEnrollmentTrack } = await freshConfigured()
+    expect(await syncEnrollmentTrack('tidemark', 'app')).toBe(false)
+  })
+
+  it('returns false when the write itself fails (non-ok)', async () => {
+    let getCalls = 0
+    const fn = vi.fn(async (url: string | URL | Request, init?: RequestInit) => {
+      if (!init || init.method !== 'POST') {
+        getCalls++
+        const body = { data: [makeEnrollmentRow({ companyId: 'tidemark', track: 'company', enrolledAt: '2026-09-01T00:00:00Z' })] }
+        return { ok: true, status: 200, json: async () => body, text: async () => JSON.stringify(body) }
+      }
+      return { ok: false, status: 500, json: async () => ({}), text: async () => '{}' }
+    })
+    vi.stubGlobal('fetch', fn)
+    const { syncEnrollmentTrack } = await freshConfigured()
+    expect(await syncEnrollmentTrack('tidemark', 'app')).toBe(false)
+    expect(getCalls).toBeGreaterThan(0)
+  })
+})
+
 // ---------- recordRun ----------
 describe('recordRun', () => {
   afterEach(() => {
