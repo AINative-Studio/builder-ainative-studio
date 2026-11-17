@@ -204,10 +204,21 @@ export async function loadGeneration(chatId: string): Promise<{
     // permanently stale or empty preview even though good code exists.
     // Fetch a window of rows instead and keep the newest by created_at, same
     // as loadChatHistory.
+    // #2138 — this query has no server-side order-by, so for a chat_id with
+    // MORE rows than `limit`, which rows come back is undefined (see the
+    // "no ordering guarantee" comment above) — a real, older quality row
+    // could simply be excluded from the fetched set entirely, indistinguishable
+    // from "this chat never produced code." loadChatHistory() below reads this
+    // exact same table with this exact same filter and already uses
+    // `limit: 100`; raised to match it here too, removing an unexplained
+    // asymmetry between the two. This narrows but does not eliminate the
+    // exposure window (a chat_id with >100 rows still has it) — a real fix
+    // needs a server-side sort before the limit, if the ZeroDB query API
+    // supports one.
     const result = await zerodbRequest(
       'POST',
       `/v1/projects/${PROJECT_ID}/database/tables/${TABLE_NAME}/query`,
-      { filters: { chat_id: chatId }, limit: 50 }
+      { filters: { chat_id: chatId }, limit: 100 }
     )
 
     const rows = (result?.data || [])
