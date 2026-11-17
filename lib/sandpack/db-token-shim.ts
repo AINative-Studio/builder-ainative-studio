@@ -28,9 +28,57 @@
  * etc.) are a documented fast-follow once this pattern is proven (#1561's
  * PR note) rather than widening this change's CORS/testing surface in one
  * pass.
+ *
+ * #2135 follow-up: `chatId`, when provided, also makes this module fire ONE
+ * deterministic visitor-tracking beacon on import (mirrors the mandatory
+ * `fetch('/api/db/visitors', ...)` pageview primitive-catalog.ts instructs
+ * every generated landing page to write — see that file's "VISITOR
+ * TRACKING" block). Found live via code reading (no fix here — a prompt
+ * instruction to an LLM is inherently probabilistic, and #2135's own thread
+ * has 20+ confirmed real companies missing this call entirely): this gate
+ * is doubly broken for every Sandpack-rendered company. (1) Compliance is
+ * never guaranteed — it's just prose in the system prompt. (2) Even on the
+ * rare generation that DOES include the call, the LLM writes `path:
+ * window.location.pathname`, which inside a Sandpack iframe is the BUNDLER's
+ * own origin/route (sandpack-bundler-production.up.railway.app, pinned in
+ * components/chat/sandpack-preview.tsx), never `/api/preview/{chatId}`. Per
+ * lib/build/visitor-metrics.ts's own doc comment, the shared ZeroDB project
+ * (every real sampled company today — none has its own `zerodbProjectId`)
+ * can ONLY attribute a pageview row to a company by matching its chatId as a
+ * substring of the row's stored `path` — so even a "working" LLM-authored
+ * beacon silently writes a row the founder's own VisitorsPanel can never
+ * read back. Hardcoding `path: '/api/preview/' + chatId` here (known
+ * server-side at mint time, not read from the iframe's own location) fixes
+ * both gaps at once, deterministically, for every Sandpack-rendered company
+ * — the same "platform-injected, not LLM-dependent" pattern this file
+ * already uses for the /api/db auth rewrite above. Intentionally
+ * unconditional (fires regardless of whether the app's own code also has a
+ * working beacon): in the shared-project case this is safe by construction
+ * (an LLM-authored call's `path` never contains the chatId there, so it
+ * never lands as a counted row anyway — nothing to double-count against).
+ * The only real double-count exposure is a FUTURE per-company-provisioned
+ * project whose generation also happens to have a working beacon of its own
+ * — a currently-empty set (see visitor-metrics.ts's doc comment) — flagged
+ * here rather than silently risked.
  */
-export function sandpackDbTokenShim(origin: string, token: string): string {
+export function sandpackDbTokenShim(origin: string, token: string, chatId?: string): string {
   if (!origin || !token) return 'export {}\n'
+  const visitorBeacon = chatId
+    ? `
+// #2135 — deterministic visitor-pageview beacon, platform-injected so it
+// never depends on the generated app's own code having written one (see
+// this file's doc comment for the full root-cause writeup).
+try {
+  __ainativeOriginalFetch__(__AINATIVE_ORIGIN__ + '/api/db/visitors', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', 'x-ainative-db-token': __AINATIVE_DB_TOKEN__ },
+    body: JSON.stringify({ path: '/api/preview/' + ${JSON.stringify(chatId)}, ts: new Date().toISOString() }),
+  }).catch(function () {});
+} catch (e) {
+  // Best-effort — a beacon failure must never affect the real app.
+}
+`
+    : ''
   return `// #1561 — auto-injected, rewrites this app's relative /api/db calls to
 // the real Builder origin and attaches its per-company auth token. See
 // lib/sandpack/db-token-shim.ts for the full root-cause writeup.
@@ -53,6 +101,6 @@ window.fetch = function (input, init) {
   }
   return __ainativeOriginalFetch__(input, init);
 };
-export {};
+${visitorBeacon}export {};
 `
 }

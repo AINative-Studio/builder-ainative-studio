@@ -35,6 +35,9 @@ import { findTruncatedFiles } from '../build/completeness-gate'
 export interface SandpackDbShimOptions {
   origin: string
   dbToken: string
+  /** #2135 — when provided, also makes the injected shim fire a deterministic
+   *  visitor-tracking beacon on import (see sandpackDbTokenShim's doc comment). */
+  chatId?: string
 }
 
 /** Index of the closing `quote` that ends the string starting at `openIdx` (honoring `\`-escapes), or -1 if unterminated. */
@@ -279,7 +282,7 @@ export function buildSandpackFiles(files: Record<string, string>, shim?: Sandpac
   const sandpackFiles: Record<string, string> = { ...builtinFiles }
 
   if (shim?.origin && shim?.dbToken) {
-    sandpackFiles['/db-token-shim.ts'] = sandpackDbTokenShim(shim.origin, shim.dbToken)
+    sandpackFiles['/db-token-shim.ts'] = sandpackDbTokenShim(shim.origin, shim.dbToken, shim.chatId)
     const indexEntry = sandpackFiles['/index.tsx']
     if (indexEntry && !indexEntry.includes("'./db-token-shim'")) {
       sandpackFiles['/index.tsx'] = `import './db-token-shim'\n${indexEntry}`
