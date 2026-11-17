@@ -10,6 +10,13 @@ import { getAinativeApiKey } from '@/lib/build/env-keys'
 // re-implemented so the registry's stored `plan` and every gate that reads it
 // back can never drift apart on what "paid" means (#1012 review finding 1/3).
 import { isPaidTier, normalizeTier } from '@/lib/ainative/plan'
+// #2126 follow-up (resolveShowcaseOnlyBySlug) — same filters app/api/showcase/
+// route.ts applies, imported rather than re-implemented so a slug only ever
+// resolves here to exactly what's already publicly listed on /showcase.
+import { listGenerations } from '@/lib/zerodb-store'
+import { isQualityApp } from '@/lib/showcase-quality'
+import { generateSlug, extractShowcaseTitle } from '@/lib/showcase-data'
+import { looksLikeUnsubstitutedPlaceholder } from '@/lib/build/placeholder-guard'
 
 const AINATIVE_API = process.env.AINATIVE_API_URL || 'https://api.ainative.studio'
 const API_KEY = getAinativeApiKey()
@@ -1784,5 +1791,47 @@ export async function resolveAppVerified(slug: string): Promise<{ entry: AppEntr
     return { entry: latest, verified: true }
   } catch {
     return { entry: null, verified: false }
+  }
+}
+
+/**
+ * #2126 follow-up — bridges the gap #2126 found: `/showcase` lists plenty of
+ * real, complete, publicly-linked generations that were never `registerApp()`-
+ * ed (anonymous/unclaimed — a `builder_app_registry` row only gets written on
+ * first claim/registration). `resolveAppVerified` above only ever reads that
+ * registry, so for one of these the public `/build/{slug}` page's `entry?.chatId`
+ * is permanently null and a real visitor sees "This preview is still being
+ * built" forever — confirmed live for 8/8 freshly sampled unregistered
+ * showcase entries (several with complete, correct, multi-file code sitting
+ * right there in `/api/generation/{chatId}/files`), not just a rare edge case.
+ *
+ * This is intentionally NOT a registry write and NOT a backlog/obedience-gate
+ * fix — #2126 explicitly leaves "are these companies in scope for obedience-
+ * gate remediation at all" as a human product decision, and this function
+ * doesn't touch that question. It only lets the public page render the exact
+ * same content `/showcase` already links real visitors to, instead of lying
+ * that it doesn't exist yet. Mirrors `/api/showcase`'s own filters (is_showcase
+ * gate, isQualityApp, placeholder-title exclusion) and its exact slug synthesis
+ * (`generateSlug(title) + '-' + chatId.slice(0,6)`) so this only ever resolves
+ * a slug to something already publicly listed there — never a wider surface.
+ */
+export async function resolveShowcaseOnlyBySlug(slug: string): Promise<{ chatId: string; name: string; idea: string } | null> {
+  if (!slug) return null
+  try {
+    const rows = await listGenerations(1000)
+    for (const r of rows) {
+      if (r?.is_showcase !== true && r?.is_showcase !== undefined) continue
+      if (!isQualityApp(r.generated_code || '', r.chat_id)) continue
+      const title = r.title || extractShowcaseTitle(r.prompt || '')
+      if (looksLikeUnsubstitutedPlaceholder(title)) continue
+      if (!r.chat_id) continue
+      const candidateSlug = generateSlug(title) + '-' + String(r.chat_id).slice(0, 6)
+      if (candidateSlug === slug) {
+        return { chatId: r.chat_id, name: title, idea: r.prompt || '' }
+      }
+    }
+    return null
+  } catch {
+    return null
   }
 }

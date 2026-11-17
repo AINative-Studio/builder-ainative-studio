@@ -1,5 +1,5 @@
 import type { Metadata } from 'next'
-import { resolveAppVerified } from '@/lib/build/app-registry'
+import { resolveAppVerified, resolveShowcaseOnlyBySlug, type AppEntry } from '@/lib/build/app-registry'
 import { StandalonePreviewRegenerate } from '@/components/build/StandalonePreviewRegenerate'
 import { StandalonePreviewFrame } from '@/components/build/StandalonePreviewFrame'
 import { mintPreviewDbToken } from '@/lib/build/preview-tokens'
@@ -30,9 +30,10 @@ interface Props { params: Promise<{ slug: string }> }
 export async function generateMetadata({ params }: Props): Promise<Metadata> {
   const { slug } = await params
   const { entry } = await resolveAppVerified(slug)
-  const name = entry?.name || slug
+  const showcaseOnly = entry?.chatId ? null : await resolveShowcaseOnlyBySlug(slug)
+  const name = entry?.name || showcaseOnly?.name || slug
   return {
-    title: entry ? `${name} — built on AINative` : `${slug} — AINative Builder`,
+    title: entry || showcaseOnly ? `${name} — built on AINative` : `${slug} — AINative Builder`,
     description: entry?.tagline || `${name}, built and run on AINative.`,
     alternates: { canonical: `https://builder.ainative.studio/build/${slug}` },
   }
@@ -40,7 +41,15 @@ export async function generateMetadata({ params }: Props): Promise<Metadata> {
 
 export default async function AppSubdirPage({ params }: Props) {
   const { slug } = await params
-  const { entry, verified } = await resolveAppVerified(slug)
+  const { entry: registryEntry, verified } = await resolveAppVerified(slug)
+  // #2126 follow-up: a confirmed registry miss (verified: true, no chatId)
+  // doesn't necessarily mean "no such company" — it may be a real,
+  // never-registered showcase generation (see resolveShowcaseOnlyBySlug's
+  // own doc comment). Only tried on a CONFIRMED miss, never on verified:false
+  // (a registry hiccup), so this never masks the existing "couldn't load this
+  // preview" honesty check below.
+  const showcaseOnly = !registryEntry?.chatId && verified ? await resolveShowcaseOnlyBySlug(slug) : null
+  const entry: AppEntry | null = registryEntry?.chatId ? registryEntry : (showcaseOnly ? { chatId: showcaseOnly.chatId, name: showcaseOnly.name, idea: showcaseOnly.idea, slug, createdAt: '' } : registryEntry)
   const color = entry?.color && /^#[0-9a-fA-F]{6}$/.test(entry.color) ? entry.color : '#2f6d86'
 
   if (!entry?.chatId) {
