@@ -95,6 +95,7 @@ import {
   findMissingLocalImports,
   findUndeclaredJsxComponents,
   findTruncatedFiles,
+  findMissingDefaultExports,
 } from '@/lib/build/completeness-gate'
 import { validateJavaScriptCode } from '@/lib/code-validator'
 import { createTask, listTasksForCompany } from '@/lib/build/task-store'
@@ -132,6 +133,7 @@ export interface CompletenessBackfillCompanyResult {
   truncatedFiles?: string[]
   /** #2151: validateJavaScriptCode()'s error when the CURRENT durable code fails it — the same check that produces the public "This build needs another pass" page. */
   renderError?: string
+  missingDefaultExports?: string[]
   reason?: string
 }
 
@@ -152,7 +154,13 @@ function isDeleted(app: { lifecycleStatus?: string }): boolean {
 }
 
 /** Same message shape ready-gate.ts uses for these checks, so a reviewer recognizes it instantly. */
-function firstReasonFor(missing: string[], undeclared: string[], truncated: string[], renderError?: string): string {
+function firstReasonFor(
+  missing: string[],
+  undeclared: string[],
+  truncated: string[],
+  missingDefaults: string[],
+  renderError?: string,
+): string {
   if (missing.length > 0) {
     return `imported local module(s) never defined in the payload: ${missing.join(', ')}`
   }
@@ -161,6 +169,9 @@ function firstReasonFor(missing: string[], undeclared: string[], truncated: stri
   }
   if (truncated.length > 0) {
     return `file(s) fail a strict parse — truncated/incomplete generation: ${truncated.join(', ')}`
+  }
+  if (missingDefaults.length > 0) {
+    return `local module(s) imported as a default export but never export one: ${missingDefaults.join(', ')}`
   }
   return `generation fails validateJavaScriptCode() at render time — this is the exact check behind the public "This build needs another pass" page: ${renderError}`
 }
@@ -271,6 +282,7 @@ export async function runCompletenessBackfillSweep(
     const missing = findMissingLocalImports(code, files)
     const undeclared = findUndeclaredJsxComponents(code, files)
     const truncated = findTruncatedFiles(files)
+    const missingDefaults = findMissingDefaultExports(files)
     // #2151: the same check that produces the live "This build needs another
     // pass" page (app/api/preview/[id]/route.ts) — never previously run from
     // any backfill/backlog path, so a company whose current generation
@@ -278,14 +290,15 @@ export async function runCompletenessBackfillSweep(
     const renderCheck = validateJavaScriptCode(code, { importsStripped: false, lenient: true })
     const renderError = renderCheck.valid ? undefined : (renderCheck.error || 'code fails validation').slice(0, 300)
 
-    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0 && !renderError) {
+    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0 && missingDefaults.length === 0 && !renderError) {
       record({ slug, disposition: 'clean' })
       continue
     }
 
     gapsFound++
-    const isRenderDefect = missing.length === 0 && undeclared.length === 0 && truncated.length === 0
-    const firstReason = firstReasonFor(missing, undeclared, truncated, renderError)
+    const isRenderDefect =
+      missing.length === 0 && undeclared.length === 0 && truncated.length === 0 && missingDefaults.length === 0
+    const firstReason = firstReasonFor(missing, undeclared, truncated, missingDefaults, renderError)
 
     if (dryRun) {
       record({
@@ -294,6 +307,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
         renderError,
       })
       continue
@@ -307,6 +321,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
         renderError,
       })
       continue
@@ -320,6 +335,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
         renderError,
       })
       continue
@@ -329,6 +345,7 @@ export async function runCompletenessBackfillSweep(
       ...missing.map((m) => `Missing local import definition: ${m}`),
       ...undeclared.map((u) => `Undeclared JSX component used but never imported: ${u}`),
       ...truncated.map((t) => `File fails a strict parse (truncated/incomplete generation): ${t}`),
+      ...missingDefaults.map((d) => `Local module imported as a default export but never exports one: ${d}`),
       ...(renderError ? [`Fails validateJavaScriptCode() at render time (visitors see "This build needs another pass"): ${renderError}`] : []),
     ]
 
@@ -348,6 +365,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
         renderError,
       })
       continue
@@ -367,6 +385,7 @@ export async function runCompletenessBackfillSweep(
       missingImports: missing,
       undeclaredJsx: undeclared,
       truncatedFiles: truncated,
+      missingDefaultExports: missingDefaults,
       renderError,
     })
   }
@@ -517,14 +536,15 @@ export async function runShowcaseCompletenessBackfillSweep(
     const missing = findMissingLocalImports(fullCode, files)
     const undeclared = findUndeclaredJsxComponents(fullCode, files)
     const truncated = findTruncatedFiles(files)
+    const missingDefaults = findMissingDefaultExports(files)
 
-    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0) {
+    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0 && missingDefaults.length === 0) {
       record({ slug, disposition: 'clean' })
       continue
     }
 
     gapsFound++
-    const firstReason = firstReasonFor(missing, undeclared, truncated)
+    const firstReason = firstReasonFor(missing, undeclared, truncated, missingDefaults)
 
     if (dryRun) {
       record({
@@ -533,6 +553,7 @@ export async function runShowcaseCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
       })
       continue
     }
@@ -549,6 +570,7 @@ export async function runShowcaseCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
       })
       continue
     }
@@ -561,6 +583,7 @@ export async function runShowcaseCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
       })
       continue
     }
@@ -569,6 +592,7 @@ export async function runShowcaseCompletenessBackfillSweep(
       ...missing.map((m) => `Missing local import definition: ${m}`),
       ...undeclared.map((u) => `Undeclared JSX component used but never imported: ${u}`),
       ...truncated.map((t) => `File fails a strict parse (truncated/incomplete generation): ${t}`),
+      ...missingDefaults.map((d) => `Local module imported as a default export but never exports one: ${d}`),
     ]
 
     const task = await createTask(scopeKey, {
@@ -586,6 +610,7 @@ export async function runShowcaseCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
       })
       continue
     }
@@ -603,6 +628,7 @@ export async function runShowcaseCompletenessBackfillSweep(
       missingImports: missing,
       undeclaredJsx: undeclared,
       truncatedFiles: truncated,
+      missingDefaultExports: missingDefaults,
     })
   }
 
