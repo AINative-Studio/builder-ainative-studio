@@ -46,6 +46,8 @@ interface LocalImport {
   spec: string
   /** Local binding names introduced (default/named/namespace). Empty for side-effect imports. */
   bindings: string[]
+  /** True when the clause includes a default specifier (`import Foo from '...'`, `import Foo, { Bar } from '...'`). */
+  hasDefault: boolean
 }
 
 /** File extensions that count as source code. */
@@ -136,7 +138,7 @@ export function parseLocalImports(rawCode: string): LocalImport[] {
     const spec = m[2]
     if (!isLocalSpecifier(spec)) continue
     if (/^type\s/.test(clause)) continue // import type — type-only, erased
-    out.push({ spec, bindings: parseClauseBindings(clause) })
+    out.push({ spec, bindings: parseClauseBindings(clause), hasDefault: hasDefaultSpecifier(clause) })
   }
   while ((m = sideEffect.exec(code)) !== null) {
     const spec = m[1]
@@ -144,9 +146,21 @@ export function parseLocalImports(rawCode: string): LocalImport[] {
     // Avoid double-counting `from '…'` matches: side-effect imports have no clause.
     const before = code.slice(Math.max(0, m.index - 6), m.index)
     if (/from\s*$/.test(before)) continue
-    out.push({ spec, bindings: [] })
+    out.push({ spec, bindings: [], hasDefault: false })
   }
   return out
+}
+
+/**
+ * Does this import clause (the text between `import` and `from`) include a
+ * default specifier? Same head-extraction rule parseClauseBindings() already
+ * uses for the default binding's local name — mirrored here rather than
+ * reusing that function's return value, since bindings[] deliberately doesn't
+ * distinguish default/named/namespace once flattened.
+ */
+function hasDefaultSpecifier(clause: string): boolean {
+  const head = clause.split(/[{*]/)[0].replace(/,\s*$/, '').trim()
+  return !!head && /^[A-Za-z_$][\w$]*$/.test(head)
 }
 
 /** Extract the local binding names from an import clause. */
@@ -400,6 +414,94 @@ export function findMissingLocalImports(
     }
 
     return [...missing]
+  } catch {
+    // Pure detector must never block on its own failure — fail-open.
+    return []
+  }
+}
+
+/** Like buildKeyIndex(), but maps each normalized key variant to that file's own content instead of just recording its presence — findMissingDefaultExports needs the TARGET file's body, not just a yes/no resolution. */
+function buildContentIndex(files: Record<string, string>): Map<string, string> {
+  const idx = new Map<string, string>()
+  for (const [key, content] of Object.entries(files)) {
+    const norm = normalizeSegments(key)
+    idx.set(norm, content)
+    idx.set(norm.replace(/^src\//, ''), content)
+    idx.set(norm.replace(/^app\//, ''), content)
+  }
+  return idx
+}
+
+/** Like resolvesInIndex(), but returns the resolved file's content (or null if unresolved) instead of a boolean. */
+function resolveContentInIndex(idx: Map<string, string>, fromDir: string, spec: string): string | null {
+  const base = spec.startsWith('@/') ? spec.slice(2) : `${fromDir}/${spec}`
+  const norm = normalizeSegments(base)
+  const variants = [norm, norm.replace(/^src\//, ''), `src/${norm}`]
+  for (const v of variants) {
+    for (const suffix of RESOLVE_SUFFIXES) {
+      const hit = idx.get(v + suffix)
+      if (hit !== undefined) return hit
+    }
+  }
+  return null
+}
+
+/**
+ * Does `content` contain a real default export, under any of the shapes a
+ * generated file can use it (`export default function/class/expr`, a
+ * separately-declared identifier re-exported via `export default Name`, or a
+ * barrel-style `export { Name as default }`)? Comment-masked so a comment
+ * merely MENTIONING "export default" can't produce a false match; string/
+ * template content is NOT masked (same precedent as definesIdentifier()
+ * above), so a string literal containing this text could produce a false
+ * POSITIVE here — i.e. this helper can only ever under-report a real gap,
+ * never block a fine app, matching this file's fail-open posture throughout.
+ */
+function hasDefaultExport(content: string): boolean {
+  const masked = maskComments(content)
+  return /(?:^|[\n;{(\s])export\s+default\b/.test(masked) || /\bas\s+default\b/.test(masked)
+}
+
+/**
+ * THE DEFAULT-EXPORT MISMATCH DETECTOR.
+ *
+ * findMissingLocalImports() above proves a default import's TARGET FILE
+ * exists somewhere in the payload — but existence alone doesn't mean the
+ * file actually exports a default. A component authored as `export function
+ * Foo()` (a legitimate, common shape) with no `export default` anywhere
+ * still satisfies findMissingLocalImports for `import Foo from './Foo'`,
+ * because that detector only checks "is `Foo` defined ANYWHERE in the
+ * payload," never "does the module `./Foo` actually export a default." At
+ * runtime the default binding resolves to `undefined`, and React throws
+ * "Element type is invalid: expected a string... but got: undefined" the
+ * moment `<Foo/>` renders — one of the governing-priority rendering crashes
+ * this gate exists to catch, and one neither findMissingLocalImports nor
+ * findUndeclaredJsxComponents can see, since both only reason about imports
+ * and JSX tags, never about what the TARGET module actually exports.
+ *
+ * Only meaningful with a files map (there's no single-blob equivalent: a
+ * concatenated blob with no real per-file boundaries has no file-level
+ * export shape to check). Never throws; a target this detector can't
+ * resolve or evaluate is left unflagged, not reported broken.
+ */
+export function findMissingDefaultExports(files?: Record<string, string>): string[] {
+  if (!files || Object.keys(files).length === 0) return []
+  try {
+    const idx = buildContentIndex(files)
+    const broken = new Set<string>()
+    for (const [path, content] of Object.entries(files)) {
+      if (!CODE_FILE.test(path) || path.endsWith('.d.ts') || typeof content !== 'string') continue
+      const fromDir = dirOf(`/${normalizeSegments(path)}`)
+      for (const imp of parseLocalImports(content)) {
+        if (!imp.hasDefault) continue
+        if (ASSET_EXT.test(imp.spec) || isRuntimeProvided(imp.spec)) continue
+        const target = resolveContentInIndex(idx, fromDir, imp.spec)
+        if (target === null) continue // unresolved target — findMissingLocalImports's concern, not this one's
+        if (hasDefaultExport(target)) continue
+        broken.add(imp.spec)
+      }
+    }
+    return [...broken]
   } catch {
     // Pure detector must never block on its own failure — fail-open.
     return []
