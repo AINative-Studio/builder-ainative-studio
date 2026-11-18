@@ -322,6 +322,30 @@ describe('reconcileRegistration — idempotency and leaving the wrong cases alon
     expect(res.reason).toBe('no_chat_id')
   })
 
+  // -------------------------------------------------------------------------
+  // #2156 — a nightly-enrolled company with no chatId at all ("flo", live:
+  // enrolled, 24+ consecutive nightly tasks, chatId:null) is a DIFFERENT,
+  // more urgent case than an unenrolled company that simply hasn't generated
+  // anything yet, and needs its own visibility so it isn't folded into the
+  // generic, expected `no_chat_id` bucket.
+  // -------------------------------------------------------------------------
+  it('#2156: tags an enrolled company with no chatId with its own reason, distinct from plain no_chat_id', async () => {
+    resolveApp.mockResolvedValue({ ...FLO, chatId: '', enrolled: true })
+
+    const res = await reconcileRegistration('flo')
+
+    expect(runReadyGate).not.toHaveBeenCalled()
+    expect(res.reason).toBe('no_chat_id_but_enrolled')
+  })
+
+  it('#2156: an UNenrolled company with no chatId still reports the plain, routine reason', async () => {
+    resolveApp.mockResolvedValue({ ...FLO, chatId: '', enrolled: false })
+
+    const res = await reconcileRegistration('flo')
+
+    expect(res.reason).toBe('no_chat_id')
+  })
+
   it('never throws — a reconciliation hiccup must not surface to the founder', async () => {
     // A rejecting registry read is #1494's unverified case, so it is reported
     // as the retryable `lookup_failed` rather than an opaque error string.
@@ -434,6 +458,55 @@ describe('runRegistrationReconcileSweep', () => {
     expect(res.deadRegistrations).toBe(55)
     expect(res.deadRegistrationSlugs).toHaveLength(50)
     expect(res.deadRegistrationsTruncated).toBe(true)
+  })
+
+  it('#2156: surfaces nightly-enrolled, chatId-less companies as a distinct, named list', async () => {
+    listAllAppsWithStatus.mockResolvedValue({
+      apps: [app('healthy'), app('flo'), app('idle')],
+      ok: true,
+    })
+    // reconcileRegistration re-resolves each company's entry itself (the sweep's
+    // `apps` list only enumerates slugs) — so chatId/enrolled must be threaded
+    // through this mock, not the `app()` extras above.
+    resolveApp.mockImplementation(async (slug: string) => {
+      if (slug === 'flo') return app(slug, { chatId: '', enrolled: true })
+      if (slug === 'idle') return app(slug, { chatId: '', enrolled: false })
+      return app(slug)
+    })
+    classifyRegistrationHealth.mockReturnValue('complete')
+    fetchDeploymentHealthStages.mockResolvedValue({ ok: true, stages: [{ stage: 'ready_check' }] })
+
+    const res = await runRegistrationReconcileSweep({ dryRun: false })
+
+    expect(res.enrolledWithNoChatId).toBe(1)
+    expect(res.enrolledWithNoChatIdSlugs).toEqual(['flo'])
+    expect(res.enrolledWithNoChatIdTruncated).toBe(false)
+    // An unenrolled, chatId-less company is routine — not part of this count.
+    expect(res.enrolledWithNoChatIdSlugs).not.toContain('idle')
+    // Still correctly left alone — this field is visibility, not a new re-drive path.
+    expect(runGitCommit).not.toHaveBeenCalled()
+  })
+
+  it('#2156: caps the enrolled-with-no-chatId slug list and flags truncation past the cap', async () => {
+    const many = Array.from({ length: 55 }, (_, i) => app(`dead${i}`, { chatId: '', enrolled: true }))
+    listAllAppsWithStatus.mockResolvedValue({ apps: many, ok: true })
+    resolveApp.mockImplementation(async (slug: string) => app(slug, { chatId: '', enrolled: true }))
+
+    const res = await runRegistrationReconcileSweep({ dryRun: false })
+
+    expect(res.enrolledWithNoChatId).toBe(55)
+    expect(res.enrolledWithNoChatIdSlugs).toHaveLength(50)
+    expect(res.enrolledWithNoChatIdTruncated).toBe(true)
+  })
+
+  it('#2156: reports an enrolled, chatId-less company in single-slug mode too', async () => {
+    resolveApp.mockResolvedValue({ ...FLO, chatId: '', enrolled: true })
+
+    const res = await runRegistrationReconcileSweep({ dryRun: false, slug: 'flo' })
+
+    expect(res.enrolledWithNoChatId).toBe(1)
+    expect(res.enrolledWithNoChatIdSlugs).toEqual(['flo'])
+    expect(res.enrolledWithNoChatIdTruncated).toBe(false)
   })
 
   it('reports registryOk:false and does nothing when the registry read fails — an outage is not an empty platform', async () => {
