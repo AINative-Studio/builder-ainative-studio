@@ -281,6 +281,71 @@ describe('runCompletenessBackfillSweep — filing a task for a real gap', () => 
     expect(r.results[0].undeclaredJsx).toEqual(expect.arrayContaining(['Card']))
   })
 
+  it('flags a render-breaking undefined-variable reference (#2151 — driftly repro) when structural checks are clean', async () => {
+    const UNDEFINED_REF_APP = `
+export default function App() {
+  return (
+    <main aria-label="App">
+      <h1>{id}</h1>
+    </main>
+  )
+}
+`
+    const { runCompletenessBackfillSweep } = await load({
+      apps: [{ slug: 'driftly', chatId: 'chat-driftly' }],
+      generations: {
+        'chat-driftly': {
+          generatedCode: UNDEFINED_REF_APP,
+          files: { '/src/App.tsx': UNDEFINED_REF_APP },
+        },
+      },
+    })
+
+    const r = await runCompletenessBackfillSweep({ dryRun: true })
+
+    expect(r.gapsFound).toBe(1)
+    expect(r.results[0].disposition).toBe('would_file_task')
+    expect(r.results[0].undefinedReference).toBe('id')
+    expect(r.results[0].missingImports).toEqual([])
+    expect(r.results[0].undeclaredJsx).toEqual([])
+    expect(r.results[0].truncatedFiles).toEqual([])
+  })
+
+  it('a real run files a task naming the undefined reference (#2151)', async () => {
+    const UNDEFINED_REF_APP = `
+export default function App() {
+  return <main>{missingValue}</main>
+}
+`
+    const { runCompletenessBackfillSweep, createTask } = await load({
+      apps: [{ slug: 'driftly', chatId: 'chat-driftly', ownerEmail: 'founder@example.com' }],
+      generations: { 'chat-driftly': { generatedCode: UNDEFINED_REF_APP } },
+    })
+
+    const r = await runCompletenessBackfillSweep({ dryRun: false })
+
+    expect(r.tasksFiled).toBe(1)
+    expect(r.results[0].disposition).toBe('filed_task')
+    expect(createTask).toHaveBeenCalledWith(
+      'founder@example.com::driftly',
+      expect.objectContaining({
+        title: expect.stringContaining("reference to undefined variable 'missingValue'"),
+        detail: expect.stringContaining("Reference to undefined variable 'missingValue'"),
+      }),
+    )
+  })
+
+  it('does not run the undefined-reference check when a structural gap already fired (avoids a redundant/less-specific second reason)', async () => {
+    const { runCompletenessBackfillSweep } = await load({
+      apps: [{ slug: 'agentive', chatId: 'chat-agentive' }],
+      generations: { 'chat-agentive': { generatedCode: MISSING_IMPORT_CODE } },
+    })
+
+    const r = await runCompletenessBackfillSweep({ dryRun: true })
+
+    expect(r.results[0].undefinedReference).toBeUndefined()
+  })
+
   it('flags a truncated component file (#2013 — cut off before any export) via the files map', async () => {
     const TRUNCATED_CONTACT_FORM = `
 import React, { useState } from 'react';

@@ -40,6 +40,23 @@
  * `findUndeclaredJsxComponents` both report that file clean, since it
  * declares no local import and uses no undeclared JSX tag; it just stops.
  *
+ * ALSO RUNS `findUndefinedReferences()` (#2151) — a semantic (not structural)
+ * check: a reference to a data identifier with NO binding anywhere in scope
+ * (`Reference to undefined variable 'id'`). Real repro: company "driftly"
+ * (chatId 94PwzN2gZ_8H9CovLRI9_) — `app/api/preview/[id]/route.ts`'s own
+ * `validateJavaScriptCode()` already rejects this at READ time (the visitor
+ * sees a "this build needs another pass" fallback page), but
+ * `findUndefinedReferences()` was never called from any backfill/backlog
+ * path — `lib/code-validator.ts`, `lib/generation-retry.ts` (generation time)
+ * and its own test file were the only 3 call sites. A company whose CURRENT
+ * generation fails this check sits in that fully-broken fallback state
+ * indefinitely, with no backlog task and nothing in the nightly loop ever
+ * surfacing or attempting to repair it — this sweep is deliberately the
+ * detection half only (file a real, visible task); #2151 explicitly leaves
+ * auto-regeneration as a separate design decision a human should make, since
+ * it may discard founder customizations layered onto the broken generation.
+ *
+
  * WHY A ONE-SHOT SWEEP AND NOT A CRON (same posture as obedience-backfill.ts)
  * There is no way to tell from this script alone whether a company's gap is
  * "new since last swept" without re-running, so this is a reviewed,
@@ -80,6 +97,7 @@ import {
   findUndeclaredJsxComponents,
   findTruncatedFiles,
 } from '@/lib/build/completeness-gate'
+import { findUndefinedReferences } from '@/lib/code-validator'
 import { createTask, listTasksForCompany } from '@/lib/build/task-store'
 import { openIssueForNewTask } from '@/lib/build/task-resolver'
 import { chatScopeKey } from '@/lib/build/chat-store'
@@ -111,6 +129,8 @@ export interface CompletenessBackfillCompanyResult {
   missingImports?: string[]
   undeclaredJsx?: string[]
   truncatedFiles?: string[]
+  /** #2151 — first undeclared data identifier `findUndefinedReferences()` found, if any. */
+  undefinedReference?: string
   reason?: string
 }
 
@@ -131,14 +151,31 @@ function isDeleted(app: { lifecycleStatus?: string }): boolean {
 }
 
 /** Same message shape ready-gate.ts uses for these checks, so a reviewer recognizes it instantly. */
-function firstReasonFor(missing: string[], undeclared: string[], truncated: string[]): string {
+function firstReasonFor(missing: string[], undeclared: string[], truncated: string[], undefinedRef: string | null): string {
   if (missing.length > 0) {
     return `imported local module(s) never defined in the payload: ${missing.join(', ')}`
   }
   if (undeclared.length > 0) {
     return `undeclared JSX component(s) — used but never imported: ${undeclared.join(', ')}`
   }
-  return `file(s) fail a strict parse — truncated/incomplete generation: ${truncated.join(', ')}`
+  if (truncated.length > 0) {
+    return `file(s) fail a strict parse — truncated/incomplete generation: ${truncated.join(', ')}`
+  }
+  return `reference to undefined variable '${undefinedRef}' — declare it or remove the reference`
+}
+
+/**
+ * Reassemble a files map into the same `// --- FILE: path ---` marker blob
+ * `findUndefinedReferences()` (and completeness-gate.ts's own detectors)
+ * parse — same marker format task-implementer.ts's buildImplementationUserPrompt()
+ * already uses for the same purpose. Falls back to the raw single-file blob
+ * when there's no files map, exactly like the other detectors above.
+ */
+function codeForUndefinedReferenceCheck(code: string, files?: Record<string, string> | null): string {
+  if (!files || Object.keys(files).length === 0) return code
+  return Object.entries(files)
+    .map(([path, content]) => `// --- FILE: ${path} ---\n${content}`)
+    .join('\n\n')
 }
 
 /** Same title format as #1140/obedience-backfill.ts's createTask() calls, so idempotency matching works identically either way. */
@@ -234,14 +271,25 @@ export async function runCompletenessBackfillSweep(
     const missing = findMissingLocalImports(code, files)
     const undeclared = findUndeclaredJsxComponents(code, files)
     const truncated = findTruncatedFiles(files)
+    // Only worth a semantic (undefined-reference) scan once the structural
+    // checks above are clean — a truncated/missing-import file will very
+    // often also trip this, and the structural reason is both more specific
+    // and already well-tested; this check's job is covering the cases the
+    // structural detectors miss entirely (#2151's driftly repro: a file that
+    // parses and resolves cleanly, but references a variable with no binding
+    // anywhere in scope).
+    const undefinedRef =
+      missing.length === 0 && undeclared.length === 0 && truncated.length === 0
+        ? findUndefinedReferences(codeForUndefinedReferenceCheck(code, files))
+        : null
 
-    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0) {
+    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0 && !undefinedRef) {
       record({ slug, disposition: 'clean' })
       continue
     }
 
     gapsFound++
-    const firstReason = firstReasonFor(missing, undeclared, truncated)
+    const firstReason = firstReasonFor(missing, undeclared, truncated, undefinedRef)
 
     if (dryRun) {
       record({
@@ -250,6 +298,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        undefinedReference: undefinedRef || undefined,
       })
       continue
     }
@@ -262,6 +311,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        undefinedReference: undefinedRef || undefined,
       })
       continue
     }
@@ -274,6 +324,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        undefinedReference: undefinedRef || undefined,
       })
       continue
     }
@@ -282,6 +333,7 @@ export async function runCompletenessBackfillSweep(
       ...missing.map((m) => `Missing local import definition: ${m}`),
       ...undeclared.map((u) => `Undeclared JSX component used but never imported: ${u}`),
       ...truncated.map((t) => `File fails a strict parse (truncated/incomplete generation): ${t}`),
+      ...(undefinedRef ? [`Reference to undefined variable '${undefinedRef}' — declare it or remove the reference.`] : []),
     ]
 
     const scopeKey = chatScopeKey(app.ownerEmail || 'guest:anon', slug)
@@ -300,6 +352,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        undefinedReference: undefinedRef || undefined,
       })
       continue
     }
@@ -318,6 +371,7 @@ export async function runCompletenessBackfillSweep(
       missingImports: missing,
       undeclaredJsx: undeclared,
       truncatedFiles: truncated,
+      undefinedReference: undefinedRef || undefined,
     })
   }
 
