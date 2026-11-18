@@ -232,14 +232,57 @@ describe('GET /api/build/nightly-loop — backlog task seeding (#898)', () => {
 
   it('#1521 — a prior row still genuinely running (readTaskStatus says in_progress) blocks a duplicate seed, same idempotency guard as app-track', async () => {
     h.listEnrolled.mockResolvedValue([COMPANY_ENROLLMENT])
+    // Recent — well under #2132/#2137's STALL_SLA_HOURS give-up threshold,
+    // so this still exercises the "genuinely still running, too soon to give
+    // up" case, not the new staleness give-up (see the dedicated tests below).
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString()
     h.listTasks.mockResolvedValue([
-      { id: 'prior', scopeKey: 'x', title: 'Nightly backlog: Acme Co', stage: 'in_progress', source: 'recurring', taskId: 'swarm-task-8', createdAt: '', updatedAt: '2026-10-23T00:00:00Z' },
+      { id: 'prior', scopeKey: 'x', title: 'Nightly backlog: Acme Co', stage: 'in_progress', source: 'recurring', taskId: 'swarm-task-8', createdAt: recent, updatedAt: recent },
     ])
-    h.readTaskStatus.mockResolvedValue({ taskId: 'swarm-task-8', dispatchedAt: '2026-10-23T00:00:00Z', status: 'running' })
+    h.readTaskStatus.mockResolvedValue({ taskId: 'swarm-task-8', dispatchedAt: recent, status: 'running' })
     await GET(req())
 
     expect(h.updateTask).not.toHaveBeenCalled() // already in_progress, no real stage change
     expect(h.createTask).not.toHaveBeenCalled()
+  })
+
+  it('#2132/#2137 — a prior row still unresolved past STALL_SLA_HOURS gives up (marks failed) instead of freezing the backlog forever', async () => {
+    h.listEnrolled.mockResolvedValue([COMPANY_ENROLLMENT])
+    const stale = new Date(Date.now() - 25 * 60 * 60 * 1000).toISOString() // 25h — just past the 24h default threshold
+    h.listTasks.mockResolvedValue([
+      { id: 'prior', scopeKey: 'x', title: 'Nightly backlog: Acme Co', stage: 'in_progress', source: 'recurring', taskId: 'swarm-task-8', createdAt: stale, updatedAt: stale },
+    ])
+    h.readTaskStatus.mockResolvedValue({ taskId: 'swarm-task-8', dispatchedAt: stale, status: 'unknown' })
+    h.runNightlyLoop.mockResolvedValue({
+      companyId: 'acme-co', briefing: null, taskId: 'swarm-task-9', status: 'dispatched', detail: 'ok',
+    })
+    await GET(req())
+
+    expect(h.updateTask).toHaveBeenCalledWith('founder@acme.co::acme-co', 'prior', {
+      stage: 'failed',
+      output: expect.stringContaining('Gave up after'),
+    })
+    // The row is no longer unresolved -> tonight's fresh dispatch can be seeded.
+    expect(h.createTask).toHaveBeenCalledTimes(1)
+  })
+
+  it('#2132/#2137 — a prior row still genuinely running per core, but past STALL_SLA_HOURS, also gives up (matches the founder-facing stall definition)', async () => {
+    h.listEnrolled.mockResolvedValue([COMPANY_ENROLLMENT])
+    const stale = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+    h.listTasks.mockResolvedValue([
+      { id: 'prior', scopeKey: 'x', title: 'Nightly backlog: Acme Co', stage: 'in_progress', source: 'recurring', taskId: 'swarm-task-8', createdAt: stale, updatedAt: stale },
+    ])
+    h.readTaskStatus.mockResolvedValue({ taskId: 'swarm-task-8', dispatchedAt: stale, status: 'running' })
+    h.runNightlyLoop.mockResolvedValue({
+      companyId: 'acme-co', briefing: null, taskId: 'swarm-task-9', status: 'dispatched', detail: 'ok',
+    })
+    await GET(req())
+
+    expect(h.updateTask).toHaveBeenCalledWith('founder@acme.co::acme-co', 'prior', {
+      stage: 'failed',
+      output: expect.stringContaining('Gave up after'),
+    })
+    expect(h.createTask).toHaveBeenCalledTimes(1)
   })
 
   it('#1521 — a prior row that genuinely failed updates to failed, then still seeds a fresh task (does not get stuck)', async () => {
@@ -269,16 +312,38 @@ describe('GET /api/build/nightly-loop — backlog task seeding (#898)', () => {
     expect(h.createTask).toHaveBeenCalledTimes(1)
   })
 
-  it('#1521 — a readTaskStatus failure degrades honestly: never throws, never advances the prior row\'s stage, blocks a duplicate seed', async () => {
+  it('#1521 — a readTaskStatus failure degrades honestly: never throws, and (while recent) never advances the prior row\'s stage, blocks a duplicate seed', async () => {
     h.listEnrolled.mockResolvedValue([COMPANY_ENROLLMENT])
+    // Recent — see the #2132/#2137 give-up tests below for what happens once
+    // a readTaskStatus failure persists past STALL_SLA_HOURS.
+    const recent = new Date(Date.now() - 60 * 60 * 1000).toISOString()
     h.listTasks.mockResolvedValue([
-      { id: 'prior', scopeKey: 'x', title: 'Nightly backlog: Acme Co', stage: 'in_progress', source: 'recurring', taskId: 'swarm-task-8', createdAt: '', updatedAt: '2026-10-23T00:00:00Z' },
+      { id: 'prior', scopeKey: 'x', title: 'Nightly backlog: Acme Co', stage: 'in_progress', source: 'recurring', taskId: 'swarm-task-8', createdAt: recent, updatedAt: recent },
     ])
     h.readTaskStatus.mockRejectedValue(new Error('core down'))
     const res = await GET(req())
     expect(res.status).toBe(200)
     expect(h.updateTask).not.toHaveBeenCalled()
     expect(h.createTask).not.toHaveBeenCalled()
+  })
+
+  it('#2132/#2137 — a readTaskStatus failure that persists past STALL_SLA_HOURS gives up instead of freezing forever', async () => {
+    h.listEnrolled.mockResolvedValue([COMPANY_ENROLLMENT])
+    const stale = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString()
+    h.listTasks.mockResolvedValue([
+      { id: 'prior', scopeKey: 'x', title: 'Nightly backlog: Acme Co', stage: 'in_progress', source: 'recurring', taskId: 'swarm-task-8', createdAt: stale, updatedAt: stale },
+    ])
+    h.readTaskStatus.mockRejectedValue(new Error('core down'))
+    h.runNightlyLoop.mockResolvedValue({
+      companyId: 'acme-co', briefing: null, taskId: 'swarm-task-9', status: 'dispatched', detail: 'ok',
+    })
+    const res = await GET(req())
+    expect(res.status).toBe(200)
+    expect(h.updateTask).toHaveBeenCalledWith('founder@acme.co::acme-co', 'prior', {
+      stage: 'failed',
+      output: expect.stringContaining('Gave up after'),
+    })
+    expect(h.createTask).toHaveBeenCalledTimes(1)
   })
 
   it('#1521 — a company-track task from a DIFFERENT source (cody/swarm) is never treated as the recurring prior row', async () => {
