@@ -551,18 +551,29 @@ export function hasLocalImports(appCode: string): boolean {
 }
 
 /**
- * Flatten a multi-file marker string into a single module. If it's not multi-file
- * (no markers) or the App has no local imports, returns the extracted app code as-is.
+ * Flatten an ALREADY-PARSED file map (basename/path → code) into a single
+ * module — the pure half of flattenMultiFile()'s algorithm, split out (#1994
+ * follow-up) so a caller holding a structured map doesn't have to round-trip
+ * it back through parseFiles()'s raw-text marker scanning.
+ *
+ * Why this matters: `parseFiles()`/`flattenMultiFile(raw)` only ever operate
+ * on the `generatedCode` text blob — a SEPARATE, independently-stored string
+ * on the same ZeroDB generation row from the structured `files` map the
+ * Sandpack path and `/api/generation/{id}/files` both use. #1994 confirmed
+ * live that these two can drift (tidemark/driftwood: `files` held a correct
+ * `AIKitHeader.tsx`, `generatedCode` held a truncated one producing `const
+ * AIKitHeader = ;`) — and a second, differently-shaped recurrence (#2153:
+ * shoplo-OYP2Bz, a public-asset file's plain-text content ending up inside
+ * the parsed componentCode) confirmed the underlying gap wasn't actually
+ * closed by #1994's narrower fix (#1995 only guarded one corruption shape).
+ * Exposing this pure half lets a caller prefer the already-correct `files`
+ * map directly instead of re-deriving file boundaries from the drift-prone
+ * text blob at all.
  */
-export function flattenMultiFile(raw: string): string {
-  const files = parseFiles(raw)
+export function flattenParsedFiles(files: Record<string, string>): string {
   const paths = Object.keys(files)
-  if (paths.length <= 1) {
-    // Not multi-file — return unchanged. The preview route's existing extraction +
-    // render already handles a single file (incl. its `export default`); flattening
-    // is ADDITIVE, only for the multi-file case, so single-file stays a no-op.
-    return paths.length === 1 ? files[paths[0]] : raw
-  }
+  if (paths.length === 0) return ''
+  if (paths.length === 1) return files[paths[0]]
 
   // Find the entry (App.tsx / the file that imports the others).
   const appPath =
@@ -640,4 +651,25 @@ export function flattenMultiFile(raw: string): string {
 
   const appBody = stripImportsAndExports(appCode, 'App')
   return [...stubbed, ...inlined, appBody].join('\n\n')
+}
+
+/**
+ * Flatten a multi-file marker string into a single module. If it's not multi-file
+ * (no markers) or the App has no local imports, returns the extracted app code as-is.
+ *
+ * Thin wrapper over flattenParsedFiles() — parses the raw text into a file
+ * map first, then delegates. A caller that already HAS a structured file
+ * map (e.g. the durable `files` field on a ZeroDB generation row) should
+ * call flattenParsedFiles() directly instead of serializing back to marker
+ * text just to re-parse it here — see that function's doc for why.
+ */
+export function flattenMultiFile(raw: string): string {
+  const files = parseFiles(raw)
+  if (Object.keys(files).length === 0) {
+    // Not multi-file — return unchanged. The preview route's existing extraction +
+    // render already handles a single file (incl. its `export default`); flattening
+    // is ADDITIVE, only for the multi-file case, so single-file stays a no-op.
+    return raw
+  }
+  return flattenParsedFiles(files)
 }

@@ -4,7 +4,8 @@ import { getDesignSystem } from '@/lib/design-systems/catalog'
 import { googleFontsUrl } from '@/lib/theme-system'
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
 import { detectRootComponent, applyComponentRewrite } from '@/lib/component-detector'
-import { flattenMultiFile } from '@/lib/build/flatten-multifile'
+import { flattenMultiFile, flattenParsedFiles } from '@/lib/build/flatten-multifile'
+import { getFiles as getFilesV2 } from '@/lib/preview-store-v2'
 import { convertTemplateLiteralAttrsToConcat } from '@/lib/build/template-literal-to-concat'
 import { dedupeProvidedComponents } from '@/lib/build/dedupe-provided-components'
 import { stripExportsAndBasicTypes } from '@/lib/build/strip-exports-and-types'
@@ -108,6 +109,20 @@ export async function GET(
 
   let content = getPreview(id)
 
+  // #1994/#2153 — the structured `files` map (Sandpack's and
+  // /api/generation/{id}/files's source of truth) can hold a correct
+  // generation while the SEPARATE `generatedCode` text blob below it has
+  // drifted stale/corrupt (confirmed live twice now, two different
+  // corruption shapes). Fetch it up front — cheap in-memory lookup first,
+  // same two-tier order /api/generation/{id}/files itself uses — so STEP 1
+  // below can prefer it over re-deriving file boundaries from that blob.
+  let durableFiles: Record<string, string> | null = null
+  try {
+    durableFiles = getFilesV2(id)
+  } catch {
+    durableFiles = null
+  }
+
   // Prefer RE-RENDERING from live code over any frozen SSR HTML. A frozen SSR
   // snapshot (from getSSRPreview) captured before a renderer fix serves the OLD
   // broken HTML forever — the #1 reason old previews stayed blank after the
@@ -137,6 +152,9 @@ export async function GET(
     try {
       const { loadGeneration } = await import('@/lib/zerodb-store')
       const gen = await loadGeneration(id)
+      if ((!durableFiles || Object.keys(durableFiles).length === 0) && gen?.files && Object.keys(gen.files).length > 0) {
+        durableFiles = gen.files
+      }
       // Prefer RE-RENDERING from the durable generatedCode over serving a frozen
       // ssrHtml snapshot: an ssrHtml frozen before a renderer fix (e.g. the
       // hooks-on-window / newline fixes) serves the OLD broken HTML forever, so
@@ -287,13 +305,23 @@ export async function GET(
 
   let componentCode = ''
 
+  // #1994/#2153 — prefer the structured, already-correct `files` map (see
+  // its fetch above) over re-deriving file boundaries from the separately-
+  // stored `generatedCode` text blob below, which can drift from it. Only
+  // meaningful with >1 entries — a single-entry map carries no multi-file
+  // boundary information the text-based path below doesn't already handle.
+  if (durableFiles && Object.keys(durableFiles).length > 1) {
+    componentCode = flattenParsedFiles(durableFiles)
+    console.log(`[Preview] Using durable files map (not generatedCode) → single module (${componentCode.length} chars)`)
+  }
+
   // Handle multi-file output (builder#308): a multi-file app (App.tsx importing
   // ./components/Header, …) previously extracted ONLY App.tsx here — so on the
   // single-file Babel path every imported child was undefined and the app rendered
   // BLANK (the aerosol bug). flattenMultiFile inlines the child components into
   // App's scope (strips relative imports/exports, concatenates children above App)
   // so <Header/> etc. resolve. Single-file content is a no-op.
-  if (content.includes('// --- FILE:')) {
+  if (!componentCode && content.includes('// --- FILE:')) {
     componentCode = flattenMultiFile(content)
     console.log(`[Preview] Flattened multi-file output → single module (${componentCode.length} chars)`)
   }
