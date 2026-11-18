@@ -161,6 +161,30 @@ describe('findMissingLocalImports — ignored import classes', () => {
     expect(findMissingLocalImports(files['/src/components/Header.tsx'], files)).toEqual(['./SearchBox'])
   })
 
+  /**
+   * Real bug found live (overnight loop, 2026-11-18, company 'brambleworks',
+   * chatId abhH0__eEeOeiZfsggnIk): `import { AIKitBanner } from
+   * './components/ui'` — the wrong bundle, AIKitBanner really lives in
+   * components/aikit — with `<AIKitBanner>` genuinely rendered. The real
+   * Sandpack build pipeline (lib/sandpack/build-files.ts's #2016
+   * detachFromWrongPathImport) relocates this import to the real bundle at
+   * build time whenever the component is actually used as JSX, so this app
+   * renders fine — but this gate's isRuntimeProvided() had no way to know
+   * that; the bare 'components/ui' barrel (no trailing file segment) has no
+   * real index.ts of its own, unlike bare 'components/aikit'.
+   */
+  it('ignores a wrong-bundle AIKit/shadcn import the real build pipeline relocates on its own (#2016)', () => {
+    const code = app(
+      `import { AIKitBanner } from './components/ui'\nimport { Card } from './components/aikit'`,
+    ).replace('<div/>', '<><AIKitBanner>oops</AIKitBanner><Card/></>')
+    expect(findMissingLocalImports(code, { '/src/App.tsx': code })).toEqual([])
+  })
+
+  it('still flags a wrong-bundle AIKit/shadcn import when the component is never rendered (#2016 safety net never fires)', () => {
+    const code = app(`import { AIKitBanner } from './components/ui'`)
+    expect(findMissingLocalImports(code, { '/src/App.tsx': code })).toEqual(['./components/ui'])
+  })
+
   it('ignores bare side-effect imports of code files', () => {
     const code = app(`import './setup'`)
     expect(findMissingLocalImports(code, { '/src/App.tsx': code })).toEqual([])
