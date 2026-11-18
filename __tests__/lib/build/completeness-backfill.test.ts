@@ -75,6 +75,23 @@ export default function App() {
 }
 `
 
+/**
+ * #2151 repro shape (company "driftly"): parses fine, imports/JSX all
+ * resolve — the three structural detectors above see nothing wrong — but
+ * references a variable (`id`) that is never declared anywhere, which is
+ * exactly the public "This build needs another pass" page's own trigger
+ * (validateJavaScriptCode()'s findUndefinedReferences check).
+ */
+const RENDER_BREAKING_CODE = `
+export default function App() {
+  return (
+    <main aria-label="App">
+      <h1>{id}</h1>
+    </main>
+  )
+}
+`
+
 async function load(opts: {
   apps: FakeApp[]
   registryOk?: boolean
@@ -309,6 +326,59 @@ const ContactFormSection = () => {
 
     expect(r.gapsFound).toBe(1)
     expect(r.results[0].truncatedFiles).toEqual(['/src/components/ContactFormSection.tsx'])
+  })
+
+  it('#2151: flags a render-breaking defect (driftly repro) none of the structural detectors above can see', async () => {
+    const { runCompletenessBackfillSweep } = await load({
+      apps: [{ slug: 'driftly', chatId: 'chat-driftly' }],
+      generations: { 'chat-driftly': { generatedCode: RENDER_BREAKING_CODE } },
+    })
+
+    const r = await runCompletenessBackfillSweep({ dryRun: true })
+
+    expect(r.gapsFound).toBe(1)
+    expect(r.results[0]).toMatchObject({ slug: 'driftly', disposition: 'would_file_task' })
+    expect(r.results[0].missingImports).toEqual([])
+    expect(r.results[0].undeclaredJsx).toEqual([])
+    expect(r.results[0].renderError).toContain("undefined variable 'id'")
+  })
+
+  it('#2151: real run files a render-breaking-defect task, distinct from a structural completeness gap', async () => {
+    const { runCompletenessBackfillSweep, createTask, openIssueForNewTask } = await load({
+      apps: [{ slug: 'driftly', chatId: 'chat-driftly', ownerEmail: 'founder@example.com', gitOrg: 'driftly-org' }],
+      generations: { 'chat-driftly': { generatedCode: RENDER_BREAKING_CODE } },
+    })
+
+    const r = await runCompletenessBackfillSweep({ dryRun: false })
+
+    expect(r.tasksFiled).toBe(1)
+    expect(r.results[0].disposition).toBe('filed_task')
+    expect(createTask).toHaveBeenCalledWith(
+      'founder@example.com::driftly',
+      expect.objectContaining({
+        title: expect.stringContaining('Fix generation render-breaking defect:'),
+        detail: expect.stringContaining('This build needs another pass'),
+        stage: 'todo',
+        source: 'cody',
+      }),
+    )
+    expect(openIssueForNewTask).toHaveBeenCalled()
+  })
+
+  it('#2151: a company already clean under the structural checks, but with a real render-breaking defect, is not reported "clean"', async () => {
+    const { runCompletenessBackfillSweep } = await load({
+      apps: [{ slug: 'driftly', chatId: 'chat-driftly' }],
+      generations: {
+        'chat-driftly': {
+          generatedCode: RENDER_BREAKING_CODE,
+          files: { '/src/App.tsx': RENDER_BREAKING_CODE },
+        },
+      },
+    })
+
+    const r = await runCompletenessBackfillSweep({ dryRun: true })
+
+    expect(r.results[0].disposition).not.toBe('clean')
   })
 })
 
