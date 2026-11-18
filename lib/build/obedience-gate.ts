@@ -1466,3 +1466,59 @@ export function evaluatePrimitiveComplianceRetry(
     closed: afterGaps.length === 0,
   }
 }
+
+/**
+ * #2135: the general obedience-repair pass in chat-ws gets exactly ONE
+ * attempt at visitorTrackingGap (and every other boolean gap) before
+ * shipping — unlike primitiveComplianceGaps, which gets its own bounded,
+ * narrowly-focused follow-up retry (closePrimitiveComplianceGap, #624) when
+ * the general pass doesn't close it. Confirmed live (issue #2135, 20+
+ * independent samples across many hourly loop runs): roughly a quarter to a
+ * third of LANDING PAGE/STORE TEASER generations ship with zero
+ * `/api/db/visitors` call anywhere, despite the gate correctly flagging it
+ * every time — the single general re-prompt just isn't reliable enough on
+ * its own. This mirrors narrowToPrimitiveComplianceOnly exactly, so chat-ws
+ * can run the same kind of targeted, single-purpose follow-up
+ * (closeVisitorTrackingGap) for this gap too.
+ */
+export function narrowToVisitorTrackingOnly(): ObedienceResult {
+  return {
+    ok: false,
+    persistenceGap: false,
+    aikitGaps: [],
+    primitiveComplianceGaps: [],
+    visitorTrackingGap: true,
+    dynamicTailwindClassGap: false,
+    fakeLeadCaptureGap: false,
+    alertInLeadCaptureGap: false,
+    fakeButtonGap: false,
+    nonSemanticInteractiveElementGap: false,
+    hardcodedToggleGap: false,
+    unpersistedComposerGap: false,
+    axLandmarkGap: false,
+    axManifestGap: false,
+    axJsonLdGap: false,
+    axSkipNavGap: false,
+    axNavLabelGap: false,
+    axSectionLabelGap: false,
+    axAgentAttributesGap: false,
+    axComplexWidgetRoleGap: false,
+    reasons: [],
+  }
+}
+
+/**
+ * Did a targeted visitor-tracking retry close the gap? Pure decision
+ * function, same shape as evaluatePrimitiveComplianceRetry, so the
+ * orchestration in chat-ws stays testable without mocking an LLM. Unlike
+ * the array-based primitive-compliance gap, this one is a single boolean —
+ * there's no partial "closed some but not all" state, so madeProgress and
+ * closed are always the same value.
+ */
+export function evaluateVisitorTrackingRetry(
+  beforeGap: boolean,
+  afterGap: boolean,
+): { madeProgress: boolean; closed: boolean } {
+  const closed = beforeGap && !afterGap
+  return { madeProgress: closed, closed }
+}

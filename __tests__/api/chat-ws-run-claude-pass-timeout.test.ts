@@ -4,9 +4,10 @@ import { join } from 'path'
 
 /**
  * runClaudePass() — the obedience-repair / decomposition secondary pass used
- * by app/api/chat-ws's live-generation retry loop (4 call sites: primitive-
- * compliance repair, combined fix+split, general obedience repair, and the
- * standalone decomposition pass) — called `primary.client.messages.create()`
+ * by app/api/chat-ws's live-generation retry loop (5 call sites: primitive-
+ * compliance repair, visitor-tracking repair (#2135), combined fix+split,
+ * general obedience repair, and the standalone decomposition pass) — called
+ * `primary.client.messages.create()`
  * with no timeout/AbortSignal at all. Same bug class as #1253 (the PRIMARY
  * codegen call), #1266 (cody-chat.ts/subagents.ts) and #1268 (ask/nightshift/
  * help/brand routes): a hung upstream call here stalls the generation's
@@ -57,8 +58,10 @@ describe('runClaudePass() obedience-repair/decomposition call is bounded by a ti
     expect(catchBody).toContain('[runClaudePass] primary Claude failed, trying AINative fallback')
   })
 
-  it('is reused by all four obedience-repair / decomposition call sites in the retry loop', () => {
+  it('is reused by all five obedience-repair / decomposition call sites in the retry loop', () => {
+    // #2135: closeVisitorTrackingGap added a 5th call site, reusing this
+    // same timeout-bounded pass rather than a raw SDK call.
     const occurrences = routeSource.split('await runClaudePass(').length - 1
-    expect(occurrences).toBe(4)
+    expect(occurrences).toBe(5)
   })
 })
