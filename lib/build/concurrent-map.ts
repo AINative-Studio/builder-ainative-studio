@@ -125,3 +125,37 @@ export function selectShard<T>(items: readonly T[], index: unknown, count: unkno
   if (!valid) return [...items]
   return items.filter((_, i) => i % shards === shard)
 }
+
+/**
+ * Rotate `items` by `offset` positions, wrapping around (#2137).
+ *
+ * WHY THIS EXISTS: `mapWithConcurrency`'s `drain()` always starts at index 0
+ * of whatever list it's given. `selectShard`'s own output order is STABLE
+ * run-to-run (same `listEnrolled()` row order, same modulo filter). Put
+ * those two true, individually-correct facts together and you get a real
+ * bug: once a shard's batch is long enough that its budget/concurrency can't
+ * finish it in one run, the items PAST that cutoff are "deferred" (never
+ * started) — and because nothing about the list or the cutoff changes
+ * between runs, it is the SAME tail items deferred every single night,
+ * forever. That reproduces #2137's "same handful of companies stuck
+ * `in_progress`/never-reseeded night after night" symptom exactly, with no
+ * process crash or platform kill required — plain positional starvation.
+ *
+ * The fix is to change the STARTING point each run, not the admission logic
+ * (deadline/concurrency stay exactly as-is — this file's other invariants
+ * are untouched). A caller derives `offset` from something that changes
+ * run-to-run (e.g. a day index) so that over enough nights, every item
+ * eventually lands near the front of the queue and gets processed, instead
+ * of only the first N (by `selectShard`'s stable order) ever running.
+ *
+ * Pure and total: same `items`/`offset` always rotates the same way; any
+ * integer `offset` (negative, zero, larger than `items.length`) is handled
+ * via modulo, and an empty list is a no-op.
+ */
+export function rotateForFairness<T>(items: readonly T[], offset: number): T[] {
+  const n = items.length
+  if (n === 0) return []
+  const shift = ((Math.trunc(offset) % n) + n) % n
+  if (shift === 0) return [...items]
+  return [...items.slice(shift), ...items.slice(0, shift)]
+}

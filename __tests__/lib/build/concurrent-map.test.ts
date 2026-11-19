@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest'
-import { mapWithConcurrency } from '@/lib/build/concurrent-map'
+import { mapWithConcurrency, rotateForFairness } from '@/lib/build/concurrent-map'
 
 /**
  * Bounded-concurrency map (#1055, Problem A).
@@ -98,5 +98,59 @@ describe('mapWithConcurrency (#1055)', () => {
     expect(await mapWithConcurrency([], 4, async () => 1)).toEqual([])
     const out = await mapWithConcurrency([1, 2], 0, async (n) => n)
     expect(out.map((r) => r.value)).toEqual([1, 2])
+  })
+})
+
+/**
+ * rotateForFairness (#2137).
+ *
+ * THE BUG: mapWithConcurrency's drain() always starts at index 0 of
+ * whatever list it's given, and selectShard's output order is stable
+ * run-to-run. Combined, a shard batch longer than one run's budget/
+ * concurrency can clear defers the exact same tail items every single
+ * night, forever — plain positional starvation, no crash required. This
+ * primitive breaks that by changing the batch's starting point run-to-run.
+ */
+describe('rotateForFairness (#2137)', () => {
+  it('rotates the list so a different item starts the batch', () => {
+    const items = ['a', 'b', 'c', 'd', 'e']
+    expect(rotateForFairness(items, 0)).toEqual(['a', 'b', 'c', 'd', 'e'])
+    expect(rotateForFairness(items, 1)).toEqual(['b', 'c', 'd', 'e', 'a'])
+    expect(rotateForFairness(items, 2)).toEqual(['c', 'd', 'e', 'a', 'b'])
+  })
+
+  it('never loses or duplicates an item — just reorders', () => {
+    const items = Array.from({ length: 11 }, (_, i) => i)
+    for (const offset of [0, 1, 5, 10, 11, 23, -1, -7]) {
+      const rotated = rotateForFairness(items, offset)
+      expect(rotated.length).toBe(items.length)
+      expect([...rotated].sort((a, b) => a - b)).toEqual(items)
+    }
+  })
+
+  it('wraps an offset larger than the list length via modulo', () => {
+    const items = ['a', 'b', 'c']
+    expect(rotateForFairness(items, 4)).toEqual(rotateForFairness(items, 1))
+    expect(rotateForFairness(items, 3)).toEqual(items)
+  })
+
+  it('handles a negative offset safely, never throwing or dropping items', () => {
+    const items = ['a', 'b', 'c', 'd']
+    expect(rotateForFairness(items, -1)).toEqual(['d', 'a', 'b', 'c'])
+  })
+
+  it('is a no-op on an empty list', () => {
+    expect(rotateForFairness([], 3)).toEqual([])
+  })
+
+  it('over enough distinct offsets, every item eventually starts the batch — the actual fairness property', () => {
+    const items = Array.from({ length: 30 }, (_, i) => `co-${i}`)
+    const firstItemSeen = new Set<string>()
+    for (let dayIndex = 0; dayIndex < items.length; dayIndex++) {
+      firstItemSeen.add(rotateForFairness(items, dayIndex)[0])
+    }
+    // Every company gets to be first (i.e. guaranteed inside the budget)
+    // on some night — nobody is permanently stuck past the cutoff.
+    expect(firstItemSeen.size).toBe(items.length)
   })
 })
