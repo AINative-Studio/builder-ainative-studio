@@ -19,7 +19,14 @@
  * deck) require that real session; see the OAuth discovery document at
  * /.well-known/oauth-authorization-server for how an external agent obtains
  * one on the founder's behalf (core's real OAuth2.1/PKCE flow).
+ *
+ * #2171 — the checkout/delegate-payment operations below additionally carry
+ * MPP (Machine Payments Protocol) discovery extensions (`x-payment-info`),
+ * applied at request time by annotateOpenApiWithMpp() (lib/build/mpp-
+ * discovery.ts) — see that module's doc comment for the full rationale.
  */
+
+import { annotateOpenApiWithMpp } from '@/lib/build/mpp-discovery'
 
 const SITE = 'https://builder.ainative.studio'
 
@@ -191,6 +198,67 @@ const spec = {
               },
             },
           },
+        },
+      },
+    },
+    '/checkout_sessions': {
+      post: {
+        operationId: 'createAcpCheckoutSession',
+        summary: 'ACP (Agentic Commerce Protocol) checkout: create a real Stripe checkout session for an AINative subscription plan. Forwards to core (api.ainative.studio), signed server-side — Builder exposes core\'s real payment capability under this hostname, same relationship it has with every other primitive.',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['items'],
+                properties: {
+                  items: {
+                    type: 'array',
+                    items: {
+                      type: 'object',
+                      properties: {
+                        id: { type: 'string', description: 'A real AINative plan id (see /pricing) — e.g. "Starter", "Pro", "Business".' },
+                        quantity: { type: 'integer' },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '201': { description: 'Checkout session created — real Stripe checkout_url returned.' },
+          '400': { description: 'Invalid item/plan id.' },
+          '502': { description: 'ACP signing not configured, or core unreachable.' },
+        },
+      },
+    },
+    '/agentic_commerce/delegate_payment': {
+      post: {
+        operationId: 'delegateAcpPayment',
+        summary: 'ACP delegate-payment: vault an already-tokenized Stripe payment method (pm_... id) for later charges, via a real, constrained Stripe SetupIntent on core\'s side. Builder never sees a raw card number — the caller must tokenize it client-side first (same PCI boundary core itself enforces).',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                properties: {
+                  payment_method: { type: 'object', properties: { type: { type: 'string' }, id: { type: 'string', description: 'A tokenized Stripe payment method id (pm_...).' } } },
+                  allowance: { type: 'object', properties: { max_amount: { type: 'integer' }, currency: { type: 'string' }, expires_at: { type: 'string', format: 'date-time' } } },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Payment method delegated.' },
+          '400': { description: 'Verification failed.' },
+          '502': { description: 'ACP signing not configured, or core unreachable.' },
         },
       },
     },
@@ -500,7 +568,11 @@ const spec = {
 }
 
 export async function GET() {
-  return Response.json(spec, {
+  // #2171 — annotateOpenApiWithMpp mutates its argument; clone per-request
+  // so the module-level `spec` constant itself is never mutated (this
+  // route's `spec` object is otherwise immutable/shared across requests).
+  const document = annotateOpenApiWithMpp(JSON.parse(JSON.stringify(spec)))
+  return Response.json(document, {
     headers: { 'Cache-Control': 'public, max-age=3600' },
   })
 }

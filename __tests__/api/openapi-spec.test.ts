@@ -34,4 +34,40 @@ describe('GET /openapi.json (AX/agent-readiness scan, 2026-09-30)', () => {
     const scopes = spec.components?.securitySchemes?.sessionCookie?.flows?.authorizationCode?.scopes
     expect(scopes).toMatchObject({ openid: expect.any(String), profile: expect.any(String), email: expect.any(String) })
   })
+
+  it('documents the real ACP checkout/delegate-payment operations (#2173/#2171)', async () => {
+    const res = await GET()
+    const spec = await res.json()
+    expect(spec.paths['/checkout_sessions']?.post).toBeTruthy()
+    expect(spec.paths['/agentic_commerce/delegate_payment']?.post).toBeTruthy()
+  })
+
+  it('carries MPP x-service-info and x-payment-info on the checkout operation when ACP signing is configured (#2171)', async () => {
+    const originalSecret = process.env.ACP_SIGNING_SECRET
+    process.env.ACP_SIGNING_SECRET = 'test-secret'
+    try {
+      const res = await GET()
+      const spec = await res.json()
+      expect(spec['x-service-info']).toBeTruthy()
+      const paymentInfo = spec.paths['/checkout_sessions']?.post?.['x-payment-info']
+      expect(paymentInfo?.offers?.length).toBeGreaterThan(0)
+    } finally {
+      process.env.ACP_SIGNING_SECRET = originalSecret
+    }
+  })
+
+  it('never mutates the shared spec across requests — each GET call is independent', async () => {
+    const originalSecret = process.env.ACP_SIGNING_SECRET
+    try {
+      process.env.ACP_SIGNING_SECRET = 'test-secret'
+      const withMpp = await (await GET()).json()
+      expect(withMpp['x-service-info']).toBeTruthy()
+
+      delete process.env.ACP_SIGNING_SECRET
+      const withoutMpp = await (await GET()).json()
+      expect(withoutMpp['x-service-info']).toBeUndefined()
+    } finally {
+      process.env.ACP_SIGNING_SECRET = originalSecret
+    }
+  })
 })
