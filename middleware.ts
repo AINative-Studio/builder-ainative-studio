@@ -17,7 +17,7 @@ import { prefersMarkdown, homepageMarkdown, notFoundMarkdown } from './lib/agent
  */
 const KNOWN_TOP_LEVEL_SEGMENTS = new Set([
   'about', 'account', 'admin', 'ai-cofounder', 'ai-company',
-  'autonomous-company-builder', 'best', 'billing', 'build', 'capabilities',
+  'ask', 'autonomous-company-builder', 'best', 'billing', 'build', 'capabilities',
   'chats', 'compare', 'context-budget-demo', 'demo', 'deployments',
   'design-tokens', 'docs', 'evidence', 'guides', 'health', 'help', 'insights',
   'login', 'preview', 'pricing', 'privacy', 'profile', 'projects', 'refer',
