@@ -17,7 +17,7 @@ import { resolveStoredApp } from '@/lib/build/ready-gate'
 import { checkSeededData, type SeededDataCheck } from '@/lib/build/seed-check'
 import { runReadyGate, runGitCommit, runWiringScan } from '@/lib/build/register-app-core'
 import { autoCreateAdTestCampaign } from '@/lib/build/ad-test-autocreate'
-import { enrollCompany, isEnrolled, syncEnrollmentOwnerKey } from '@/lib/build/loop-enrollment'
+import { enrollCompany, isEnrolled, syncEnrollmentOwnerKey, syncEnrollmentTrack } from '@/lib/build/loop-enrollment'
 import { sendWelcomeEmail } from '@/lib/build/company-email'
 import { reportDeploymentHealthStage } from '@/lib/build/deployment-health'
 
@@ -279,7 +279,7 @@ export async function POST(request: NextRequest) {
   // never fail registration itself.
   if (ok) {
     isEnrolled(slug)
-      .then((already) => {
+      .then((already): unknown => {
         if (!already) return enrollCompany({ companyId: slug, companyName, track, ownerKey: ownerEmail })
         // #2089-adjacent: this company was already enrolled (e.g. from an
         // earlier anonymous registration, with no ownerKey) — a LATER
@@ -287,7 +287,16 @@ export async function POST(request: NextRequest) {
         // enrollment's stale ownerKey, or the nightly loop keeps gating
         // every per-company step on it / using the wrong scope forever.
         // See syncEnrollmentOwnerKey's doc comment for the full mechanism.
-        if (ownerEmail) return syncEnrollmentOwnerKey(slug, ownerEmail)
+        const syncs: Promise<boolean>[] = []
+        if (ownerEmail) syncs.push(syncEnrollmentOwnerKey(slug, ownerEmail))
+        // #2132/#2133-adjacent: a founder who pivots between the company and
+        // app track on a later regeneration gets THIS call's fresh `track`
+        // written straight onto the registry row, but the enrollment row
+        // (read by the nightly loop to pick its per-company branch) is never
+        // touched again after its first enrollment. See syncEnrollmentTrack's
+        // doc comment for the full mechanism.
+        syncs.push(syncEnrollmentTrack(slug, track))
+        return Promise.all(syncs)
       })
       .catch(() => {})
   }
