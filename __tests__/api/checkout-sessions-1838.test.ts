@@ -132,6 +132,10 @@ describe('POST /checkout_sessions', () => {
       const allowedHeaders = (res.headers.get('Access-Control-Allow-Headers') || '').toLowerCase()
       expect(allowedHeaders).toContain('content-type')
       expect(allowedHeaders).toContain('idempotency-key')
+      // #2183 — widened to cover the full conventional ACP header set a
+      // spec-conformant client may send, even though this route doesn't
+      // read Authorization itself today.
+      expect(allowedHeaders).toContain('authorization')
     })
 
     it('still returns the original Allow header alongside the new CORS headers', async () => {
