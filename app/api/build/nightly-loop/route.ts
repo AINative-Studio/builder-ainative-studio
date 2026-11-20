@@ -62,7 +62,7 @@ import { fetchPlanByEmail, type AdminPlanLookup } from '@/lib/ainative/admin-pla
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 import { normalizeTier } from '@/lib/ainative/plan'
 import { mapWithConcurrency, selectShard } from '@/lib/build/concurrent-map'
-import { assessSwarmHealth, readTaskStatus, MAX_TASKS_CHECKED, type SwarmHealthVerdict } from '@/lib/build/swarm-task-health'
+import { assessSwarmHealth, readTaskStatus, hoursSince, MAX_TASKS_CHECKED, STALL_SLA_HOURS, type SwarmHealthVerdict } from '@/lib/build/swarm-task-health'
 import { logger } from '@/lib/logger'
 import type { LoopEnrollment } from '@/lib/build/loop-enrollment'
 
@@ -594,13 +594,45 @@ async function runForCompany(
             { taskId: String(priorUnresolved.taskId), dispatchedAt: priorUnresolved.updatedAt },
             key,
           ).catch(() => null)
-          if (state) {
-            const realStage = stageFromSwarmStatus(state.status)
-            if (realStage !== priorUnresolved.stage) {
-              await updateTask(scopeKey, priorUnresolved.id, { stage: realStage })
-            }
-            priorStageAfterUpdate = realStage
+          const resolvedStage = state ? stageFromSwarmStatus(state.status) : null
+
+          // #2132/#2137 — core's own status endpoint reporting `unknown` (a
+          // timeout, a non-OK response, or a task_id core can no longer
+          // resolve) maps via stageFromSwarmStatus() to 'in_progress' —
+          // identical to "still genuinely running" — and a readTaskStatus
+          // failure (caught above to `null`) leaves `resolvedStage` at
+          // `null`, falling through to that same unresolved state. With no
+          // give-up, a single permanently-unresolvable task_id freezes this
+          // company's nightly backlog FOREVER: every future run re-checks
+          // the same taskId, gets the same non-answer, and step 2 below
+          // never seeds a fresh row. Confirmed live: tidemark has been stuck
+          // `in_progress` since 2026-11-15 (3+ nights and counting); wrench
+          // resumed once per #2132's own table, then froze again the very
+          // next cycle the same way — see #2132's comment thread. Give up,
+          // honestly, once the row has been unresolved for STALL_SLA_HOURS —
+          // the SAME threshold assessSwarmHealth() already uses to call this
+          // a founder-facing stall, so this isn't a new arbitrary number,
+          // and a company is never blocked past the point this codebase
+          // already considers the task dead. The founder's TasksPanel gets a
+          // real `failed` with an honest reason instead of a silent,
+          // permanent freeze, and tonight's cycle can seed fresh work
+          // instead of waiting forever on a task_id that may never resolve.
+          const stillUnresolved = resolvedStage == null || resolvedStage === 'todo' || resolvedStage === 'in_progress'
+          const priorAgeHours = hoursSince(priorUnresolved.updatedAt || priorUnresolved.createdAt || '')
+          const giveUp = stillUnresolved && priorAgeHours >= STALL_SLA_HOURS
+
+          const realStage = giveUp ? 'failed' : resolvedStage
+          if (realStage != null && realStage !== priorUnresolved.stage) {
+            await updateTask(scopeKey, priorUnresolved.id, {
+              stage: realStage,
+              ...(giveUp
+                ? {
+                    output: `Gave up after ${Math.round(priorAgeHours)}h — core's swarm status endpoint never confirmed this task finished. This task was not completed; it will need to be re-queued to retry.`,
+                  }
+                : {}),
+            })
           }
+          if (realStage != null) priorStageAfterUpdate = realStage
         }
 
         // Step 2: seed tonight's row — only once the prior one has actually
