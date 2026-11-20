@@ -17,6 +17,16 @@
 
 const SITE = 'https://builder.ainative.studio'
 
+// #2174 — same title/description text as app/page.tsx's real `metadata`
+// export (and app/opengraph-image.tsx's `alt`) — kept in sync manually, same
+// maintenance model as KNOWN_TOP_LEVEL_SEGMENTS in middleware.ts. Not
+// cross-imported from app/page.tsx because a page-level Metadata export
+// isn't meant to be pulled into a lib/ module; a real shared-constants
+// extraction covering all three call sites is a larger refactor than this
+// frontmatter fix, out of scope here.
+const HOMEPAGE_TITLE = 'AINative Builder'
+const HOMEPAGE_DESCRIPTION = 'AI that builds AND runs your company'
+
 /** Does this Accept header genuinely prefer Markdown over HTML? Mirrors real
  *  content-negotiation semantics: `text/markdown` must appear, and — when
  *  `text/html` is ALSO present — Markdown must not be strictly lower quality
@@ -37,9 +47,21 @@ export function prefersMarkdown(acceptHeader: string | null): boolean {
 }
 
 /** The homepage's Markdown representation — a compact, agent-friendly summary
- *  mirroring llms.txt's own framing so the two never contradict each other. */
+ *  mirroring llms.txt's own framing so the two never contradict each other.
+ *  #2174 — opens with a YAML frontmatter block (title/description) so a
+ *  frontmatter-aware Markdown consumer can parse structured metadata without
+ *  inferring it from the H1/body text. No `date`/`updated` field: there is
+ *  no honest per-request source for one here (a hardcoded date would go
+ *  stale; this route has no build-time commit-date value available) — per
+ *  this repo's "never fabricate" convention, omitting it is the correct
+ *  choice over inventing a timestamp. */
 export function homepageMarkdown(): string {
-  return `# AINative Builder
+  return `---
+title: ${HOMEPAGE_TITLE}
+description: ${HOMEPAGE_DESCRIPTION}
+---
+
+# AINative Builder
 
 > AI that builds AND runs your company. Describe an idea; Cody (your AI
 > co-founder) composes a real, running product or an operating AI-native

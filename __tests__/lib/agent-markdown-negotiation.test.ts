@@ -33,10 +33,31 @@ describe('prefersMarkdown (AX/agent-readiness scan, 2026-09-30)', () => {
 })
 
 describe('homepageMarkdown', () => {
-  it('returns a real, non-empty Markdown document with a top-level heading', () => {
+  it('returns a real, non-empty Markdown document with a top-level heading after its frontmatter', () => {
     const md = homepageMarkdown()
-    expect(md.startsWith('# ')).toBe(true)
+    expect(md.startsWith('---\n')).toBe(true)
+    expect(md).toMatch(/\n# /)
     expect(md.length).toBeGreaterThan(20)
+  })
+
+  // #2174 — AX agent-readiness scan: the Markdown-negotiated homepage must
+  // carry a YAML frontmatter block (structured title/description metadata),
+  // not just a bare H1. Confirms both that the block exists AND that it's
+  // genuinely parseable YAML-shaped key: value pairs, not just a string
+  // that happens to contain "title".
+  it('opens with a YAML frontmatter block carrying title/description', () => {
+    const md = homepageMarkdown()
+    const match = md.match(/^---\n([\s\S]*?)\n---\n/)
+    expect(match).toBeTruthy()
+    const frontmatter = match![1]
+    expect(frontmatter).toMatch(/^title:\s*.+$/m)
+    expect(frontmatter).toMatch(/^description:\s*.+$/m)
+  })
+
+  it('frontmatter title/description is consistent with the real homepage metadata, not a contradicting copy', () => {
+    const md = homepageMarkdown()
+    expect(md).toContain('title: AINative Builder')
+    expect(md).toContain('description: AI that builds AND runs your company')
   })
 
   it('links to the sitemap-adjacent recovery resources', () => {
