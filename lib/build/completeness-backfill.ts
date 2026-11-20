@@ -40,6 +40,22 @@
  * `findUndeclaredJsxComponents` both report that file clean, since it
  * declares no local import and uses no undeclared JSX tag; it just stops.
  *
+ * ALSO RUNS `validateJavaScriptCode()` (lib/code-validator.ts) against the
+ * current durable code (#2151). That function is the one that actually
+ * produces the public-facing "This build needs another pass" error page
+ * (app/api/preview/[id]/route.ts calls it at READ time) — but until now it
+ * was never called from any backfill/backlog path, so a company whose
+ * CURRENT generation hard-fails it (a real parse/reference error — e.g.
+ * `Reference to undefined variable 'id'`, confirmed live on company
+ * "driftly") could sit with a 100%-broken public landing page indefinitely,
+ * with no backlog task and no nightly-loop path ever noticing. The three
+ * detectors above catch structural shape problems (missing/undeclared/
+ * truncated); this catches the broader class of render-breaking defects
+ * `checkAppReady()` (lib/build/ready-gate.ts) never checked for either.
+ * `lenient: true` matches exactly what the preview route itself tolerates —
+ * a company this check flags is one real visitors see broken right now, not
+ * one that merely fails a stricter bar nothing in production enforces.
+ *
  * WHY A ONE-SHOT SWEEP AND NOT A CRON (same posture as obedience-backfill.ts)
  * There is no way to tell from this script alone whether a company's gap is
  * "new since last swept" without re-running, so this is a reviewed,
@@ -80,6 +96,7 @@ import {
   findUndeclaredJsxComponents,
   findTruncatedFiles,
 } from '@/lib/build/completeness-gate'
+import { validateJavaScriptCode } from '@/lib/code-validator'
 import { createTask, listTasksForCompany } from '@/lib/build/task-store'
 import { openIssueForNewTask } from '@/lib/build/task-resolver'
 import { chatScopeKey } from '@/lib/build/chat-store'
@@ -111,6 +128,8 @@ export interface CompletenessBackfillCompanyResult {
   missingImports?: string[]
   undeclaredJsx?: string[]
   truncatedFiles?: string[]
+  /** #2151: validateJavaScriptCode()'s error when the CURRENT durable code fails it — the same check that produces the public "This build needs another pass" page. */
+  renderError?: string
   reason?: string
 }
 
@@ -131,23 +150,39 @@ function isDeleted(app: { lifecycleStatus?: string }): boolean {
 }
 
 /** Same message shape ready-gate.ts uses for these checks, so a reviewer recognizes it instantly. */
-function firstReasonFor(missing: string[], undeclared: string[], truncated: string[]): string {
+function firstReasonFor(missing: string[], undeclared: string[], truncated: string[], renderError?: string): string {
   if (missing.length > 0) {
     return `imported local module(s) never defined in the payload: ${missing.join(', ')}`
   }
   if (undeclared.length > 0) {
     return `undeclared JSX component(s) — used but never imported: ${undeclared.join(', ')}`
   }
-  return `file(s) fail a strict parse — truncated/incomplete generation: ${truncated.join(', ')}`
+  if (truncated.length > 0) {
+    return `file(s) fail a strict parse — truncated/incomplete generation: ${truncated.join(', ')}`
+  }
+  return `generation fails validateJavaScriptCode() at render time — this is the exact check behind the public "This build needs another pass" page: ${renderError}`
 }
 
-/** Same title format as #1140/obedience-backfill.ts's createTask() calls, so idempotency matching works identically either way. */
-function taskTitleFor(firstReason: string): string {
-  return `Fix generation completeness gap: ${firstReason}`
+/**
+ * Same title format as #1140/obedience-backfill.ts's createTask() calls, so
+ * idempotency matching works identically either way. A render-breaking
+ * defect (#2151) gets its own prefix — distinct from the structural
+ * "completeness gap" shape detectors above — so a founder/resolver can tell
+ * "this payload is incomplete" apart from "this payload parses but crashes
+ * the preview right now" at a glance.
+ */
+function taskTitleFor(firstReason: string, isRenderDefect: boolean): string {
+  return isRenderDefect
+    ? `Fix generation render-breaking defect: ${firstReason}`
+    : `Fix generation completeness gap: ${firstReason}`
 }
 
-function hasOpenTaskForReason(existing: { stage: string; title: string }[], firstReason: string): boolean {
-  const title = taskTitleFor(firstReason)
+function hasOpenTaskForReason(
+  existing: { stage: string; title: string }[],
+  firstReason: string,
+  isRenderDefect: boolean,
+): boolean {
+  const title = taskTitleFor(firstReason, isRenderDefect)
   return existing.some(
     (t) => t.title === title && t.stage !== 'completed' && t.stage !== 'rejected' && t.stage !== 'failed',
   )
@@ -234,14 +269,21 @@ export async function runCompletenessBackfillSweep(
     const missing = findMissingLocalImports(code, files)
     const undeclared = findUndeclaredJsxComponents(code, files)
     const truncated = findTruncatedFiles(files)
+    // #2151: the same check that produces the live "This build needs another
+    // pass" page (app/api/preview/[id]/route.ts) — never previously run from
+    // any backfill/backlog path, so a company whose current generation
+    // hard-fails it had no automated path to a tracked repair.
+    const renderCheck = validateJavaScriptCode(code, { importsStripped: false, lenient: true })
+    const renderError = renderCheck.valid ? undefined : (renderCheck.error || 'code fails validation').slice(0, 300)
 
-    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0) {
+    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0 && !renderError) {
       record({ slug, disposition: 'clean' })
       continue
     }
 
     gapsFound++
-    const firstReason = firstReasonFor(missing, undeclared, truncated)
+    const isRenderDefect = missing.length === 0 && undeclared.length === 0 && truncated.length === 0
+    const firstReason = firstReasonFor(missing, undeclared, truncated, renderError)
 
     if (dryRun) {
       record({
@@ -250,18 +292,20 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        renderError,
       })
       continue
     }
 
     const existing = await listTasksForCompany(slug)
-    if (hasOpenTaskForReason(existing, firstReason)) {
+    if (hasOpenTaskForReason(existing, firstReason, isRenderDefect)) {
       record({
         slug,
         disposition: 'already_tracked',
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        renderError,
       })
       continue
     }
@@ -274,6 +318,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        renderError,
       })
       continue
     }
@@ -282,11 +327,12 @@ export async function runCompletenessBackfillSweep(
       ...missing.map((m) => `Missing local import definition: ${m}`),
       ...undeclared.map((u) => `Undeclared JSX component used but never imported: ${u}`),
       ...truncated.map((t) => `File fails a strict parse (truncated/incomplete generation): ${t}`),
+      ...(renderError ? [`Fails validateJavaScriptCode() at render time (visitors see "This build needs another pass"): ${renderError}`] : []),
     ]
 
     const scopeKey = chatScopeKey(app.ownerEmail || 'guest:anon', slug)
     const task = await createTask(scopeKey, {
-      title: taskTitleFor(firstReason),
+      title: taskTitleFor(firstReason, isRenderDefect),
       detail: detailLines.join('\n'),
       stage: 'todo',
       source: 'cody',
@@ -300,6 +346,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        renderError,
       })
       continue
     }
@@ -318,6 +365,7 @@ export async function runCompletenessBackfillSweep(
       missingImports: missing,
       undeclaredJsx: undeclared,
       truncatedFiles: truncated,
+      renderError,
     })
   }
 
