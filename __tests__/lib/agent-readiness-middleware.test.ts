@@ -71,7 +71,11 @@ describe('middleware — Markdown content negotiation', () => {
     expect(res.headers.get('content-type')).toContain('text/markdown')
     expect(res.headers.get('vary')).toContain('Accept')
     const body = await res.text()
-    expect(body.startsWith('# ')).toBe(true)
+    // #2174/PR #2177 — homepageMarkdown() now opens with a YAML frontmatter
+    // block before the top-level heading, so the body no longer starts with
+    // "# " directly; it still carries the heading right after the frontmatter.
+    expect(body.startsWith('---\n')).toBe(true)
+    expect(body).toMatch(/\n# /)
   })
 
   it('the homepage is unaffected (passes through normally) for a plain HTML request', async () => {
@@ -106,7 +110,9 @@ describe('middleware — ?mode=agent dedicated agent view (#1680)', () => {
     expect(res.status).toBe(200)
     expect(res.headers.get('content-type')).toContain('text/markdown')
     const body = await res.text()
-    expect(body.startsWith('# ')).toBe(true)
+    // Same frontmatter-prefixed shape as the Accept: text/markdown case above.
+    expect(body.startsWith('---\n')).toBe(true)
+    expect(body).toMatch(/\n# /)
   })
 
   it('a plain homepage request with no mode param and no markdown Accept header passes through unaffected', async () => {
