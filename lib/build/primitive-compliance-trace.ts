@@ -37,8 +37,13 @@ function configured(): boolean {
 export interface PrimitiveComplianceTraceRow {
   chatId: string
   /** Which adoption branch invoked the retry — helps distinguish the
-   *  single-file vs multi-file code paths during live verification. */
-  branch: 'non-combined' | 'combined-single-file' | 'combined-multi-file' | 'combined-rejected-fallback' | 'non-combined-repair-invalid-fallback'
+   *  single-file vs multi-file code paths during live verification.
+   *  #2135: also reused (as `visitor-tracking:<branch>`) by chat-ws's
+   *  closeVisitorTrackingGap, the same targeted-retry pattern applied to a
+   *  different gap — `gapsBefore`/`gapsAfter` disambiguate which closer
+   *  wrote a given row, so this stays a plain string rather than a
+   *  per-gap union. */
+  branch: string
   isMultiFile: boolean
   attemptsRun: number
   gapsBefore: string[]

@@ -131,8 +131,16 @@ describe('chat-ws wires the targeted primitive-compliance retry (2026-09-10, #62
   it('runs the targeted retry on the pre-repair content when the repair pass itself fails validation (non-combined branch)', () => {
     const idx = source.indexOf('const obValidation = validateGeneratedCode(obRaw)')
     expect(idx).toBeGreaterThan(-1)
-    const nearby = source.slice(idx, idx + 4500)
-    expect(nearby).toMatch(/\}\s*else if \(ob\.primitiveComplianceGaps\.length > 0\)/)
+    // #2135: window widened — the non-combined branch now also runs
+    // closeVisitorTrackingGap before reaching this else-if, pushing it
+    // further from `obValidation`'s own declaration than the original
+    // 4500-char window covered.
+    const nearby = source.slice(idx, idx + 6000)
+    // #2135: this condition now also covers ob.visitorTrackingGap (the same
+    // closeVisitorTrackingGap fallback-coverage fix applied alongside this
+    // one), so the match no longer requires `> 0` to be immediately
+    // followed by the closing paren.
+    expect(nearby).toMatch(/\}\s*else if \(ob\.primitiveComplianceGaps\.length > 0/)
     expect(nearby).toMatch(/closePrimitiveComplianceGap/)
     expect(nearby).toMatch(/'non-combined-repair-invalid-fallback'/)
   })
