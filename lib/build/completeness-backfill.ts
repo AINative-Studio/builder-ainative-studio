@@ -79,6 +79,7 @@ import {
   findMissingLocalImports,
   findUndeclaredJsxComponents,
   findTruncatedFiles,
+  findMissingDefaultExports,
 } from '@/lib/build/completeness-gate'
 import { createTask, listTasksForCompany } from '@/lib/build/task-store'
 import { openIssueForNewTask } from '@/lib/build/task-resolver'
@@ -111,6 +112,7 @@ export interface CompletenessBackfillCompanyResult {
   missingImports?: string[]
   undeclaredJsx?: string[]
   truncatedFiles?: string[]
+  missingDefaultExports?: string[]
   reason?: string
 }
 
@@ -131,14 +133,22 @@ function isDeleted(app: { lifecycleStatus?: string }): boolean {
 }
 
 /** Same message shape ready-gate.ts uses for these checks, so a reviewer recognizes it instantly. */
-function firstReasonFor(missing: string[], undeclared: string[], truncated: string[]): string {
+function firstReasonFor(
+  missing: string[],
+  undeclared: string[],
+  truncated: string[],
+  missingDefaults: string[],
+): string {
   if (missing.length > 0) {
     return `imported local module(s) never defined in the payload: ${missing.join(', ')}`
   }
   if (undeclared.length > 0) {
     return `undeclared JSX component(s) — used but never imported: ${undeclared.join(', ')}`
   }
-  return `file(s) fail a strict parse — truncated/incomplete generation: ${truncated.join(', ')}`
+  if (truncated.length > 0) {
+    return `file(s) fail a strict parse — truncated/incomplete generation: ${truncated.join(', ')}`
+  }
+  return `local module(s) imported as a default export but never export one: ${missingDefaults.join(', ')}`
 }
 
 /** Same title format as #1140/obedience-backfill.ts's createTask() calls, so idempotency matching works identically either way. */
@@ -234,14 +244,15 @@ export async function runCompletenessBackfillSweep(
     const missing = findMissingLocalImports(code, files)
     const undeclared = findUndeclaredJsxComponents(code, files)
     const truncated = findTruncatedFiles(files)
+    const missingDefaults = findMissingDefaultExports(files)
 
-    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0) {
+    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0 && missingDefaults.length === 0) {
       record({ slug, disposition: 'clean' })
       continue
     }
 
     gapsFound++
-    const firstReason = firstReasonFor(missing, undeclared, truncated)
+    const firstReason = firstReasonFor(missing, undeclared, truncated, missingDefaults)
 
     if (dryRun) {
       record({
@@ -250,6 +261,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
       })
       continue
     }
@@ -262,6 +274,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
       })
       continue
     }
@@ -274,6 +287,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
       })
       continue
     }
@@ -282,6 +296,7 @@ export async function runCompletenessBackfillSweep(
       ...missing.map((m) => `Missing local import definition: ${m}`),
       ...undeclared.map((u) => `Undeclared JSX component used but never imported: ${u}`),
       ...truncated.map((t) => `File fails a strict parse (truncated/incomplete generation): ${t}`),
+      ...missingDefaults.map((d) => `Local module imported as a default export but never exports one: ${d}`),
     ]
 
     const scopeKey = chatScopeKey(app.ownerEmail || 'guest:anon', slug)
@@ -300,6 +315,7 @@ export async function runCompletenessBackfillSweep(
         missingImports: missing,
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
+        missingDefaultExports: missingDefaults,
       })
       continue
     }
@@ -318,6 +334,7 @@ export async function runCompletenessBackfillSweep(
       missingImports: missing,
       undeclaredJsx: undeclared,
       truncatedFiles: truncated,
+      missingDefaultExports: missingDefaults,
     })
   }
 

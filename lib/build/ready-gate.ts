@@ -27,6 +27,7 @@ import {
   findMissingLocalImports,
   findUndeclaredJsxComponents,
   findTruncatedFiles,
+  findMissingDefaultExports,
   findDuplicateLandmarkElements,
 } from '@/lib/build/completeness-gate'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
@@ -205,6 +206,27 @@ export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
       ok: false,
       reason: 'truncated_file',
       error: `Truncated generation: file(s) cut off mid-stream, never finished: ${truncated.join(', ')}`,
+    }
+  }
+
+  // DEFAULT-EXPORT MISMATCH GATE: a default import whose target file exists
+  // and is otherwise complete, but never actually exports a default (e.g.
+  // `export function Foo()` with no `export default`). Invisible to every
+  // gate above — they only check "is the file present"/"is the identifier
+  // defined somewhere," never "does the module export what this import
+  // needs." Left unfixed, `<Foo/>` renders `undefined` and React throws
+  // "Element type is invalid" live. Same 422 retry path as the other
+  // completeness gates.
+  const missingDefaults = findMissingDefaultExports(stored.files ?? undefined)
+  if (missingDefaults.length > 0) {
+    return {
+      checked: true,
+      ok: false,
+      // Same reason code isRenderable() already maps a live "Element type is
+      // invalid" render failure to (lib/code-validator.ts) — this gate just
+      // catches it statically, before that crash ever has a chance to happen.
+      reason: 'unresolved_component',
+      error: `Local module imported as a default export but never exports one: ${missingDefaults.join(', ')}`,
     }
   }
 
