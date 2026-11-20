@@ -436,6 +436,34 @@ function App(){
     expect(hasFakeLeadCaptureGap('function App(){return <div>hi</div>}')).toBe(false)
   })
 
+  // Real, live false-negative found 2026-11-18 (driftly): the injected shadcn
+  // `<Input>` wrapper (lib/sandpack/shadcn-bundle.ts) never defaults a `type`
+  // prop, so a generation that uses it without passing `type="email"` through
+  // has NO `type` attribute on the real rendered `<input>` at all — only an
+  // email-shaped placeholder gives it away.
+  const FAKE_SUBMITTED_FLAG_NO_TYPE_ATTR = `
+function App(){
+  const [email, setEmail] = useState('')
+  const [submitted, setSubmitted] = useState(false)
+  const handleSubmit = (val) => {
+    if (val.trim()) { setSubmitted(true); setTimeout(()=>setSubmitted(false), 3000); setEmail('') }
+  }
+  return (<Input placeholder="you@startup.com" value={email} onChange={e=>setEmail(e.target.value)} onSubmit={() => handleSubmit(email)} />)
+}`
+
+  it('THE BUG (driftly, 2026-11-18): flags a fake lead-capture form with an email-shaped placeholder but no type="email" attribute at all', () => {
+    expect(hasFakeLeadCaptureGap(FAKE_SUBMITTED_FLAG_NO_TYPE_ATTR)).toBe(true)
+  })
+
+  it('does NOT treat a placeholder with a bare "@" and no domain-shaped suffix as an email input (e.g. an @mention field)', () => {
+    const code = `
+function App(){
+  const handleSubmit = (e) => { setSubmitted(true) }
+  return (<input placeholder="@username" onSubmit={handleSubmit} />)
+}`
+    expect(hasFakeLeadCaptureGap(code)).toBe(false)
+  })
+
   it('checkObedience surfaces fakeLeadCaptureGap and a reason string', () => {
     const r = checkObedience(FAKE_ALERT, 'a B2B SaaS landing page')
     expect(r.fakeLeadCaptureGap).toBe(true)
