@@ -40,20 +40,40 @@
  * — it is never read as "no scope restriction" (same parser and the same
  * reasoning as scripts/backfill-zerodb-keys.ts; see
  * scripts/backfill-zerodb-keys-args.ts's doc comment).
+ *
+ * #2126-class gap closed for this sweep too — `--showcase` runs a SEPARATE
+ * sweep (`runShowcaseCompletenessBackfillSweep`, same file) against
+ * anonymous/unregistered showcase generations instead of the registry —
+ * these never go through `registerApp()` so the default sweep above
+ * structurally cannot see them, even though `/showcase` links real visitors
+ * to their live `/build/{slug}` pages. Mirrors
+ * `scripts/backfill-obedience-gate-tasks.ts --showcase` exactly. `--only`
+ * scopes it the same way, by the showcase's own synthesized slug (e.g.
+ * `wallkind-z4nabG`).
+ *
+ *   Dry run (whole showcase):  npx tsx scripts/backfill-completeness-gate-tasks.ts --showcase
+ *   Real run (one entry):      npx tsx scripts/backfill-completeness-gate-tasks.ts --showcase --only wallkind-z4nabG --apply
  */
 
 export {}
 
-import { runCompletenessBackfillSweep, MAX_TASKS_FILED_PER_RUN } from '../lib/build/completeness-backfill'
+import {
+  runCompletenessBackfillSweep,
+  runShowcaseCompletenessBackfillSweep,
+  MAX_TASKS_FILED_PER_RUN,
+} from '../lib/build/completeness-backfill'
 import { parseBackfillArgs, BackfillArgsError } from './backfill-zerodb-keys-args'
 
 async function main() {
+  const showcase = process.argv.includes('--showcase')
+  const label = showcase ? 'backfill-completeness-gate-tasks:showcase' : 'backfill-completeness-gate-tasks'
+
   let args
   try {
-    args = parseBackfillArgs(process.argv.slice(2))
+    args = parseBackfillArgs(process.argv.slice(2).filter((a) => a !== '--showcase'))
   } catch (e) {
     if (e instanceof BackfillArgsError) {
-      console.error(`[backfill-completeness-gate-tasks] ${e.message}`)
+      console.error(`[${label}] ${e.message}`)
       process.exit(1)
     }
     throw e
@@ -61,23 +81,24 @@ async function main() {
 
   const dryRun = !args.apply
   console.log(
-    `[backfill-completeness-gate-tasks] ${dryRun ? 'DRY RUN' : 'REAL RUN'}` +
-      (args.onlySlugs.length ? ` — scoped to: ${args.onlySlugs.join(', ')}` : ' — whole registry') +
+    `[${label}] ${dryRun ? 'DRY RUN' : 'REAL RUN'}` +
+      (args.onlySlugs.length ? ` — scoped to: ${args.onlySlugs.join(', ')}` : showcase ? ' — whole showcase' : ' — whole registry') +
       ` (cap: ${MAX_TASKS_FILED_PER_RUN} tasks/run)`,
   )
 
-  const result = await runCompletenessBackfillSweep({ dryRun, onlySlugs: args.onlySlugs })
+  const sweep = showcase ? runShowcaseCompletenessBackfillSweep : runCompletenessBackfillSweep
+  const result = await sweep({ dryRun, onlySlugs: args.onlySlugs })
 
   if (!result.registryOk) {
-    console.error('[backfill-completeness-gate-tasks] company registry read failed — nothing was checked.')
+    console.error(`[${label}] ${showcase ? 'generation list' : 'company registry'} read failed — nothing was checked.`)
     process.exit(1)
   }
 
   console.log(
-    `[backfill-completeness-gate-tasks] checked=${result.checked} gapsFound=${result.gapsFound} ` +
+    `[${label}] checked=${result.checked} gapsFound=${result.gapsFound} ` +
       `tasksFiled=${result.tasksFiled} failed=${result.failed}`,
   )
-  console.log('[backfill-completeness-gate-tasks] by disposition:', JSON.stringify(result.byDisposition, null, 2))
+  console.log(`[${label}] by disposition:`, JSON.stringify(result.byDisposition, null, 2))
 
   for (const r of result.results) {
     if (r.disposition === 'clean' || r.disposition === 'no_chat_id') continue
@@ -89,7 +110,7 @@ async function main() {
 
   if (dryRun && result.gapsFound > 0) {
     console.log(
-      `\n[backfill-completeness-gate-tasks] ${result.gapsFound} compan${result.gapsFound === 1 ? 'y' : 'ies'} ` +
+      `\n[${label}] ${result.gapsFound} compan${result.gapsFound === 1 ? 'y' : 'ies'} ` +
         'with an unresolved gap. Re-run with --apply to file backlog tasks for them.',
     )
   }

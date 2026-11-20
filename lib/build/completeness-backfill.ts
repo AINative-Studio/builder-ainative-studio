@@ -73,8 +73,8 @@
  * disproved.
  */
 
-import { listAllAppsWithStatus, type AppEntry } from '@/lib/build/app-registry'
-import { loadGeneration } from '@/lib/zerodb-store'
+import { listAllAppsWithStatus, resolveAppVerified, type AppEntry } from '@/lib/build/app-registry'
+import { loadGeneration, listGenerations } from '@/lib/zerodb-store'
 import {
   findMissingLocalImports,
   findUndeclaredJsxComponents,
@@ -83,6 +83,8 @@ import {
 import { createTask, listTasksForCompany } from '@/lib/build/task-store'
 import { openIssueForNewTask } from '@/lib/build/task-resolver'
 import { chatScopeKey } from '@/lib/build/chat-store'
+import { generateSlug, looksLikeUnsubstitutedPlaceholder, extractShowcaseTitle } from '@/lib/showcase-data'
+import { isQualityApp } from '@/lib/showcase-quality'
 
 /** Same posture as MAX_TASKS_FILED_PER_RUN in obedience-backfill.ts. */
 export const MAX_TASKS_FILED_PER_RUN = 50
@@ -310,6 +312,238 @@ export async function runCompletenessBackfillSweep(
     // a filed task is still a real win even if this fails or the company has
     // no gitOrg yet.
     void openIssueForNewTask(scopeKey, app.gitOrg, slug, task)
+
+    tasksFiled++
+    record({
+      slug,
+      disposition: 'filed_task',
+      missingImports: missing,
+      undeclaredJsx: undeclared,
+      truncatedFiles: truncated,
+    })
+  }
+
+  return {
+    ok: true,
+    dryRun,
+    registryOk: true,
+    checked,
+    gapsFound,
+    tasksFiled,
+    failed,
+    byDisposition,
+    results,
+  }
+}
+
+/**
+ * Showcase-scoped completeness sweep (overnight render/dashboard-integrity
+ * loop finding, mirroring #2126's `runShowcaseObedienceBackfillSweep` in
+ * obedience-backfill.ts exactly).
+ *
+ * THE GAP: `runCompletenessBackfillSweep()` above only iterates
+ * `listAllAppsWithStatus()` — i.e. companies that went through
+ * `registerApp()`. But `/showcase` (app/api/showcase/route.ts) independently
+ * lists generations straight from `listGenerations()` and synthesizes a
+ * display slug for ANY generation passing `isQualityApp()` — including a
+ * fully anonymous, never-registered, never-claimed chat session (confirmed
+ * live, #2126: 82% of showcase entries match this unregistered pattern).
+ * That synthesized slug gets its own real, public, linkable `/build/{slug}`
+ * page, but is structurally invisible to the registry sweep above — so a
+ * real `findTruncatedFiles()`-class truncation bug (#2013/#2119: a component
+ * file that got cut off mid-generation, parses as valid-but-returnless, or
+ * fails a strict parse outright) on one of these unregistered pages has NO
+ * remediation path, ever, no matter how many times the registry sweep runs.
+ *
+ * Confirmed live (overnight loop, this finding): two unregistered-looking
+ * showcase entries — `wallkind-z4nabG` (`/src/components/LeadsPanel.tsx`,
+ * an exported component function with zero `return`/JSX — the exact
+ * #2119 "export-patched but still-returnless" shape) and
+ * `a-game-that-helps-students-get-cyber-security-PRBKNy`
+ * (`/src/components/PhishingSimulator.tsx`, same shape) — both trip the
+ * real `findTruncatedFiles()` detector today. Today's live Sandpack preview
+ * for both is NOT currently broken: `lib/sandpack/build-files.ts`'s
+ * `stubTruncatedFiles()` already wholesale-replaces any truncated file with
+ * a trivial stub before Sandpack ever sees it (#2022) — so this is the same
+ * "real bug, no live-preview crash, but no remediation path either" shape
+ * #2143 found for the unrelated metadata-gate class.
+ *
+ * Exactly mirrors `runShowcaseObedienceBackfillSweep()`'s eligibility gate,
+ * slug synthesis, already-registered skip, and scope-key convention — see
+ * that function's own doc comment in obedience-backfill.ts for the full
+ * reasoning (anonymous `guest:anon` scope key, no-op Gitea issue creation
+ * until/unless the generation is later claimed and provisioned, etc.).
+ *
+ * SAFETY: identical posture to every sweep in this file/obedience-backfill.ts
+ * — dry-run by default, idempotent per reason, capped per run, and a
+ * `listGenerations()` read that comes back empty is reported as
+ * `registryOk: false` rather than "nothing to check."
+ */
+export async function runShowcaseCompletenessBackfillSweep(
+  opts: { dryRun?: boolean; onlySlugs?: string[] } = {},
+): Promise<CompletenessBackfillSweepResult> {
+  const dryRun = opts.dryRun !== false
+  const only = (opts.onlySlugs || []).map((s) => (s || '').trim()).filter(Boolean)
+  const onlySet = only.length ? new Set(only) : null
+
+  const empty = (registryOk: boolean): CompletenessBackfillSweepResult => ({
+    ok: true,
+    dryRun,
+    registryOk,
+    checked: 0,
+    gapsFound: 0,
+    tasksFiled: 0,
+    failed: 0,
+    byDisposition: {},
+    results: [],
+  })
+
+  let rows: any[]
+  try {
+    rows = await listGenerations(1000)
+  } catch {
+    rows = []
+  }
+  if (!Array.isArray(rows) || rows.length === 0) {
+    console.error(
+      '[completeness-backfill:showcase] ABORTED — generation list read returned nothing. ' +
+        'listGenerations() never throws and falls back to a stale cache on failure, so an ' +
+        'empty result here cannot be told apart from a real read failure; re-run rather than ' +
+        'treating this as "no showcase-eligible generations exist".',
+    )
+    return empty(false)
+  }
+
+  const results: CompletenessBackfillCompanyResult[] = []
+  const byDisposition: Record<string, number> = {}
+  let checked = 0
+  let gapsFound = 0
+  let tasksFiled = 0
+  let failed = 0
+
+  const record = (r: CompletenessBackfillCompanyResult) => {
+    results.push(r)
+    byDisposition[r.disposition] = (byDisposition[r.disposition] || 0) + 1
+  }
+
+  for (const r of rows) {
+    const chatId = String(r?.chat_id || '').trim()
+    const code = r?.generated_code || ''
+    // Same eligibility gate /showcase applies before an entry is ever
+    // surfaced/synthesized a slug at all.
+    if (r?.is_showcase === false) continue
+    if (!isQualityApp(code, chatId)) continue
+    const title = r?.title || extractShowcaseTitle(r?.prompt || '')
+    if (looksLikeUnsubstitutedPlaceholder(title)) continue
+
+    const slug = `${generateSlug(title)}-${chatId.slice(0, 6)}`
+    if (onlySet && !onlySet.has(slug)) continue
+
+    // Skip anything that already resolves to a real registry entry — that
+    // company is the OTHER sweep's job (runCompletenessBackfillSweep above);
+    // double-checking it here would risk filing a duplicate task under a
+    // DIFFERENT scope key (guest:anon vs. the company's real ownerEmail).
+    const { entry, verified } = await resolveAppVerified(slug).catch(() => ({ entry: null, verified: false }))
+    if (!verified) {
+      record({ slug, disposition: 'no_code', reason: 'could not verify registry status' })
+      continue
+    }
+    if (entry) continue
+
+    let gen: Awaited<ReturnType<typeof loadGeneration>>
+    try {
+      gen = await loadGeneration(chatId)
+    } catch (e: any) {
+      record({ slug, disposition: 'no_code', reason: String(e?.message || e).slice(0, 160) })
+      continue
+    }
+    const fullCode = gen?.generatedCode || code
+    if (!fullCode.trim()) {
+      record({ slug, disposition: 'no_code' })
+      continue
+    }
+
+    checked++
+
+    const files = gen?.files ?? undefined
+    const missing = findMissingLocalImports(fullCode, files)
+    const undeclared = findUndeclaredJsxComponents(fullCode, files)
+    const truncated = findTruncatedFiles(files)
+
+    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0) {
+      record({ slug, disposition: 'clean' })
+      continue
+    }
+
+    gapsFound++
+    const firstReason = firstReasonFor(missing, undeclared, truncated)
+
+    if (dryRun) {
+      record({
+        slug,
+        disposition: 'would_file_task',
+        missingImports: missing,
+        undeclaredJsx: undeclared,
+        truncatedFiles: truncated,
+      })
+      continue
+    }
+
+    const scopeKey = chatScopeKey('guest:anon', slug)
+    const existing = await listTasksForCompany(slug)
+    if (hasOpenTaskForReason(existing, firstReason)) {
+      record({
+        slug,
+        disposition: 'already_tracked',
+        missingImports: missing,
+        undeclaredJsx: undeclared,
+        truncatedFiles: truncated,
+      })
+      continue
+    }
+
+    if (tasksFiled >= MAX_TASKS_FILED_PER_RUN) {
+      record({
+        slug,
+        disposition: 'capped',
+        reason: `per-run cap of ${MAX_TASKS_FILED_PER_RUN} reached — re-run to continue`,
+        missingImports: missing,
+        undeclaredJsx: undeclared,
+        truncatedFiles: truncated,
+      })
+      continue
+    }
+
+    const detailLines = [
+      ...missing.map((m) => `Missing local import definition: ${m}`),
+      ...undeclared.map((u) => `Undeclared JSX component used but never imported: ${u}`),
+      ...truncated.map((t) => `File fails a strict parse (truncated/incomplete generation): ${t}`),
+    ]
+
+    const task = await createTask(scopeKey, {
+      title: taskTitleFor(firstReason),
+      detail: detailLines.join('\n'),
+      stage: 'todo',
+      source: 'cody',
+    }).catch(() => null)
+
+    if (!task) {
+      failed++
+      record({
+        slug,
+        disposition: 'file_failed',
+        missingImports: missing,
+        undeclaredJsx: undeclared,
+        truncatedFiles: truncated,
+      })
+      continue
+    }
+
+    // There is no app.gitOrg for an unregistered generation —
+    // openIssueForNewTask() already treats an absent gitOrg as "not
+    // git-provisioned yet" and no-ops, same as the registry sweep's own
+    // un-provisioned-company case.
+    void openIssueForNewTask(scopeKey, undefined, slug, task)
 
     tasksFiled++
     record({
