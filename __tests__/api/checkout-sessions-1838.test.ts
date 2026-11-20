@@ -117,4 +117,27 @@ describe('POST /checkout_sessions', () => {
 
     expect(res.status).toBe(502)
   })
+
+  // #2173 — AX agent-readiness scan: a CORS preflight to this route must
+  // advertise the real headers a cross-origin caller is allowed to send, not
+  // just the bare `Allow` method list a non-CORS client would read.
+  describe('OPTIONS (#2173 CORS preflight)', () => {
+    it('advertises Access-Control-Allow-Origin/Methods/Headers', async () => {
+      const { OPTIONS } = await import('@/app/checkout_sessions/route')
+      const res = await OPTIONS()
+
+      expect(res.status).toBe(204)
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*')
+      expect(res.headers.get('Access-Control-Allow-Methods')).toContain('POST')
+      const allowedHeaders = (res.headers.get('Access-Control-Allow-Headers') || '').toLowerCase()
+      expect(allowedHeaders).toContain('content-type')
+      expect(allowedHeaders).toContain('idempotency-key')
+    })
+
+    it('still returns the original Allow header alongside the new CORS headers', async () => {
+      const { OPTIONS } = await import('@/app/checkout_sessions/route')
+      const res = await OPTIONS()
+      expect(res.headers.get('Allow')).toBe('POST, OPTIONS')
+    })
+  })
 })
