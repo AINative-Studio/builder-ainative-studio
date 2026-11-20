@@ -86,6 +86,7 @@ export function StandalonePreviewFrame({ chatId, slug, title, dbToken, dbOrigin 
           onTimeout={() => setSandpackTimedOut(true)}
           dbToken={dbToken}
           dbOrigin={dbOrigin}
+          chatId={chatId}
         />
       </div>
     )

@@ -182,9 +182,16 @@ interface SandpackPreviewProps {
    *  client-side Preview.tsx case, documented as a fast-follow). */
   dbToken?: string
   dbOrigin?: string
+  /** #2135 — the generation's chatId, forwarded into buildSandpackFiles()'s
+   *  shim so it can also fire a deterministic visitor-tracking beacon (see
+   *  lib/sandpack/db-token-shim.ts's doc comment). Optional, same as
+   *  dbToken/dbOrigin — omit for a caller with no server-side chatId
+   *  binding (e.g. the standalone preview page), which renders exactly as
+   *  before #2135 (no beacon injected). */
+  chatId?: string
 }
 
-export function SandpackPreview({ files, theme = 'light', className, showRefreshButton = true, timeoutMs, onTimeout, dbToken, dbOrigin }: SandpackPreviewProps) {
+export function SandpackPreview({ files, theme = 'light', className, showRefreshButton = true, timeoutMs, onTimeout, dbToken, dbOrigin, chatId }: SandpackPreviewProps) {
   // Build the final Sandpack files map (builtins + generated files, path
   // normalization, /App.tsx entry assembly, React/AIKit/shadcn/lucide
   // import-injection safety nets, final de-dupe) via the shared pipeline in
@@ -194,7 +201,7 @@ export function SandpackPreview({ files, theme = 'light', className, showRefresh
   // actually does).
   const sandpackFiles = buildSandpackFiles(
     files,
-    dbToken && dbOrigin ? { origin: dbOrigin, dbToken } : undefined,
+    dbToken && dbOrigin ? { origin: dbOrigin, dbToken, chatId } : undefined,
   )
   const { usesLucideReact, usesRecharts, usesStripeJs, usesA2UI } = detectSandpackDependencies(sandpackFiles)
 
