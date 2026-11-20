@@ -64,6 +64,29 @@ describe('POST /agentic_commerce/delegate_payment', () => {
     expect(fetchMock).not.toHaveBeenCalled()
     expect(res.status).toBe(502)
   })
+
+  // #2173 — AX agent-readiness scan: this route previously had NO OPTIONS
+  // handler at all, so a cross-origin CORS preflight failed before the real
+  // POST was ever attempted.
+  describe('OPTIONS (#2173 CORS preflight)', () => {
+    it('advertises Access-Control-Allow-Origin/Methods/Headers', async () => {
+      const { OPTIONS } = await import('@/app/agentic_commerce/delegate_payment/route')
+      const res = await OPTIONS()
+
+      expect(res.status).toBe(204)
+      expect(res.headers.get('Access-Control-Allow-Origin')).toBe('*')
+      expect(res.headers.get('Access-Control-Allow-Methods')).toContain('POST')
+      const allowedHeaders = (res.headers.get('Access-Control-Allow-Headers') || '').toLowerCase()
+      expect(allowedHeaders).toContain('content-type')
+      expect(allowedHeaders).toContain('idempotency-key')
+    })
+
+    it('returns an Allow header alongside the CORS headers', async () => {
+      const { OPTIONS } = await import('@/app/agentic_commerce/delegate_payment/route')
+      const res = await OPTIONS()
+      expect(res.headers.get('Allow')).toBe('POST, OPTIONS')
+    })
+  })
 })
 
 /**

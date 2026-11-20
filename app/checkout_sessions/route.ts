@@ -30,14 +30,19 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { signAcpRequest, isAcpSigningConfigured } from '@/lib/build/acp-signature'
+import { ACP_CORS_HEADERS } from '@/lib/build/acp-cors'
 
 export const runtime = 'nodejs'
 
 const CORE_BASE = process.env.AINATIVE_API_BASE_URL || 'https://api.ainative.studio'
 const UPSTREAM_PATH = '/checkout_sessions'
 
+// #2173 — the preflight response now advertises the real CORS headers a
+// cross-origin caller needs (Allow-Origin/Methods/Headers), not just the
+// bare `Allow` header a non-CORS client would read. See acp-cors.ts's doc
+// comment for exactly why these values (not a guessed/generic list).
 export async function OPTIONS() {
-  return new NextResponse(null, { status: 204, headers: { Allow: 'POST, OPTIONS' } })
+  return new NextResponse(null, { status: 204, headers: { Allow: 'POST, OPTIONS', ...ACP_CORS_HEADERS } })
 }
 
 export async function POST(request: NextRequest) {

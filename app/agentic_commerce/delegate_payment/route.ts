@@ -15,11 +15,20 @@
 
 import { NextRequest, NextResponse } from 'next/server'
 import { signAcpRequest, isAcpSigningConfigured } from '@/lib/build/acp-signature'
+import { ACP_CORS_HEADERS } from '@/lib/build/acp-cors'
 
 export const runtime = 'nodejs'
 
 const CORE_BASE = process.env.AINATIVE_API_BASE_URL || 'https://api.ainative.studio'
 const UPSTREAM_PATH = '/agentic_commerce/delegate_payment'
+
+// #2173 — this route had NO OPTIONS handler at all, so a cross-origin
+// caller's CORS preflight failed before the real POST request was ever
+// attempted. See app/checkout_sessions/route.ts's sibling OPTIONS handler
+// and lib/build/acp-cors.ts's doc comment for why these exact header values.
+export async function OPTIONS() {
+  return new NextResponse(null, { status: 204, headers: { Allow: 'POST, OPTIONS', ...ACP_CORS_HEADERS } })
+}
 
 export async function POST(request: NextRequest) {
   if (!isAcpSigningConfigured()) {
