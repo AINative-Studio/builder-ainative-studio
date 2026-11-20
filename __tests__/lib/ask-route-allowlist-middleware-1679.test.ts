@@ -48,4 +48,15 @@ describe('middleware /api/ask allowlist (#1679)', () => {
     const res = await middleware(apiReq('/api/some-protected-route'))
     expect(res.status).toBe(401)
   })
+
+  // #2170 — /ask (root path, NLWeb convention) is not under /api/ at all, so
+  // it never goes through the session-gate branch above in the first place.
+  // Confirms it isn't accidentally caught by protectedPaths or redirected to
+  // /login the way a genuinely-unknown top-level path used to be.
+  it('does NOT redirect a tokenless GET /ask to /login', async () => {
+    const res = await middleware(apiReq('/ask?query=hello', 'GET'))
+    expect(res.status).not.toBe(401)
+    const location = res.headers.get('location')
+    expect(location === null || !location.includes('/login')).toBe(true)
+  })
 })

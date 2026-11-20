@@ -91,9 +91,36 @@ const spec = {
       },
     },
     '/ask': {
+      get: {
+        operationId: 'askBuilderGet',
+        summary: 'NLWeb-convention conversational endpoint (root path per nlweb.ai): ask a question about AINative Builder itself, grounded in curated docs/FAQ. Set Accept: text/event-stream for an SSE stream of the same answer (meta/result/answer/done events); otherwise a single JSON response.',
+        security: [],
+        parameters: [
+          { name: 'query', in: 'query', required: false, schema: { type: 'string' }, description: 'The question. `question` is accepted as an alias.' },
+          { name: 'question', in: 'query', required: false, schema: { type: 'string' } },
+        ],
+        responses: {
+          '200': {
+            description: 'NLWeb-shaped grounded answer, or an SSE stream of the same content when Accept: text/event-stream is sent.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    _meta: { type: 'object', properties: { query: { type: 'string' }, timestamp: { type: 'string', format: 'date-time' } } },
+                    results: { type: 'array', items: { type: 'object', properties: { '@type': { type: 'string' }, url: { type: 'string' }, name: { type: 'string' } } } },
+                    answer: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Missing query/question parameter.' },
+        },
+      },
       post: {
-        operationId: 'askBuilder',
-        summary: 'NLWeb-convention conversational endpoint: ask a question about AINative Builder itself (what it does, pricing, how it works), grounded in curated docs/FAQ — not an LLM free-generating uncited claims',
+        operationId: 'askBuilderPost',
+        summary: 'Same as GET /ask, via a JSON body instead of query params. Non-streaming only.',
         security: [],
         requestBody: {
           required: true,
@@ -101,7 +128,45 @@ const spec = {
             'application/json': {
               schema: {
                 type: 'object',
-                required: ['question'],
+                properties: {
+                  query: { type: 'string', description: 'The question (NLWeb-convention field name). `question` is accepted as an alias.' },
+                  question: { type: 'string' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': {
+            description: 'NLWeb-shaped grounded answer.',
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  properties: {
+                    _meta: { type: 'object', properties: { query: { type: 'string' }, timestamp: { type: 'string', format: 'date-time' } } },
+                    results: { type: 'array', items: { type: 'object', properties: { '@type': { type: 'string' }, url: { type: 'string' }, name: { type: 'string' } } } },
+                    answer: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          '400': { description: 'Missing query/question field.' },
+        },
+      },
+    },
+    '/api/ask': {
+      post: {
+        operationId: 'askBuilderLegacy',
+        summary: 'Legacy flat-shaped alias of the same grounded-answer logic as GET/POST /ask, kept unchanged for existing callers — prefer /ask for new integrations (NLWeb-standard path + response shape).',
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
                 properties: {
                   question: { type: 'string', description: 'Also accepts `query` as an alias.' },
                 },
@@ -111,7 +176,7 @@ const spec = {
         },
         responses: {
           '200': {
-            description: 'Grounded answer with cited sources.',
+            description: 'Grounded answer with cited sources (flat shape).',
             content: {
               'application/json': {
                 schema: {
