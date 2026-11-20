@@ -788,6 +788,101 @@ function findLandmarkElements(content: string): LandmarkMatch[] {
   return out
 }
 
+/**
+ * THE SHADCN-FROM-LUCIDE MISIMPORT DETECTOR (#2185).
+ *
+ * Repro: showcase company "me" (chatId I_OCP4xBZI-gHBRtWT4Iy, 2026-11-04 —
+ * recent, not legacy pre-gate data): `import { Button, Card, CardHeader,
+ * ..., Dialog, DialogOverlay, ... } from 'lucide-react'`. 'lucide-react' is
+ * a real, correctly-allowlisted npm dependency (lib/sandpack/jsx-fixer.ts's
+ * ALLOWLISTED_PACKAGE_ROOTS) — but it is exclusively an ICON set. It has no
+ * Button/Card/Dialog/Select/etc. exports; the real versions of those
+ * components live locally at './components/ui/*' (lib/sandpack/
+ * shadcn-bundle.ts, injected into every Sandpack sandbox). Every other
+ * detector in this file only reasons about LOCAL specifiers
+ * (isLocalSpecifier()) — isRuntimeProvided(), findMissingLocalImports(),
+ * findMissingDefaultExports() all skip a bare package specifier like
+ * 'lucide-react' entirely, so a model that hallucinates these shadcn names
+ * onto an allowlisted REAL package sails through every one of them
+ * unflagged: the package resolves fine, it's simply missing the requested
+ * named export, which ES module interop resolves to `undefined` rather than
+ * a build-time error. React then throws "Element type is invalid" the
+ * instant the undefined binding renders as a JSX tag.
+ *
+ * SHADCN_COMPOUND_NAMES is deliberately restricted to COMPOUND,
+ * sub-component-shaped names (CardHeader, DialogOverlay, SelectTrigger, …)
+ * — never a bare single-concept name a real lucide icon could plausibly
+ * share (`Badge` and `Table` are BOTH real lucide-react icons too;
+ * importing them from 'lucide-react' is entirely legitimate icon usage, not
+ * a UI-kit mixup, so they are deliberately left OUT even though
+ * shadcn-bundle.ts also exports same-named UI components). A compound name
+ * like `DialogOverlay` or `AccordionTrigger` has no realistic lucide-icon
+ * counterpart, so a single match is already strong evidence, not a guess.
+ */
+const SHADCN_COMPOUND_NAMES = new Set([
+  'CardHeader', 'CardTitle', 'CardDescription', 'CardContent', 'CardFooter',
+  'DialogOverlay', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter', 'DialogTrigger', 'DialogClose',
+  'TabsList', 'TabsTrigger', 'TabsContent',
+  'SelectTrigger', 'SelectContent', 'SelectItem', 'SelectValue',
+  'RadioGroupItem', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
+  'AlertTitle', 'AlertDescription',
+  'PopoverTrigger', 'PopoverContent',
+  'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuSeparator', 'DropdownMenuLabel',
+  'TooltipTrigger', 'TooltipContent', 'TooltipProvider',
+  'AvatarImage', 'AvatarFallback',
+  'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell',
+  'CircularProgress', 'ScrollArea', 'ScrollBar',
+])
+
+/**
+ * Named-import external specifiers requested from `moduleSpecifier` (e.g.
+ * `import { A, B as C } from 'lucide-react'` → `['A', 'B']` — the EXTERNAL
+ * name requested, before any `as` rename, since that's what determines
+ * whether the package actually exports it). Ignores `import type { ... }`
+ * (erased at runtime) and default/namespace specifiers (not this
+ * detector's concern). Scans comment-masked source, same as
+ * parseLocalImports() above.
+ */
+function parseNamedImportsFromPackage(rawCode: string, moduleSpecifier: string): string[] {
+  const code = maskComments(rawCode)
+  const esc = moduleSpecifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  const re = new RegExp(`import\\s+(?!type\\s)(?:[\\w$]+\\s*,\\s*)?\\{([^}]*)\\}\\s*from\\s*['"]${esc}['"]`, 'g')
+  const names: string[] = []
+  let m: RegExpExecArray | null
+  while ((m = re.exec(code)) !== null) {
+    for (const raw of m[1].split(',')) {
+      const s = raw.trim()
+      if (!s || /^type\s/.test(s)) continue
+      const external = s.split(/\s+as\s+/)[0].trim()
+      if (/^[A-Za-z_$][\w$]*$/.test(external)) names.push(external)
+    }
+  }
+  return names
+}
+
+/**
+ * Returns the shadcn compound component names (e.g. `['Dialog', 'CardHeader']`
+ * — reports the OFFENDING NAME, not the clause) found imported from
+ * 'lucide-react' across the payload. Never throws; a file this detector
+ * can't evaluate is left unflagged, not reported broken — same fail-open
+ * posture as every other pure detector in this file.
+ */
+export function findShadcnComponentsImportedFromLucide(files?: Record<string, string>): string[] {
+  if (!files || Object.keys(files).length === 0) return []
+  try {
+    const hits = new Set<string>()
+    for (const [path, content] of Object.entries(files)) {
+      if (!CODE_FILE.test(path) || typeof content !== 'string') continue
+      for (const name of parseNamedImportsFromPackage(content, 'lucide-react')) {
+        if (SHADCN_COMPOUND_NAMES.has(name)) hits.add(name)
+      }
+    }
+    return [...hits]
+  } catch {
+    return []
+  }
+}
+
 /** One flagged duplicate-landmark problem. */
 export interface DuplicateLandmark {
   /** The landmark role that appears more than once (e.g. 'sidebar'). */

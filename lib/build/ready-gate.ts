@@ -27,6 +27,7 @@ import {
   findMissingLocalImports,
   findUndeclaredJsxComponents,
   findTruncatedFiles,
+  findShadcnComponentsImportedFromLucide,
   findDuplicateLandmarkElements,
 } from '@/lib/build/completeness-gate'
 import { flattenMultiFile } from '@/lib/build/flatten-multifile'
@@ -205,6 +206,25 @@ export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
       ok: false,
       reason: 'truncated_file',
       error: `Truncated generation: file(s) cut off mid-stream, never finished: ${truncated.join(', ')}`,
+    }
+  }
+
+  // SHADCN-FROM-LUCIDE MISIMPORT GATE (#2185): a shadcn UI primitive
+  // (Button/Card/Dialog/...) imported from the real 'lucide-react' icon
+  // package instead of the local './components/ui/*' bundle. The package
+  // itself resolves fine (it's a real, allowlisted dependency), so every
+  // gate above is blind to this — they only reason about LOCAL specifiers.
+  // The requested named export simply doesn't exist on 'lucide-react',
+  // which resolves to `undefined` at runtime and throws "Element type is
+  // invalid" the instant it renders — same reason code isRenderable()
+  // already maps that live crash to; this gate just catches it statically.
+  const shadcnFromLucide = findShadcnComponentsImportedFromLucide(stored.files ?? undefined)
+  if (shadcnFromLucide.length > 0) {
+    return {
+      checked: true,
+      ok: false,
+      reason: 'unresolved_component',
+      error: `shadcn UI component(s) imported from 'lucide-react' (icon-only package, no such export): ${shadcnFromLucide.join(', ')}`,
     }
   }
 
