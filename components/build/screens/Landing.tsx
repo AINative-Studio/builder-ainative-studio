@@ -378,6 +378,16 @@ export function Landing() {
           the first-customer outreach plan — no code, no software background
           needed either way.
         </p>
+        {/* #2172 — AX agent-readiness scan: states the real anonymous/
+            claim-later mechanism (app/api/build/provision/route.ts's tmp_
+            trial key, ~24h expiry + claim token, #1579/#1602) in plain,
+            crawlable language — this exact capability was already documented
+            in public/auth.md, just never stated on the homepage itself. */}
+        <p style={{ fontSize: 18, lineHeight: 1.5, maxWidth: '60ch', marginTop: 16 }}>
+          No account required to start — build anonymously first, and claim
+          your project later when you're ready to upgrade. Nothing is lost
+          in between.
+        </p>
       </section>
 
       {/* footer */}

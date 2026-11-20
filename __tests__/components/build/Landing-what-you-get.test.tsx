@@ -38,4 +38,14 @@ describe('Landing — what you get + physical business framing (#BLD-11)', () =>
     render(React.createElement(Landing))
     expect(host.textContent).toMatch(/bakery|gym|landscaping|local business/i)
   })
+
+  // #2172 — AX agent-readiness scan: the real anonymous-build + claim-later
+  // capability (already documented in public/auth.md) must also appear in
+  // plain, crawlable language on the homepage itself, not just that one
+  // static file.
+  it('states the real anonymous-build / claim-later capability (#2172)', () => {
+    render(React.createElement(Landing))
+    expect(host.textContent).toMatch(/no account required/i)
+    expect(host.textContent).toMatch(/claim/i)
+  })
 })
