@@ -59,4 +59,13 @@ describe('middleware /api/ask allowlist (#1679)', () => {
     const location = res.headers.get('location')
     expect(location === null || !location.includes('/login')).toBe(true)
   })
+
+  // #2182 — /mcp (root path, MCP JSON-RPC server) is not under /api/
+  // either, same reasoning as /ask above.
+  it('does NOT redirect a tokenless POST /mcp to /login', async () => {
+    const res = await middleware(apiReq('/mcp', 'POST'))
+    expect(res.status).not.toBe(401)
+    const location = res.headers.get('location')
+    expect(location === null || !location.includes('/login')).toBe(true)
+  })
 })

@@ -20,7 +20,7 @@ const KNOWN_TOP_LEVEL_SEGMENTS = new Set([
   'ask', 'autonomous-company-builder', 'best', 'billing', 'build', 'capabilities',
   'chats', 'compare', 'context-budget-demo', 'demo', 'deployments',
   'design-tokens', 'docs', 'evidence', 'guides', 'health', 'help', 'insights',
-  'login', 'preview', 'pricing', 'privacy', 'profile', 'projects', 'refer',
+  'login', 'mcp', 'preview', 'pricing', 'privacy', 'profile', 'projects', 'refer',
   'register', 'reset-password', 'settings', 'showcase', 'storybook',
   'templates', 'terms', 'test-components',
 ])
