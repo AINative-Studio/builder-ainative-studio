@@ -1112,6 +1112,50 @@ export async function listAllAppsWithStatus(): Promise<{ apps: AppEntry[]; ok: b
 }
 
 /**
+ * The sibling read to listAllAppsWithStatus() for the one cohort that read
+ * structurally excludes (#2156): registry rows with NO chatId at all.
+ *
+ * listAllAppsWithStatus() filters to `!!rd?.chatId` by design -- every other
+ * caller (registration-reconcile's sweep, winback-email, loop-backfill, ...)
+ * needs a chatId to do anything, so a chatId-less row is correctly invisible
+ * to them. But that means a company like "flo" (real registry row, real
+ * nightly-loop enrollment, `chatId: null`) is invisible to EVERY health
+ * signal in this codebase: registration-reconcile's own `no_chat_id` early
+ * return (registration-reconcile.ts) can never fire during the sweep, because
+ * the row never reaches it. Confirmed live, #2156: flo has been
+ * nightly-loop-enrolled for 24+ days with nothing for any pipeline to act on.
+ *
+ * This performs the SAME latest-row-per-slug collapse as listAllAppsWithStatus
+ * (so a slug whose most recent row already has a real chatId is correctly
+ * excluded, even if an older row for that slug once had none), just inverting
+ * the final chatId filter. Read-only; used by
+ * lib/build/stale-enrollment-detector.ts to cross-reference against nightly
+ * loop enrollment, not by any mutating sweep.
+ */
+export async function listRegistryEntriesMissingChatId(): Promise<{ apps: AppEntry[]; ok: boolean }> {
+  if (!configured()) return { apps: [], ok: false }
+  try {
+    const { rows, ok } = await fetchAllRegistryRows()
+    if (!ok) return { apps: [], ok: false }
+    const entries: AppEntry[] = rows
+      .map((r: { row_data?: AppEntry }) => r.row_data)
+      .filter((rd: AppEntry | undefined): rd is AppEntry => !!rd?.slug)
+    const latest = new Map<string, AppEntry>()
+    for (const e of entries) {
+      const prev = latest.get(e.slug)
+      if (!prev || (e.createdAt || '').localeCompare(prev.createdAt || '') > 0) latest.set(e.slug, e)
+    }
+    const live = Array.from(latest.values())
+      .filter((e) => (e.lifecycleStatus || 'active') !== 'deleted')
+      .filter((e) => !e.chatId)
+    return { apps: live, ok: true }
+  } catch (e) {
+    console.error('[app-registry] listRegistryEntriesMissingChatId threw:', e)
+    return { apps: [], ok: false }
+  }
+}
+
+/**
  * Persist the active subscription plan on a company (#241), mirroring
  * setAppDomain. Appends an updated row carrying the existing chatId + brand
  * (and any domain/provisioning) plus the new plan, so resolveApp() (latest-wins)
