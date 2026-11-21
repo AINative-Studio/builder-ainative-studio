@@ -129,7 +129,8 @@ async function main() {
   )
 
   let clean = 0
-  let stillBroken = 0
+  let selfHealed = 0
+  let confirmedBroken = 0
   let errored = 0
 
   for (const company of TRACKED_COMPANIES) {
@@ -144,14 +145,31 @@ async function main() {
         continue
       }
 
+      // #2198: result.selfHealed is only about missingImports/truncatedFiles
+      // — a raw structural defect that lib/sandpack/build-files.ts's real
+      // self-heal pipeline (stubTruncatedFiles/stubMissingLocalComponents)
+      // already repairs before Sandpack ever renders it, so it's a real
+      // generation-quality gap worth the completeness-backfill sweep, but
+      // NOT a live render-breaking crash. validateJavaScriptCode's
+      // undefined-reference/parse-error check is a separate signal this
+      // re-check does NOT re-verify against the self-healed pipeline, so a
+      // validationError always counts as still-confirmed-broken here rather
+      // than risk the same false-clean mistake in the other direction.
       if (result.clean) {
         clean++
         console.log(`${prefix} CLEAN — re-verify and consider updating the tracking issue`)
-      } else {
-        stillBroken++
+      } else if (result.selfHealed && !result.validationError) {
+        clean++
         console.log(
-          `${prefix} STILL BROKEN missingImports=${JSON.stringify(result.missingImports)} ` +
-            `truncatedFiles=${JSON.stringify(result.truncatedFiles)} ` +
+          `${prefix} RAW DEFECT, SELF-HEALED — not a live crash (missingImports=` +
+            `${JSON.stringify(result.missingImports)} truncatedFiles=${JSON.stringify(result.truncatedFiles)}); ` +
+            `feeds the completeness-backfill sweep, not a render-breaking claim`,
+        )
+      } else {
+        confirmedBroken++
+        console.log(
+          `${prefix} CONFIRMED RENDER-BREAKING builtMissingImports=${JSON.stringify(result.builtMissingImports)} ` +
+            `builtTruncatedFiles=${JSON.stringify(result.builtTruncatedFiles)} ` +
             `validationError=${result.validationError ? JSON.stringify(result.validationError) : 'null'}`,
         )
       }
@@ -163,7 +181,7 @@ async function main() {
   }
 
   console.log(
-    `[recheck-known-render-issues] summary: clean=${clean} stillBroken=${stillBroken} ` +
+    `[recheck-known-render-issues] summary: clean=${clean} confirmedRenderBreaking=${confirmedBroken} ` +
       `errored=${errored} total=${TRACKED_COMPANIES.length}`,
   )
 }

@@ -63,6 +63,46 @@ describe('checkRenderHealth', () => {
     expect(result.truncatedFiles).toEqual([])
     expect(result.validationError).toContain('sensorReadings')
     expect(result.clean).toBe(false)
+    // Not a missingImports/truncatedFiles-class defect, so the self-heal
+    // check has nothing to report either way.
+    expect(result.confirmedRenderBreaking).toBe(false)
+    expect(result.selfHealed).toBe(false)
+  })
+
+  // #2198: this loop found two already-open issues (#2195 "dispatch",
+  // #2169 "silo"/f4k20l) that claimed "confirmed render-breaking" from a raw
+  // missingImports/truncatedFiles hit alone, when main's real
+  // buildSandpackFiles() pipeline (stubMissingLocalComponents/
+  // stubTruncatedFiles) already repairs both before Sandpack ever renders
+  // them. These two cases pin that exact repro shape so this distinction
+  // can never silently regress.
+  it('reports selfHealed:true and confirmedRenderBreaking:false for a missing import the real pipeline stubs (the #2159/#2169 dispatch/silo shape)', () => {
+    const files = {
+      '/src/App.tsx': `import Footer from './components/Footer'\nexport default function App() {\n  return <div><Footer /></div>\n}`,
+    }
+    const result = checkRenderHealth(files)
+    // Unchanged raw-detector behavior — still a real generation-quality gap.
+    expect(result.missingImports).toContain('./components/Footer')
+    expect(result.clean).toBe(false)
+    // But buildSandpackFiles() synthesizes a safe stub at the resolved path,
+    // so this never reaches a real visitor as a crash.
+    expect(result.builtMissingImports).toEqual([])
+    expect(result.selfHealed).toBe(true)
+    expect(result.confirmedRenderBreaking).toBe(false)
+  })
+
+  it('reports selfHealed:true and confirmedRenderBreaking:false for a truncated file the real pipeline stubs (the #2195 Pricing.tsx shape)', () => {
+    const files = {
+      '/src/App.tsx': `import Pricing from './components/Pricing'\nexport default function App() {\n  return <div><Pricing /></div>\n}`,
+      // Real repro: cut off right after the one hook call, no JSX, no return.
+      '/src/components/Pricing.tsx': `import React, { useState } from 'react'\nexport default function Pricing() {\n  const [annual, setAnnual] = useState(true);\n}`,
+    }
+    const result = checkRenderHealth(files)
+    expect(result.truncatedFiles).toContain('/src/components/Pricing.tsx')
+    expect(result.clean).toBe(false)
+    expect(result.builtTruncatedFiles).toEqual([])
+    expect(result.selfHealed).toBe(true)
+    expect(result.confirmedRenderBreaking).toBe(false)
   })
 })
 
