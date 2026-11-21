@@ -110,6 +110,20 @@ export const ContactFormSection = () => {
     expect(findTruncatedFiles(files)).toEqual(['/src/components/ContactFormSection.tsx'])
   })
 
+  it('does not flag stubTruncatedFiles()\'s own safe `() => null` stub when re-scanned post-build (overnight loop repro, luminary ContactFormSection.tsx after self-heal)', () => {
+    const files = {
+      '/src/components/ContactFormSection.tsx': `import React from 'react'\n// Auto-stubbed (#2022): this generated file was cut off mid-generation and failed to parse.\nexport const ContactFormSection = () => null\n`,
+    }
+    expect(findTruncatedFiles(files)).toEqual([])
+  })
+
+  it('still flags a block-bodied arrow with no return/JSX (the real SIGNAL 3 case stays caught)', () => {
+    const files = {
+      '/src/components/Broken.tsx': `import React from 'react'\nexport const Broken = () => {\n  const x = 1\n}\n`,
+    }
+    expect(findTruncatedFiles(files)).toEqual(['/src/components/Broken.tsx'])
+  })
+
   it('does not flag a finished .tsx component that implicitly returns JSX with no explicit `return` keyword', () => {
     const files = {
       '/src/components/Footer.tsx': `const Footer = () => (\n  <footer className="site-footer">Real footer</footer>\n)\nexport default Footer`,
