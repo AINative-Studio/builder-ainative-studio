@@ -27,6 +27,32 @@ import { getBuiltinFiles } from '../sandpack/setup'
 const CODE_FILE = /\.(t|j)sx?$/
 
 /**
+ * Next.js App Router special files (`app/robots.ts`, `app/sitemap.ts`,
+ * `app/layout.tsx`, `app/**\/route.ts`, …) live alongside a company's
+ * Sandpack-bound `src/` component tree in the persisted `files` map (the
+ * AEO/SEO primitives added since #2170-#2180), but they are ONLY consumed by
+ * the separate Railway/Gitea deploy path (`lib/build/company-scaffold.ts`) —
+ * never by `buildSandpackFiles()` (confirmed: no `app/` reference anywhere in
+ * `lib/sandpack/build-files.ts`) and never by `flattenMultiFile()`'s
+ * App.tsx-reachability walk (`app/api/preview/[id]/route.ts`'s single-file
+ * preview only inlines what App.tsx actually imports — `app/robots.ts` isn't
+ * one of its local imports). So they are excluded here too: this blob exists
+ * to mirror what that real preview-time `validateJavaScriptCode()` call
+ * actually validates.
+ *
+ * Real false-positive found live this run (overnight render-integrity loop):
+ * without this exclusion, `ridgeline`/`shingle`'s real `app/robots.ts`
+ * (`export default function robots(): MetadataRoute.Robots`) and
+ * `app/sitemap.ts` (`changeFrequency: 'weekly' as const`) — ordinary,
+ * correct Next.js TypeScript, never fed through this plain-JS-oriented
+ * validator in production — got concatenated into the blob and threw a
+ * catastrophic "Unexpected token" parse error, which this module's
+ * `validationError` field then reported as if it were a real live-crash
+ * finding for two genuinely healthy companies.
+ */
+const APP_ROUTER_FILE = /^\/?app\//
+
+/**
  * Reassemble a parsed `files` map into the `// --- FILE: path ---`-marked
  * blob `findUndefinedReferences()`/`validateJavaScriptCode()` (via
  * lib/code-validator.ts's FILE_MARKER) and `completeness-gate.ts`'s own
@@ -36,7 +62,10 @@ const CODE_FILE = /\.(t|j)sx?$/
  */
 export function buildFileMarkerBlob(files: Record<string, string>): string {
   return Object.entries(files)
-    .filter(([path, content]) => CODE_FILE.test(path) && !path.endsWith('.d.ts') && typeof content === 'string')
+    .filter(
+      ([path, content]) =>
+        CODE_FILE.test(path) && !path.endsWith('.d.ts') && !APP_ROUTER_FILE.test(path) && typeof content === 'string',
+    )
     .map(([path, content]) => `// --- FILE: ${path.replace(/^\//, '')} ---\n${content}`)
     .join('\n\n')
 }
