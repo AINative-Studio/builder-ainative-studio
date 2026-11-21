@@ -1458,7 +1458,19 @@ function stubTruncatedFiles(sandpackFiles: Record<string, string>, builtinPaths:
     }
     for (const named of needs.namedExports) {
       if (!/^[A-Za-z_$][\w$]*$/.test(named)) continue
-      lines.push(`export const ${named} = () => null`)
+      // Real bug found this run (overnight render-integrity loop, #2198's
+      // audit of 'luminary'/ContactFormSection.tsx): an implicit-return arrow
+      // (`() => null`, no `return` keyword, no JSX) is EXACTLY the shape
+      // SIGNAL 3 above (findTruncatedFiles) was written to catch — a
+      // component-shaped file that parses, has a real export, but never
+      // reaches a `return`/JSX. This stub is intentionally complete, not
+      // truncated, but re-running findTruncatedFiles() against this
+      // function's OWN output (as a self-heal-verification pass naturally
+      // would) misread its own safety net as still-broken. An explicit
+      // `return null` inside a block body satisfies SIGNAL 3's `\breturn\b`
+      // check with zero behavior change for Sandpack/React, which doesn't
+      // care whether a null return is implicit or explicit.
+      lines.push(`export const ${named} = () => { return null }`)
     }
     sandpackFiles[path] = lines.join('\n') + '\n'
   }
@@ -1558,7 +1570,11 @@ function stubMissingLocalComponents(sandpackFiles: Record<string, string>): void
     // observed so each one resolves to an inert component too.
     for (const named of needs.namedExports) {
       if (!/^[A-Za-z_$][\w$]*$/.test(named)) continue
-      lines.push(`export const ${named} = () => null`)
+      // Same fix as stubTruncatedFiles()'s own named-export branch above —
+      // an explicit `return null` can't be misread by SIGNAL 3
+      // (findTruncatedFiles) as an unfinished component the way an
+      // implicit-return `() => null` can.
+      lines.push(`export const ${named} = () => { return null }`)
     }
     sandpackFiles[stubPath] = lines.join('\n') + '\n'
   }

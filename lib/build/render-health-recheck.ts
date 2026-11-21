@@ -21,6 +21,8 @@
 
 import { findMissingLocalImports, findTruncatedFiles } from './completeness-gate'
 import { validateJavaScriptCode } from '../code-validator'
+import { buildSandpackFiles } from '../sandpack/build-files'
+import { getBuiltinFiles } from '../sandpack/setup'
 
 const CODE_FILE = /\.(t|j)sx?$/
 
@@ -48,6 +50,33 @@ export interface RenderHealthResult {
   validationError: string | null
   /** True only when hasFilesMap and every check below passed. */
   clean: boolean
+  /**
+   * #2198 — missingImports/truncatedFiles above describe the RAW persisted
+   * generation; they say nothing about what a real visitor's browser
+   * actually receives, because `main` runs every raw file through
+   * lib/sandpack/build-files.ts's `buildSandpackFiles()` before Sandpack
+   * ever sees it, and that pipeline self-heals exactly these two defect
+   * classes (stubTruncatedFiles(), stubMissingLocalComponents()) by
+   * replacing a truncated file / synthesizing a missing one with an inert
+   * `return null` stub. A raw hit that disappears after that pipeline runs
+   * is a real generation-quality defect worth feeding the completeness-
+   * backfill sweep, but it is NOT a live render-breaking crash — conflating
+   * the two produced false "confirmed render-breaking" claims for #2169's
+   * `silo`/`f4k20l` companies and #2159's `dispatch`/footer repro (corrected
+   * via comment in #2198, not re-filed).
+   *
+   * builtMissingImports/builtTruncatedFiles are the same two raw detectors
+   * re-run against `buildSandpackFiles(files)`'s output instead of the raw
+   * `files` map. `confirmedRenderBreaking` is true only when a raw defect
+   * exists AND survives self-heal — i.e. a REAL gap in the self-heal nets,
+   * worth its own issue per #2198's own suggested framing. `selfHealed` is
+   * true when a raw defect existed but every one of it was repaired by the
+   * time it reaches the real pipeline.
+   */
+  builtMissingImports: string[]
+  builtTruncatedFiles: string[]
+  confirmedRenderBreaking: boolean
+  selfHealed: boolean
 }
 
 /**
@@ -64,7 +93,17 @@ export interface RenderHealthResult {
  */
 export function checkRenderHealth(files: Record<string, string> | undefined): RenderHealthResult {
   if (!files || Object.keys(files).length === 0) {
-    return { hasFilesMap: false, missingImports: [], truncatedFiles: [], validationError: null, clean: false }
+    return {
+      hasFilesMap: false,
+      missingImports: [],
+      truncatedFiles: [],
+      validationError: null,
+      clean: false,
+      builtMissingImports: [],
+      builtTruncatedFiles: [],
+      confirmedRenderBreaking: false,
+      selfHealed: false,
+    }
   }
 
   const appEntry = Object.entries(files).find(([path]) => /App\.(t|j)sx?$/.test(path))
@@ -79,5 +118,39 @@ export function checkRenderHealth(files: Record<string, string> | undefined): Re
 
   const clean = missingImports.length === 0 && truncatedFiles.length === 0 && validation.valid
 
-  return { hasFilesMap: true, missingImports, truncatedFiles, validationError, clean }
+  // #2198: re-run the same two raw detectors against what actually reaches
+  // a visitor's browser (self-healed), not the raw persisted files, so a
+  // defect this pipeline already repairs is never reported as a confirmed
+  // live crash. Fail-open to the raw result (same "pure detector never
+  // blocks on its own failure" philosophy as completeness-gate.ts) if the
+  // real pipeline itself throws on this payload — that's its own, separate
+  // finding, not something this re-check should hide a crash behind.
+  let builtMissingImports = missingImports
+  let builtTruncatedFiles = truncatedFiles
+  try {
+    const built = buildSandpackFiles(files)
+    const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
+    const builtAppCode = built['/App.tsx'] ?? primaryCode
+    builtMissingImports = findMissingLocalImports(builtAppCode, built)
+    builtTruncatedFiles = findTruncatedFiles(built).filter((p) => !builtinPaths.has(p))
+  } catch {
+    // leave builtMissingImports/builtTruncatedFiles at the raw fallback above
+  }
+
+  const hadRawDefect = missingImports.length > 0 || truncatedFiles.length > 0
+  const survivesSelfHeal = builtMissingImports.length > 0 || builtTruncatedFiles.length > 0
+  const confirmedRenderBreaking = hadRawDefect && survivesSelfHeal
+  const selfHealed = hadRawDefect && !survivesSelfHeal
+
+  return {
+    hasFilesMap: true,
+    missingImports,
+    truncatedFiles,
+    validationError,
+    clean,
+    builtMissingImports,
+    builtTruncatedFiles,
+    confirmedRenderBreaking,
+    selfHealed,
+  }
 }
