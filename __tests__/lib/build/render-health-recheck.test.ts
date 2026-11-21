@@ -128,4 +128,37 @@ describe('buildFileMarkerBlob', () => {
   it('returns an empty string for a files map with no code files', () => {
     expect(buildFileMarkerBlob({ '/src/styles.css': 'body {}' })).toBe('')
   })
+
+  // Overnight render-integrity loop, live false-positive confirmed against
+  // 'ridgeline' and 'shingle': app/robots.ts and app/sitemap.ts are ordinary,
+  // valid Next.js App Router TypeScript (return-type annotations, `as const`)
+  // that this plain-JS-oriented validator was never meant to parse, and
+  // production never feeds them through it either — only the separate
+  // Railway/Gitea deploy path (company-scaffold.ts) ever reads them.
+  // Concatenating them into the same blob as the Sandpack component tree
+  // threw a catastrophic "Unexpected token" parse error for two companies
+  // with nothing actually wrong with their generation.
+  it('excludes Next.js App Router special files (app/robots.ts, app/sitemap.ts, app/layout.tsx) from the blob', () => {
+    const blob = buildFileMarkerBlob({
+      '/src/App.tsx': 'export default function App() { return null }',
+      '/app/robots.ts': "export default function robots(): MetadataRoute.Robots { return { rules: [] } }",
+      '/app/sitemap.ts': "export default function sitemap(): MetadataRoute.Sitemap { return [{ url: 'https://x', changeFrequency: 'weekly' as const, priority: 1 }] }",
+      '/app/layout.tsx': 'export default function RootLayout({ children }: { children: React.ReactNode }) { return <html><body>{children}</body></html> }',
+    })
+    expect(blob).toContain('App.tsx')
+    expect(blob).not.toContain('robots.ts')
+    expect(blob).not.toContain('sitemap.ts')
+    expect(blob).not.toContain('layout.tsx')
+    expect(blob).not.toContain('MetadataRoute')
+  })
+
+  it('checkRenderHealth no longer reports a validationError for a real company whose only "defect" is a correct app/sitemap.ts using `as const`', () => {
+    const files = {
+      '/src/App.tsx': 'export default function App() { return null }',
+      '/app/sitemap.ts':
+        "import { MetadataRoute } from 'next'\nexport default function sitemap(): MetadataRoute.Sitemap {\n  return [{ url: 'https://this.app/', changeFrequency: 'weekly' as const, priority: 1 }]\n}",
+    }
+    const result = checkRenderHealth(files)
+    expect(result.validationError).toBeNull()
+  })
 })
