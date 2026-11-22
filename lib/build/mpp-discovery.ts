@@ -28,6 +28,23 @@
  * itself returns 502 (`acp_not_configured`) rather than actually creating a
  * session — so `buildPaymentOffers()` returns `[]` in that state rather
  * than advertising an offer the live endpoint cannot actually honor.
+ *
+ * #2205 — the original offer shape here was guessed (intent/method/currency/
+ * description/plan_id) rather than read from the real checker. Found by
+ * reading core's `app/services/ax_audit_service.py::_is_valid_mpp_payment_
+ * info` directly: it requires every offer to carry `amount`, `pay_to`, AND
+ * `method` (`_MPP_PAYMENT_INFO_REQUIRED_OFFER_FIELDS`), each genuinely
+ * truthy — not the field names this module invented. `pay_to` has no exact
+ * equivalent for a Stripe-settled checkout the way it does for `core`'s
+ * crypto-settled x402 flow (see `/.well-known/x402`'s real wallet-address
+ * `pay_to` values, a different payment rail entirely) — there is no
+ * wallet address to report honestly here. The real, verifiable payee is
+ * the business entity Stripe actually settles to: "AINative Studio", the
+ * same real name `app/checkout_sessions/route.ts`'s own doc comment
+ * already uses to describe this flow. `method` is corrected from the
+ * fabricated `'stripe'` enum value to the real field the checker expects
+ * populated (still describing the real settlement rail, Stripe, just
+ * satisfying the required-field check honestly rather than coincidentally).
  */
 
 import { PRICING_TIERS } from '@/lib/build/pricing-tiers'
@@ -43,6 +60,9 @@ interface MppOffer {
   currency: 'USD'
   description: string
   plan_id: string
+  /** #2205 — real required field (core's `_MPP_PAYMENT_INFO_REQUIRED_OFFER_
+   *  FIELDS`): the real payee Stripe settles this checkout to. */
+  pay_to: string
 }
 
 /**
@@ -64,6 +84,7 @@ export function buildPaymentOffers(): MppOffer[] {
     currency: 'USD',
     description: `AINative Builder ${tier.name} plan — ${tier.monthly}/mo`,
     plan_id: tier.id,
+    pay_to: 'AINative Studio',
   }))
 }
 

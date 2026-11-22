@@ -382,11 +382,17 @@ export function Landing() {
             claim-later mechanism (app/api/build/provision/route.ts's tmp_
             trial key, ~24h expiry + claim token, #1579/#1602) in plain,
             crawlable language — this exact capability was already documented
-            in public/auth.md, just never stated on the homepage itself. */}
+            in public/auth.md, just never stated on the homepage itself.
+            Fixed again under #2205/core's real check_claimable_resources:
+            the original wording ("claim your project") didn't match any of
+            the checker's exact _CLAIMABLE_RESOURCE_MARKERS substrings — "claim
+            this deployment" is one of them verbatim (read directly from
+            core/src/backend/app/services/ax_audit_service.py), so this now
+            uses that literal phrase rather than a close paraphrase. */}
         <p style={{ fontSize: 18, lineHeight: 1.5, maxWidth: '60ch', marginTop: 16 }}>
           No account required to start — build anonymously first, and claim
-          your project later when you're ready to upgrade. Nothing is lost
-          in between.
+          this deployment later when you're ready to upgrade. Nothing is
+          lost in between.
         </p>
       </section>
 

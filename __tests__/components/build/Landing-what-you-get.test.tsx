@@ -48,4 +48,13 @@ describe('Landing — what you get + physical business framing (#BLD-11)', () =>
     expect(host.textContent).toMatch(/no account required/i)
     expect(host.textContent).toMatch(/claim/i)
   })
+
+  // #2205 — core's real check_claimable_resources only matches a fixed,
+  // literal substring list (_CLAIMABLE_RESOURCE_MARKERS), not "claim" +
+  // any nearby word. Pin the exact phrase so a future copy edit can't
+  // silently drift away from what the real checker actually matches again.
+  it('uses an exact-match claimable-resource phrase the real AX checker recognizes (#2205)', () => {
+    render(React.createElement(Landing))
+    expect(host.textContent?.toLowerCase()).toContain('claim this deployment')
+  })
 })
