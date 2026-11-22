@@ -3,7 +3,7 @@ import { describe, it, expect, vi, beforeAll, beforeEach, afterEach } from 'vite
 import React from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { act } from 'react'
-import { WebMcpTools } from '@/components/webmcp-tools'
+import { WebMcpTools, CompanyWebMcpTools, companyWebMcpSsrBootstrap } from '@/components/webmcp-tools'
 
 beforeAll(() => {
   ;(globalThis as any).React = React
@@ -127,5 +127,66 @@ describe('WebMcpTools', () => {
 
     expect(unregisterTool).toHaveBeenCalledWith('list_capabilities')
     expect(unregisterTool).toHaveBeenCalledWith('start_build')
+  })
+})
+
+describe('CompanyWebMcpTools (#2207)', () => {
+  const info = { slug: 'wrench', name: 'Wrench', tagline: 'From job site to paid.', idea: 'A field service app.' }
+
+  it('registers get_company_info and build_your_own, not the homepage tools', () => {
+    const registerTool = vi.fn()
+    ;(document as any).modelContext = { registerTool, unregisterTool: vi.fn(), getTools: vi.fn(async () => []) }
+
+    render(<CompanyWebMcpTools info={info} />)
+
+    const names = registerTool.mock.calls.map((call) => call[0].name)
+    expect(names).toEqual(['get_company_info', 'build_your_own'])
+  })
+
+  it('get_company_info returns the real company data passed in, not generic Builder copy', async () => {
+    render(<CompanyWebMcpTools info={info} />)
+
+    const tools = await document.modelContext!.getTools()
+    const getCompanyInfo = tools.find((t) => t.name === 'get_company_info')
+    const result = await getCompanyInfo!.execute({})
+
+    expect(result).toEqual(info)
+  })
+
+  it('every tool carries a readOnlyHint annotation', async () => {
+    render(<CompanyWebMcpTools info={info} />)
+    const tools = await document.modelContext!.getTools()
+    for (const tool of tools) {
+      expect(tool.annotations?.readOnlyHint).toBe(true)
+    }
+  })
+
+  it('unregisters its tools on unmount', () => {
+    const unregisterTool = vi.fn()
+    ;(document as any).modelContext = { registerTool: vi.fn(), unregisterTool, getTools: vi.fn(async () => []) }
+
+    render(<CompanyWebMcpTools info={info} />)
+    act(() => { root.unmount() })
+
+    expect(unregisterTool).toHaveBeenCalledWith('get_company_info')
+    expect(unregisterTool).toHaveBeenCalledWith('build_your_own')
+  })
+})
+
+describe('companyWebMcpSsrBootstrap (#2207)', () => {
+  it('embeds the real company info as JSON, not a placeholder', () => {
+    const src = companyWebMcpSsrBootstrap({ slug: 'wrench', name: 'Wrench', tagline: 'From job site to paid.' })
+    expect(src).toContain('"name":"Wrench"')
+    expect(src).toContain('"slug":"wrench"')
+    expect(src).toContain('get_company_info')
+    expect(src).toContain('build_your_own')
+    expect(src).not.toContain('start_build')
+    expect(src).not.toContain('list_capabilities')
+  })
+
+  it('is syntactically valid JS (does not throw when executed)', () => {
+    const src = companyWebMcpSsrBootstrap({ slug: 'wrench', name: 'Wrench' })
+    const fn = new Function(src)
+    expect(() => fn()).not.toThrow()
   })
 })

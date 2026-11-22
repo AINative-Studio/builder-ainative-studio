@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { prefersMarkdown, homepageMarkdown, notFoundMarkdown } from '@/lib/agent-markdown-negotiation'
+import { prefersMarkdown, homepageMarkdown, notFoundMarkdown, companyMarkdown } from '@/lib/agent-markdown-negotiation'
 
 describe('prefersMarkdown (AX/agent-readiness scan, 2026-09-30)', () => {
   it('is false with no Accept header', () => {
@@ -81,6 +81,32 @@ describe('homepageMarkdown', () => {
     // 1/4 of that to be a genuine token-efficiency win, not just a different
     // format of the same bloat.
     expect(md.length).toBeLessThan(10_000)
+  })
+})
+
+describe('companyMarkdown (#2205)', () => {
+  it('uses the real company name and tagline, not generic Builder brand copy', () => {
+    const md = companyMarkdown('wrench', 'Wrench', 'From job site to paid — on autopilot.')
+    expect(md.startsWith('---\n')).toBe(true)
+    expect(md).toMatch(/\n# Wrench\b/)
+    expect(md).toContain('From job site to paid — on autopilot.')
+    expect(md).not.toContain('AI that builds AND runs your company')
+  })
+
+  it('falls back to idea text when no tagline is set', () => {
+    const md = companyMarkdown('wrench', 'Wrench', undefined, 'A field service scheduling app.')
+    expect(md).toContain('A field service scheduling app.')
+  })
+
+  it('falls back to a generic sentence when neither tagline nor idea is set', () => {
+    const md = companyMarkdown('wrench', 'Wrench')
+    expect(md).toContain('Wrench, built and run on AINative.')
+  })
+
+  it('links to the live company URL and its own llms.txt', () => {
+    const md = companyMarkdown('wrench', 'Wrench')
+    expect(md).toContain('https://builder.ainative.studio/build/wrench')
+    expect(md).toContain('https://builder.ainative.studio/build/wrench/llms.txt')
   })
 })
 
