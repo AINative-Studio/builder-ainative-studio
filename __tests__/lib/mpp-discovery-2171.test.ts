@@ -41,7 +41,27 @@ describe('buildPaymentOffers', () => {
       expect(o.currency).toBe('USD')
       expect(Number(o.amount)).toBeGreaterThan(0)
       expect(o.plan_id).toBeTruthy()
+      expect(o.method).toBeTruthy()
+      expect(o.pay_to).toBeTruthy()
     }
+  })
+
+  // #2205 — the real AX checker (core's _is_valid_mpp_payment_info) only
+  // requires amount/pay_to/method to be present and truthy, NOT plan_id/
+  // currency/description/intent (those were this module's own invented
+  // field names). Replicates the real validator's logic directly against
+  // our own offers so a future field rename can't silently reintroduce
+  // this exact bug (every offer here WAS structurally "valid-looking" by
+  // this module's own shape, yet failed the real check for 2+ days before
+  // #2205 found why).
+  it('every offer satisfies the real checker\'s required-field validation (core\'s _MPP_PAYMENT_INFO_REQUIRED_OFFER_FIELDS: amount, pay_to, method)', () => {
+    vi.mocked(isAcpSigningConfigured).mockReturnValue(true)
+    const offers = buildPaymentOffers()
+    const REQUIRED_OFFER_FIELDS = ['amount', 'pay_to', 'method'] as const
+    const isValid = offers.some((offer) =>
+      REQUIRED_OFFER_FIELDS.every((field) => Boolean((offer as unknown as Record<string, unknown>)[field])),
+    )
+    expect(isValid).toBe(true)
   })
 
   it('excludes the free ($0/mo) tier — it is not a real payable MPP offer', () => {

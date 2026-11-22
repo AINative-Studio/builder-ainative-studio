@@ -136,6 +136,14 @@ describe('POST /checkout_sessions', () => {
       // spec-conformant client may send, even though this route doesn't
       // read Authorization itself today.
       expect(allowedHeaders).toContain('authorization')
+      // #2205 — the real AX checker (core's check_acp) requires ALL FIVE of
+      // authorization/api-version/signature/timestamp/idempotency-key, not
+      // just authorization — #2183 only added one of the two still-missing
+      // headers. Pinned here against the real _ACP_REQUIRED_HEADERS tuple,
+      // not a guess.
+      expect(allowedHeaders).toContain('api-version')
+      expect(allowedHeaders).toContain('signature')
+      expect(allowedHeaders).toContain('timestamp')
     })
 
     it('still returns the original Allow header alongside the new CORS headers', async () => {
