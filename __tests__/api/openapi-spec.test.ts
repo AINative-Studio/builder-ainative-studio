@@ -1,5 +1,28 @@
-import { describe, it, expect } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { GET } from '@/app/openapi.json/route'
+
+const REAL_X402_PLANS_RESPONSE = {
+  success: true,
+  data: {
+    plans: [
+      { id: 'hobbyist', name: 'Hobbyist', amount: 500, pay_to: '0x5631a4d7516da6bc2712f91dc8489637b87e2f52', network: 'circle' },
+      { id: 'pro', name: 'Pro', amount: 4900, pay_to: '0x5631a4d7516da6bc2712f91dc8489637b87e2f52', network: 'circle' },
+    ],
+  },
+}
+
+// #2216 — none of these tests should depend on the real network. The x402
+// crosshost annotation fetches a live core endpoint, so it's mocked here the
+// same way every other fetch-dependent module in this suite is.
+beforeEach(() => {
+  vi.stubGlobal('fetch', vi.fn(async () => ({
+    ok: true,
+    json: async () => REAL_X402_PLANS_RESPONSE,
+  })))
+})
+afterEach(() => {
+  vi.unstubAllGlobals()
+})
 
 describe('GET /openapi.json (AX/agent-readiness scan, 2026-09-30)', () => {
   it('returns a valid OpenAPI 3.1 document', async () => {
@@ -69,5 +92,70 @@ describe('GET /openapi.json (AX/agent-readiness scan, 2026-09-30)', () => {
     } finally {
       process.env.ACP_SIGNING_SECRET = originalSecret
     }
+  })
+})
+
+/**
+ * #2216 — MPP challenge-half cross-host fix: core's real checker only
+ * cross-host-probes an x-payment-info-annotated operation when
+ * servers[0].url is a genuinely different origin than the scanned base
+ * URL, and it reads index 0 specifically.
+ */
+describe('GET /openapi.json — x402 cross-host MPP challenge (#2216)', () => {
+  it('declares api.ainative.studio as servers[0] and builder.ainative.studio as servers[1]', async () => {
+    const spec = await (await GET()).json()
+    expect(spec.servers?.[0]?.url).toBe('https://api.ainative.studio')
+    expect(spec.servers?.[1]?.url).toBe('https://builder.ainative.studio')
+  })
+
+  it('annotates the real x402 subscribe path with offers carrying the required plan_id field', async () => {
+    const spec = await (await GET()).json()
+    const op = spec.paths['/api/v1/cloud/x402/subscriptions/subscribe']?.post
+    expect(op).toBeTruthy()
+    const offers = op['x-payment-info']?.offers
+    expect(offers?.length).toBeGreaterThan(0)
+    for (const offer of offers) {
+      expect(offer.plan_id).toBeTruthy()
+      expect(offer.amount).toBeTruthy()
+      expect(offer.pay_to).toBeTruthy()
+      expect(offer.method).toBe('x402')
+    }
+  })
+
+  it('the x402 operation requires plan_id as a real body field a generic probe can satisfy', async () => {
+    const spec = await (await GET()).json()
+    const op = spec.paths['/api/v1/cloud/x402/subscriptions/subscribe']?.post
+    const required = op?.requestBody?.content?.['application/json']?.schema?.required
+    expect(required).toContain('plan_id')
+  })
+
+  it('every OTHER operation carries its own explicit servers override pointing at builder.ainative.studio', async () => {
+    const spec = await (await GET()).json()
+    for (const [path, operations] of Object.entries<any>(spec.paths)) {
+      if (path === '/api/v1/cloud/x402/subscriptions/subscribe') continue
+      for (const operation of Object.values<any>(operations)) {
+        expect(operation.servers).toEqual([{ url: 'https://builder.ainative.studio' }])
+      }
+    }
+  })
+
+  it('the x402 operation keeps its OWN servers override pointing at api.ainative.studio, not the default', async () => {
+    const spec = await (await GET()).json()
+    const op = spec.paths['/api/v1/cloud/x402/subscriptions/subscribe']?.post
+    expect(op.servers).toEqual([{ url: 'https://api.ainative.studio' }])
+  })
+
+  it('degrades honestly — no offers advertised when core\'s plans endpoint is unreachable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
+    const spec = await (await GET()).json()
+    const op = spec.paths['/api/v1/cloud/x402/subscriptions/subscribe']?.post
+    expect(op['x-payment-info']).toBeUndefined()
+  })
+
+  it('never fabricates an offer when core returns a malformed plans response', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: {} }) })))
+    const spec = await (await GET()).json()
+    const op = spec.paths['/api/v1/cloud/x402/subscriptions/subscribe']?.post
+    expect(op['x-payment-info']).toBeUndefined()
   })
 })
