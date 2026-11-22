@@ -1118,6 +1118,40 @@ export function decodeGiteaContent(body: { content?: string; encoding?: string }
 }
 
 /**
+ * #2202 — thrown by fetchRepoFiles() when the Gitea tree lookup fails with a
+ * real, non-404 error status. Distinct from a bare `Error` so a caller (the
+ * nightly task-resolution loop) can tell "this repo IS configured but its
+ * ref/tree lookup is genuinely broken" apart from any other unexpected
+ * throw, and — for `status === 400` specifically, Gitea's documented
+ * response for a ref that cannot be resolved to any tree at all — write a
+ * message that says so plainly instead of the generic "unexpected error,
+ * will retry" every other throw gets. This does NOT change retry behavior
+ * (the loop still defers and retries next night either way) — it only makes
+ * a permanently-stuck repo distinguishable from a one-off transient blip in
+ * the task's own `output` field, without a new counting/alerting mechanism
+ * (left as a human design decision per #2202).
+ */
+export class GiteaTreeLookupError extends Error {
+  readonly org: string
+  readonly repo: string
+  readonly status: number
+  constructor(org: string, repo: string, status: number) {
+    super(`gitea fetchRepoFiles ${org}/${repo} tree failed: ${status}`)
+    this.name = 'GiteaTreeLookupError'
+    this.org = org
+    this.repo = repo
+    this.status = status
+  }
+}
+
+/** True when `err` is the distinct "Gitea tree lookup failed with a real
+ *  error status" signal thrown by fetchRepoFiles() (#2202), as opposed to
+ *  any other unexpected throw. */
+export function isGiteaTreeLookupError(err: unknown): err is GiteaTreeLookupError {
+  return err instanceof GiteaTreeLookupError
+}
+
+/**
  * Fetch every text file's current content from a branch (default: main), as a
  * flat path→content map. Returns null when unconfigured or the repo/branch
  * doesn't exist — never throws for a missing repo (a company that hasn't been
@@ -1142,7 +1176,7 @@ export async function fetchRepoFiles(
     { method: 'GET' },
   )
   if (treeRes.status === 404) return null
-  if (!treeRes.ok) throw new Error(`gitea fetchRepoFiles ${org}/${repoName} tree failed: ${treeRes.status}`)
+  if (!treeRes.ok) throw new GiteaTreeLookupError(org, repoName, treeRes.status)
   const tree = (await treeRes.json()) as GiteaTreeResponse
 
   const blobs = filterFetchableBlobs(tree.tree)
