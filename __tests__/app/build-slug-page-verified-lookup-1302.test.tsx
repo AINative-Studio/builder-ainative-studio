@@ -79,6 +79,30 @@ function findElementsByType(node: React.ReactNode, type: string): string[] {
   return found
 }
 
+/** #2210 — finds every <script type="application/ld+json"> element's raw
+ *  dangerouslySetInnerHTML string anywhere in the tree. renderToText can't
+ *  see this content (it's a prop, not a child). */
+function findJsonLdScripts(node: React.ReactNode): string[] {
+  const found: string[] = []
+  const visit = (n: React.ReactNode) => {
+    if (n == null || typeof n === 'boolean') return
+    if (typeof n === 'string' || typeof n === 'number') return
+    if (Array.isArray(n)) {
+      n.forEach(visit)
+      return
+    }
+    if (React.isValidElement(n)) {
+      const props = n.props as { children?: React.ReactNode; type?: string; dangerouslySetInnerHTML?: { __html: string } }
+      if (n.type === 'script' && props.type === 'application/ld+json' && props.dangerouslySetInnerHTML) {
+        found.push(props.dangerouslySetInnerHTML.__html)
+      }
+      visit(props.children)
+    }
+  }
+  visit(node)
+  return found
+}
+
 describe('/build/[slug] page — verified vs. unverified registry miss (#1302)', () => {
   it('shows the honest "could not load" message when the registry lookup itself failed (verified: false)', async () => {
     resolveAppVerified.mockResolvedValueOnce({ entry: null, verified: false })
@@ -291,5 +315,60 @@ describe('/build/[slug] page — real server-rendered <h1> with the company name
     const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'wrench' }) })
     const h1s = findElementsByType(tree, 'h1')
     expect(h1s).toContain('wrench')
+  })
+})
+
+/**
+ * #2210 — AX "Structured Data" gap on generated sites: the real checker
+ * (core's check_structured_data) only awards its point when ALL THREE
+ * signals are present together (JSON-LD, the literal "schema.org" string,
+ * and OpenGraph) — its scoring is `min(weight, weight * signal_count // 3)`,
+ * so 1 or 2 signals alone score 0 with weight=1. OpenGraph already passes
+ * (Builder's root metadata); this fix adds real JSON-LD with a schema.org
+ * context, satisfying the other two at once.
+ */
+describe('/build/[slug] page — real JSON-LD structured data (#2210)', () => {
+  const baseEntry = {
+    chatId: 'chat-1',
+    name: 'Wrench',
+    color: '#2f6d86',
+    idea: 'A field service app.',
+    track: 'company' as const,
+    slug: 'wrench',
+    createdAt: new Date().toISOString(),
+  }
+
+  it('renders a real, valid application/ld+json script with the company data', async () => {
+    resolveAppVerified.mockResolvedValueOnce({
+      entry: { ...baseEntry, tagline: 'From job site to paid.' },
+      verified: true,
+    })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'wrench' }) })
+    const scripts = findJsonLdScripts(tree)
+    expect(scripts).toHaveLength(1)
+    const parsed = JSON.parse(scripts[0])
+    expect(parsed['@context']).toBe('https://schema.org')
+    expect(parsed.name).toBe('Wrench')
+    expect(parsed.description).toBe('From job site to paid.')
+    expect(parsed.url).toContain('/build/wrench')
+  })
+
+  it('falls back to idea text when no tagline is set, never fabricating data', async () => {
+    resolveAppVerified.mockResolvedValueOnce({
+      entry: { ...baseEntry, tagline: undefined },
+      verified: true,
+    })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'wrench' }) })
+    const parsed = JSON.parse(findJsonLdScripts(tree)[0])
+    expect(parsed.description).toBe('A field service app.')
+  })
+
+  it('never includes fabricated rating, review, or price data', async () => {
+    resolveAppVerified.mockResolvedValueOnce({ entry: { ...baseEntry }, verified: true })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'wrench' }) })
+    const parsed = JSON.parse(findJsonLdScripts(tree)[0])
+    expect(parsed.aggregateRating).toBeUndefined()
+    expect(parsed.review).toBeUndefined()
+    expect(parsed.offers).toBeUndefined()
   })
 })
