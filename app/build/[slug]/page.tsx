@@ -3,6 +3,7 @@ import { resolveAppVerified, resolveShowcaseOnlyBySlug, type AppEntry } from '@/
 import { StandalonePreviewRegenerate } from '@/components/build/StandalonePreviewRegenerate'
 import { StandalonePreviewFrame } from '@/components/build/StandalonePreviewFrame'
 import { mintPreviewDbToken } from '@/lib/build/preview-tokens'
+import { CompanyWebMcpSsrBootstrap, CompanyWebMcpTools } from '@/components/webmcp-tools'
 
 /**
  * /build/{slug} (#207 · FIX-2) — the REAL, shareable URL for a generated company
@@ -136,8 +137,16 @@ export default async function AppSubdirPage({ params }: Props) {
   const dbToken = await mintPreviewDbToken(slug, entry.chatId)
   const appOrigin = (process.env.NEXT_PUBLIC_APP_URL || 'https://builder.ainative.studio').replace(/\/+$/, '')
 
+  // #2207 — real document.modelContext tools for this company's own page
+  // (AX "WebMCP Tool Quality" gap on generated sites). Company-specific,
+  // not the homepage's start_build/generic list_capabilities — see
+  // components/webmcp-tools.tsx's doc comment on CompanyWebMcpSsrBootstrap.
+  const webMcpInfo = { slug, name: entry.name || slug, tagline: entry.tagline, idea: entry.idea }
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#fff' }}>
+      <CompanyWebMcpSsrBootstrap info={webMcpInfo} />
+      <CompanyWebMcpTools info={webMcpInfo} />
       {/* #844 follow-up: this used to repeat the company name + tagline right
           above the generated app's OWN header, which shows the same name/
           tagline again — a real founder saw this as a "double navigation"

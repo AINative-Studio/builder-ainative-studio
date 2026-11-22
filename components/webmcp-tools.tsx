@@ -145,6 +145,72 @@ export function WebMcpSsrBootstrap() {
   return <script dangerouslySetInnerHTML={{ __html: WEBMCP_SSR_BOOTSTRAP }} />
 }
 
+interface CompanyWebMcpInfo {
+  slug: string
+  name: string
+  tagline?: string
+  idea?: string
+}
+
+const COMPANY_TOOL_NAMES = ['get_company_info', 'build_your_own'] as const
+
+/**
+ * Raw JS source for a generated company's `/build/{slug}` SSR bootstrap
+ * (#2207 — AX "WebMCP Tool Quality" 0/3 on generated sites: `WebMcpTools`/
+ * `WebMcpSsrBootstrap` above were only ever rendered on the Builder homepage
+ * — app/page.tsx — so document.modelContext was never declared on any
+ * generated company's own page). Mirrors `CompanyWebMcpTools` below
+ * exactly, same maintenance model as WEBMCP_SSR_BOOTSTRAP/the homepage
+ * tools — if you change a tool here, change it there too.
+ *
+ * Deliberately NOT the homepage's `start_build`/generic `list_capabilities`
+ * tools (#2207's own acceptance criteria) — `start_build` makes no sense on
+ * a company's own page (the company already exists), so this registers
+ * company-specific tools instead: the real, already-known company data
+ * (name/tagline/idea — no new fetch needed, it's already in the page's own
+ * server-rendered data) and a real navigation action back to /build.
+ */
+export function companyWebMcpSsrBootstrap(info: CompanyWebMcpInfo): string {
+  const infoJson = JSON.stringify({ slug: info.slug, name: info.name, tagline: info.tagline, idea: info.idea })
+  return `
+(function () {
+  if (typeof document === 'undefined') return;
+  if (!document.modelContext || typeof document.modelContext.getTools !== 'function') {
+    var tools = new Map();
+    document.modelContext = {
+      registerTool: function (tool) { tools.set(tool.name, tool); },
+      unregisterTool: function (name) { tools.delete(name); },
+      getTools: function () { return Promise.resolve(Array.from(tools.values())); },
+    };
+  }
+  var companyInfo = ${infoJson};
+  document.modelContext.registerTool({
+    name: 'get_company_info',
+    description: 'Returns this page\\'s real company name, tagline, and the founder\\'s original idea text.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true },
+    execute: function () { return companyInfo; },
+  });
+  document.modelContext.registerTool({
+    name: 'build_your_own',
+    description: 'Navigates to /build, the real entry point where a founder describes an idea and Cody generates a working app or company from it.',
+    inputSchema: { type: 'object', properties: {} },
+    annotations: { readOnlyHint: true },
+    execute: function () {
+      window.location.href = '/build';
+      return { navigated: true, to: '/build' };
+    },
+  });
+})();
+`.trim()
+}
+
+/** Server-safe wrapper, same shape as `WebMcpSsrBootstrap` above, for a
+ *  generated company's page (a Server Component) to render directly. */
+export function CompanyWebMcpSsrBootstrap({ info }: { info: CompanyWebMcpInfo }) {
+  return <script dangerouslySetInnerHTML={{ __html: companyWebMcpSsrBootstrap(info) }} />
+}
+
 function getOrCreateModelContext(): ModelContext {
   if (document.modelContext && typeof document.modelContext.getTools === 'function') {
     return document.modelContext
@@ -199,6 +265,48 @@ export function WebMcpTools() {
       }
     }
   }, [])
+
+  return null
+}
+
+/** Client-side registration mirror of `CompanyWebMcpSsrBootstrap` above —
+ *  same belt-and-suspenders pattern as `WebMcpTools`/`WebMcpSsrBootstrap`:
+ *  the SSR bootstrap covers a checker that reads static HTML without
+ *  executing React hydration; this covers a real browser session where
+ *  React has mounted. Both register the identical tool set, so whichever
+ *  path runs first wins (registerTool is last-write-wins by name; the
+ *  values are identical either way). */
+export function CompanyWebMcpTools({ info }: { info: CompanyWebMcpInfo }) {
+  useEffect(() => {
+    if (typeof document === 'undefined') return
+    const modelContext = getOrCreateModelContext()
+
+    modelContext.registerTool({
+      name: 'get_company_info',
+      description: "Returns this page's real company name, tagline, and the founder's original idea text.",
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true },
+      execute: () => ({ slug: info.slug, name: info.name, tagline: info.tagline, idea: info.idea }),
+    })
+
+    modelContext.registerTool({
+      name: 'build_your_own',
+      description:
+        'Navigates to /build, the real entry point where a founder describes an idea and Cody generates a working app or company from it.',
+      inputSchema: { type: 'object', properties: {} },
+      annotations: { readOnlyHint: true },
+      execute: () => {
+        window.location.href = '/build'
+        return { navigated: true, to: '/build' }
+      },
+    })
+
+    return () => {
+      for (const name of COMPANY_TOOL_NAMES) {
+        modelContext.unregisterTool?.(name)
+      }
+    }
+  }, [info.slug, info.name, info.tagline, info.idea])
 
   return null
 }
