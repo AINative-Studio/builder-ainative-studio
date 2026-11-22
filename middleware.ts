@@ -4,7 +4,7 @@ import { guestRegex, isDevelopmentEnvironment } from './lib/constants'
 import { applyRateLimit } from './lib/middleware/rate-limit'
 import { wildcardSlugFromHost, subdomainServable, isReservedHost } from './lib/build/deploy'
 import { resolveApp } from './lib/build/app-registry'
-import { prefersMarkdown, homepageMarkdown, notFoundMarkdown } from './lib/agent-markdown-negotiation'
+import { prefersMarkdown, homepageMarkdown, notFoundMarkdown, companyMarkdown } from './lib/agent-markdown-negotiation'
 
 /**
  * Real top-level page segments (AX/agent-readiness scan, 2026-09-30) — used
@@ -72,6 +72,37 @@ export async function middleware(request: NextRequest) {
       headers: { 'Content-Type': 'text/markdown; charset=utf-8', Vary: 'Accept' },
     })
   }
+
+  // #2205/#2206 — same Markdown negotiation as above, extended to a
+  // generated company's own `/build/{slug}` page (exact two-segment path
+  // only — `/build/{slug}/llms.txt` etc. already have their own real
+  // content-type and must not be re-intercepted here). An agent asking for
+  // `Accept: text/markdown` or `?mode=agent` on a company page got the full
+  // React/Sandpack shell before this — same gap the homepage already fixed.
+  const buildSlugMatch = pathname.match(/^\/build\/([^/]+)\/?$/)
+  const wantsCompanyAgentView =
+    !!buildSlugMatch &&
+    (prefersMarkdown(request.headers.get('accept')) || request.nextUrl.searchParams.get('mode') === 'agent')
+  if (buildSlugMatch && wantsCompanyAgentView) {
+    const slug = buildSlugMatch[1]
+    let entry: Awaited<ReturnType<typeof resolveApp>> = null
+    try {
+      entry = await resolveApp(slug)
+    } catch {
+      entry = null
+    }
+    if (entry?.chatId) {
+      return new Response(companyMarkdown(slug, entry.name || slug, entry.tagline, entry.idea), {
+        status: 200,
+        headers: { 'Content-Type': 'text/markdown; charset=utf-8', Vary: 'Accept' },
+      })
+    }
+    // Unregistered or a lookup hiccup — fall through to the real page
+    // component below, which already does the honest "couldn't load this
+    // preview" vs "no such company" distinction (#2126/#832) for HTML. A
+    // Markdown requester gets the same real outcome, not a fabricated 404.
+  }
+
   if (isLikelyUnknownPath(pathname) && prefersMarkdown(request.headers.get('accept'))) {
     return new Response(notFoundMarkdown(pathname), {
       status: 404,

@@ -93,6 +93,47 @@ autonomous loop.
 `
 }
 
+/**
+ * A generated company's `/build/{slug}` Markdown representation (#2205 — AX
+ * "Content Negotiation" gap on generated sites: the homepage already
+ * negotiates Markdown via `prefersMarkdown`/`wantsAgentView` in middleware.ts,
+ * but that branch was hardcoded to `pathname === '/'` and never extended to
+ * company pages, so an agent asking for a lightweight summary of a generated
+ * company got the full React/Sandpack shell instead).
+ *
+ * Takes only the already-resolved registry fields (name/tagline/idea) —
+ * deliberately NOT `resolveDiscoveryFile`'s stored-code analysis
+ * (lib/build/discovery-files.ts), since that calls `resolveStoredApp` and
+ * `generateAINativeFileSet`, neither proven safe on the Edge runtime
+ * middleware.ts runs under (no `export const runtime` override there). This
+ * keeps the same middleware-safe surface `resolveApp`/`resolveAppVerified`
+ * already have (used elsewhere in middleware.ts for wildcard-subdomain
+ * routing). No `date`/`updated` field, same reasoning as `homepageMarkdown`.
+ */
+export function companyMarkdown(slug: string, name: string, tagline?: string, idea?: string): string {
+  const title = name || slug
+  const description = tagline || idea || `${title}, built and run on AINative.`
+  const liveUrl = `${SITE}/build/${slug}`
+  return `---
+title: ${title}
+description: ${description}
+---
+
+# ${title}
+
+> ${description}
+
+Built and run on [AINative Builder](${SITE}/build). This is a real,
+live company preview — not a static mockup.
+
+## Links
+
+- Live preview: ${liveUrl}
+- Agent index: ${liveUrl}/llms.txt
+- Build your own: ${SITE}/build
+`
+}
+
 /** The Markdown 404 body for a genuinely unknown path — real status, real
  *  explanation, real pointers to recover (per the scan's own "How to pass"
  *  guidance: at least 20 characters explaining the error, plus docs/sitemap/

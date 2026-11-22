@@ -19,6 +19,12 @@ vi.hoisted(() => {
 
 vi.mock('next-auth/jwt', () => ({ getToken: vi.fn(async () => null) }))
 
+const resolveAppMock = vi.fn(async (_slug: string): Promise<any> => null)
+vi.mock('@/lib/build/app-registry', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/lib/build/app-registry')>()
+  return { ...actual, resolveApp: (slug: string) => resolveAppMock(slug) }
+})
+
 import { middleware } from '@/middleware'
 
 function req(path: string, accept?: string): any {
@@ -122,6 +128,53 @@ describe('middleware — ?mode=agent dedicated agent view (#1680)', () => {
 
   it('mode=agent on a non-homepage path does not trigger the homepage Markdown response', async () => {
     const res = await middleware(req('/pricing?mode=agent'))
+    expect(res.headers.get('content-type')).not.toBe('text/markdown; charset=utf-8')
+  })
+})
+
+describe('middleware — /build/{slug} Markdown content negotiation (#2205/#2206)', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    resolveAppMock.mockReset()
+  })
+  afterEach(() => vi.clearAllMocks())
+
+  it('a registered company serves real company Markdown for Accept: text/markdown', async () => {
+    resolveAppMock.mockResolvedValue({ chatId: 'c1', name: 'Wrench', tagline: 'From job site to paid.' })
+    const res = await middleware(req('/build/wrench', 'text/markdown'))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/markdown')
+    expect(res.headers.get('vary')).toContain('Accept')
+    const body = await res.text()
+    expect(body).toContain('Wrench')
+    expect(body).toContain('From job site to paid.')
+    expect(body).not.toContain('AI that builds AND runs your company')
+  })
+
+  it('a registered company serves the same Markdown for ?mode=agent', async () => {
+    resolveAppMock.mockResolvedValue({ chatId: 'c1', name: 'Wrench', tagline: 'From job site to paid.' })
+    const res = await middleware(req('/build/wrench?mode=agent'))
+    expect(res.status).toBe(200)
+    expect(res.headers.get('content-type')).toContain('text/markdown')
+    const body = await res.text()
+    expect(body).toContain('Wrench')
+  })
+
+  it('an unregistered slug falls through to the real page (no fabricated Markdown)', async () => {
+    resolveAppMock.mockResolvedValue(null)
+    const res = await middleware(req('/build/does-not-exist', 'text/markdown'))
+    expect(res.headers.get('content-type')).not.toBe('text/markdown; charset=utf-8')
+  })
+
+  it('a plain HTML request for a company page is unaffected', async () => {
+    resolveAppMock.mockResolvedValue({ chatId: 'c1', name: 'Wrench' })
+    const res = await middleware(req('/build/wrench', 'text/html'))
+    expect(res.headers.get('content-type')).not.toBe('text/markdown; charset=utf-8')
+  })
+
+  it('a nested company sub-route (llms.txt) is never intercepted by this branch', async () => {
+    resolveAppMock.mockResolvedValue({ chatId: 'c1', name: 'Wrench' })
+    const res = await middleware(req('/build/wrench/llms.txt', 'text/markdown'))
     expect(res.headers.get('content-type')).not.toBe('text/markdown; charset=utf-8')
   })
 })
