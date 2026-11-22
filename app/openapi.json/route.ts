@@ -24,9 +24,29 @@
  * MPP (Machine Payments Protocol) discovery extensions (`x-payment-info`),
  * applied at request time by annotateOpenApiWithMpp() (lib/build/mpp-
  * discovery.ts) — see that module's doc comment for the full rationale.
+ *
+ * #2216 — `servers[0]` is api.ainative.studio, NOT builder.ainative.studio.
+ * This is deliberate, not a mistake, and the ordering specifically matters:
+ * core's real AX checker only cross-host-probes an x-payment-info-annotated
+ * operation for a live 402 when `servers[0].url` names a genuinely
+ * different origin than the one it started at, and it reads index 0 only
+ * (confirmed by reading check_mpp directly — a per-operation `servers`
+ * override is NOT consulted by this checker, so that real OpenAPI 3.1
+ * mechanism can't be used here instead).
+ *
+ * This does mean a path with no per-operation override is nominally
+ * ambiguous about which of the two servers[] entries serves it — real
+ * OpenAPI 3.1 tooling resolves this per-operation, never by blindly
+ * assuming index 0 for every path. GET() below stamps an explicit
+ * `servers: [{url: SITE}]` override onto every operation EXCEPT the one
+ * real x402 path, before serving the document — mechanically applied at
+ * request time rather than hand-repeated 19 times across `paths` below, so
+ * a newly added path here is correct by default with no extra step. The
+ * document stays accurate for a real client even though index 0 is a
+ * different host — only the x402 operation genuinely intends servers[0].
  */
 
-import { annotateOpenApiWithMpp } from '@/lib/build/mpp-discovery'
+import { annotateOpenApiWithMpp, annotateOpenApiWithX402Crosshost, X402_CROSSHOST_SERVER_URL, X402_CROSSHOST_OPERATION_PATH } from '@/lib/build/mpp-discovery'
 
 const SITE = 'https://builder.ainative.studio'
 
@@ -42,9 +62,37 @@ const spec = {
       `${SITE}/llms.txt for a plain-language index of these same endpoints.`,
     contact: { url: 'https://ainative.studio' },
   },
-  servers: [{ url: SITE }],
+  servers: [{ url: X402_CROSSHOST_SERVER_URL }, { url: SITE }],
   security: [{ sessionCookie: [] }, {}],
   paths: {
+    [X402_CROSSHOST_OPERATION_PATH]: {
+      post: {
+        operationId: 'subscribeViaX402',
+        summary: 'x402/MPP: subscribe to a real AINative plan (hobbyist/pro/business/enterprise/cody_vcto) by paying USDC directly to the platform wallet — core\'s own real crypto-payment flow, not a Builder-invented capability. Builder is a client of this exactly like every other AINative primitive (see /.well-known/x402).',
+        servers: [{ url: X402_CROSSHOST_SERVER_URL }],
+        security: [],
+        requestBody: {
+          required: true,
+          content: {
+            'application/json': {
+              schema: {
+                type: 'object',
+                required: ['plan_id'],
+                properties: {
+                  plan_id: { type: 'string', description: 'A real AINative x402 plan id — see GET /api/v1/cloud/x402/subscriptions/plans on this same host for the live list.' },
+                  payment_proof: { type: 'object', description: 'Omit on the first call to receive the 402 payment challenge; include after paying to complete the subscription.' },
+                },
+              },
+            },
+          },
+        },
+        responses: {
+          '200': { description: 'Subscription activated — payment verified.' },
+          '402': { description: 'Payment required — real WWW-Authenticate: Payment header with the live USDC amount and wallet to pay.' },
+          '422': { description: 'Missing/invalid plan_id.' },
+        },
+      },
+    },
     '/api/health': {
       get: {
         operationId: 'getHealth',
@@ -567,11 +615,37 @@ const spec = {
   },
 }
 
+/**
+ * #2216 — stamps an explicit `servers: [{url: SITE}]` override onto every
+ * operation EXCEPT the one real x402 path, so the document stays accurate
+ * for a real client even though `servers[0]` (document root) is
+ * api.ainative.studio for the checker's benefit — see this file's top doc
+ * comment. Applied mechanically rather than hand-repeated per path so a
+ * newly added operation is correct by default with no extra step.
+ */
+function stampDefaultServerOverrides(document: Record<string, any>): Record<string, any> {
+  const paths = document?.paths
+  if (!paths || typeof paths !== 'object') return document
+  for (const [path, operations] of Object.entries(paths)) {
+    if (path === X402_CROSSHOST_OPERATION_PATH) continue
+    if (!operations || typeof operations !== 'object') continue
+    for (const operation of Object.values(operations as Record<string, any>)) {
+      if (operation && typeof operation === 'object' && !operation.servers) {
+        operation.servers = [{ url: SITE }]
+      }
+    }
+  }
+  return document
+}
+
 export async function GET() {
-  // #2171 — annotateOpenApiWithMpp mutates its argument; clone per-request
-  // so the module-level `spec` constant itself is never mutated (this
-  // route's `spec` object is otherwise immutable/shared across requests).
-  const document = annotateOpenApiWithMpp(JSON.parse(JSON.stringify(spec)))
+  // #2171/#2216 — annotateOpenApiWithMpp/annotateOpenApiWithX402Crosshost
+  // mutate their argument; clone per-request so the module-level `spec`
+  // constant itself is never mutated (this route's `spec` object is
+  // otherwise immutable/shared across requests).
+  let document = annotateOpenApiWithMpp(JSON.parse(JSON.stringify(spec)))
+  document = await annotateOpenApiWithX402Crosshost(document)
+  document = stampDefaultServerOverrides(document)
   return Response.json(document, {
     headers: { 'Cache-Control': 'public, max-age=3600' },
   })

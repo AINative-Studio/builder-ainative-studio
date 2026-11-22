@@ -19,8 +19,12 @@ import {
   buildPaymentOffers,
   buildServiceInfo,
   annotateOpenApiWithMpp,
+  buildX402CrosshostOffers,
+  annotateOpenApiWithX402Crosshost,
   MPP_PAID_OPERATION_PATH,
   MPP_PAID_OPERATION_METHOD,
+  X402_CROSSHOST_OPERATION_PATH,
+  X402_CROSSHOST_OPERATION_METHOD,
 } from '@/lib/build/mpp-discovery'
 
 describe('buildPaymentOffers', () => {
@@ -136,5 +140,118 @@ describe('annotateOpenApiWithMpp', () => {
     const spec = baseSpec()
     const result = annotateOpenApiWithMpp(spec)
     expect(result).toBe(spec)
+  })
+})
+
+/**
+ * #2216 — MPP's challenge half can never be verified at builder.ainative.studio
+ * itself (accepted architectural ceiling, #2204). This closes the gap via core's
+ * REAL, already-live x402 subscribe 402 (confirmed live: a POST with
+ * {"plan_id":"hobbyist"} returns a genuine 402 with a real WWW-Authenticate:
+ * Payment header) — Builder is a client of this capability, not inventing one.
+ */
+describe('buildX402CrosshostOffers', () => {
+  const REAL_PLANS_RESPONSE = {
+    success: true,
+    data: {
+      plans: [
+        { id: 'hobbyist', name: 'Hobbyist', amount: 500, pay_to: '0x5631a4d7516da6bc2712f91dc8489637b87e2f52', network: 'circle' },
+        { id: 'pro', name: 'Pro', amount: 4900, pay_to: '0x5631a4d7516da6bc2712f91dc8489637b87e2f52', network: 'circle' },
+      ],
+    },
+  }
+
+  beforeEach(() => vi.clearAllMocks())
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
+
+  it('returns a real offer per plan from core\'s live plans endpoint', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => REAL_PLANS_RESPONSE })))
+    const offers = await buildX402CrosshostOffers()
+    expect(offers.length).toBe(2)
+    for (const o of offers) {
+      expect(o.method).toBe('x402')
+      expect(o.plan_id).toBeTruthy()
+      expect(Number(o.amount)).toBeGreaterThan(0)
+      expect(o.pay_to).toBeTruthy()
+      expect(o.currency).toBe('USDC')
+    }
+  })
+
+  it('every offer satisfies the real checker\'s required-field validation (amount, pay_to, method)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => REAL_PLANS_RESPONSE })))
+    const offers = await buildX402CrosshostOffers()
+    const REQUIRED_OFFER_FIELDS = ['amount', 'pay_to', 'method'] as const
+    for (const offer of offers) {
+      for (const field of REQUIRED_OFFER_FIELDS) {
+        expect(Boolean((offer as unknown as Record<string, unknown>)[field])).toBe(true)
+      }
+    }
+  })
+
+  it('returns [] when core is unreachable — never fabricates an offer', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('network down') }))
+    expect(await buildX402CrosshostOffers()).toEqual([])
+  })
+
+  it('returns [] on a non-200 response from core', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
+    expect(await buildX402CrosshostOffers()).toEqual([])
+  })
+
+  it('returns [] when the response body is malformed (no plans array)', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: {} }) })))
+    expect(await buildX402CrosshostOffers()).toEqual([])
+  })
+
+  it('skips an individual plan missing a required field rather than fabricating one', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ success: true, data: { plans: [{ id: 'hobbyist', amount: 500 }, { id: 'pro', amount: 4900, pay_to: '0xabc' }] } }),
+    })))
+    const offers = await buildX402CrosshostOffers()
+    expect(offers.length).toBe(1)
+    expect(offers[0].plan_id).toBe('pro')
+  })
+})
+
+describe('annotateOpenApiWithX402Crosshost', () => {
+  function baseSpec() {
+    return {
+      openapi: '3.1.0',
+      servers: [{ url: 'https://api.ainative.studio' }, { url: 'https://builder.ainative.studio' }],
+      paths: {
+        [X402_CROSSHOST_OPERATION_PATH]: {
+          [X402_CROSSHOST_OPERATION_METHOD]: { operationId: 'subscribeViaX402' },
+        },
+      },
+    }
+  }
+
+  beforeEach(() => vi.clearAllMocks())
+  afterEach(() => { vi.restoreAllMocks(); vi.unstubAllGlobals() })
+
+  it('leaves the spec untouched when core is unreachable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => { throw new Error('down') }))
+    const result = await annotateOpenApiWithX402Crosshost(baseSpec())
+    expect((result.paths[X402_CROSSHOST_OPERATION_PATH] as any)[X402_CROSSHOST_OPERATION_METHOD]['x-payment-info']).toBeUndefined()
+  })
+
+  it('adds x-payment-info with real offers on the x402 operation when core is reachable', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ success: true, data: { plans: [{ id: 'hobbyist', name: 'Hobbyist', amount: 500, pay_to: '0xabc', network: 'circle' }] } }),
+    })))
+    const result = await annotateOpenApiWithX402Crosshost(baseSpec())
+    const paymentInfo = (result.paths[X402_CROSSHOST_OPERATION_PATH] as any)[X402_CROSSHOST_OPERATION_METHOD]['x-payment-info']
+    expect(paymentInfo.offers.length).toBe(1)
+    expect(paymentInfo.offers[0].plan_id).toBe('hobbyist')
+    expect(paymentInfo.realm).toBe('api.ainative.studio')
+  })
+
+  it('never throws on a malformed/missing paths shape — defensive, total', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ ok: true, json: async () => ({ success: true, data: { plans: [{ id: 'x', amount: 1, pay_to: 'y' }] } }) })))
+    await expect(annotateOpenApiWithX402Crosshost({})).resolves.not.toThrow()
+    await expect(annotateOpenApiWithX402Crosshost({ paths: null })).resolves.not.toThrow()
+    await expect(annotateOpenApiWithX402Crosshost(null as any)).resolves.not.toThrow()
   })
 })

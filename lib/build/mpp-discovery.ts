@@ -49,9 +49,100 @@
 
 import { PRICING_TIERS } from '@/lib/build/pricing-tiers'
 import { isAcpSigningConfigured } from '@/lib/build/acp-signature'
+import { AINATIVE_API_BASE_URL } from '@/lib/constants'
 
 export const MPP_PAID_OPERATION_PATH = '/checkout_sessions'
 export const MPP_PAID_OPERATION_METHOD = 'post'
+
+/**
+ * #2216 — MPP's challenge half (a live 402) can never be verified at
+ * builder.ainative.studio itself: Builder's /checkout_sessions issues a
+ * Stripe session directly rather than ever gating behind 402 (accepted
+ * architectural ceiling, see #2204's "leave MPP at 1/3" decision). But core's
+ * REAL checker (`check_mpp`) has a second path: when the OpenAPI document's
+ * `servers[0].url` names a genuinely different host, it cross-host-probes
+ * whichever operation carries `x-payment-info` there instead. core's own
+ * `api.ainative.studio/api/v1/cloud/x402/subscriptions/subscribe` already
+ * returns a real, live 402 with a real `WWW-Authenticate: Payment` header
+ * (confirmed live: `curl -X POST .../subscribe -d '{"plan_id":"hobbyist"}'`
+ * → 402, `www-authenticate: Payment scheme="exact", network="circle",
+ * asset="USDC", amount="500", pay_to="0x5631a..."`). Builder is already a
+ * genuine client of this real capability — see app/.well-known/x402/
+ * route.ts's own doc comment: "an agent subscribing to 'AINative Pro' via
+ * builder.ainative.studio really is subscribing to the same real plan an
+ * agent would get by calling api.ainative.studio directly."
+ *
+ * So this is not Builder inventing a second payment capability: it is
+ * declaring api.ainative.studio as servers[0] (required — the checker only
+ * ever reads index 0) and annotating the one real path there with offers
+ * carrying `plan_id`, mirroring core's own mpp_discovery.py convention
+ * (`_offer_covers_required_body_fields` matches by property name against
+ * the operation's real required body field — "plan_id" is the exact and
+ * only required field on core's /subscribe endpoint) so the checker's own
+ * generic probe can auto-construct `{"plan_id": "..."}` and get a real 402,
+ * exactly as core's own self-audit already does for itself.
+ *
+ * Plan ids/amounts/wallet come from core's own live, public, unauthenticated
+ * GET /api/v1/cloud/x402/subscriptions/plans — never a second hardcoded
+ * list. These are AINative subscription plans (hobbyist/pro/business/
+ * enterprise/cody_vcto), a DIFFERENT real product from PRICING_TIERS'
+ * Builder-specific Stripe plans (free/starter/pro/...) above — the two
+ * happen to share some tier names but are not the same offers and must
+ * never be conflated.
+ */
+export const X402_CROSSHOST_SERVER_URL = AINATIVE_API_BASE_URL
+export const X402_CROSSHOST_OPERATION_PATH = '/api/v1/cloud/x402/subscriptions/subscribe'
+export const X402_CROSSHOST_OPERATION_METHOD = 'post'
+
+interface X402PlanOffer {
+  method: 'x402'
+  plan_id: string
+  amount: string
+  currency: 'USDC'
+  network: string
+  pay_to: string
+  description: string
+}
+
+interface X402PlansResponse {
+  success?: boolean
+  data?: { plans?: Array<{ id?: string; name?: string; amount?: number; pay_to?: string; network?: string }> }
+}
+
+/**
+ * Fetches core's real, live x402 subscription plans and shapes them into
+ * `x-payment-info` offers. Returns `[]` — never a fabricated offer — on any
+ * failure (unreachable, malformed, a plan missing a required field), same
+ * honesty posture `buildPaymentOffers()` already has for the Stripe side.
+ */
+export async function buildX402CrosshostOffers(): Promise<X402PlanOffer[]> {
+  try {
+    const res = await fetch(`${AINATIVE_API_BASE_URL}/api/v1/cloud/x402/subscriptions/plans`, {
+      headers: { Accept: 'application/json' },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!res.ok) return []
+    const body = (await res.json()) as X402PlansResponse
+    const plans = body?.data?.plans
+    if (!Array.isArray(plans)) return []
+    const offers: X402PlanOffer[] = []
+    for (const plan of plans) {
+      if (!plan?.id || !plan?.amount || !plan?.pay_to) continue
+      offers.push({
+        method: 'x402',
+        plan_id: plan.id,
+        amount: String(plan.amount),
+        currency: 'USDC',
+        network: plan.network || 'circle',
+        pay_to: plan.pay_to,
+        description: `AINative ${plan.name || plan.id} plan — pay via x402/USDC`,
+      })
+    }
+    return offers
+  } catch {
+    return []
+  }
+}
 
 interface MppOffer {
   intent: 'charge'
@@ -125,6 +216,39 @@ export function annotateOpenApiWithMpp(spec: Record<string, any>): Record<string
   methodObj['x-payment-info'] = {
     offers,
     realm: 'builder.ainative.studio',
+  }
+  return spec
+}
+
+/**
+ * Add the x402 cross-host MPP challenge annotation (#2216) to an
+ * already-built OpenAPI spec object — separately from the Stripe/same-host
+ * annotation above, since this one needs a real network call (core's live
+ * plan list) and must degrade honestly (no offers → document unchanged,
+ * never a fabricated cross-host server entry advertising a capability that
+ * can't actually be probed). Requires `servers[0]` to already be
+ * `api.ainative.studio` for the checker to treat it as a distinct origin —
+ * see this module's top doc comment for why index 0 specifically matters.
+ * Mutates and returns `spec`.
+ */
+export async function annotateOpenApiWithX402Crosshost(spec: Record<string, any>): Promise<Record<string, any>> {
+  if (!spec || typeof spec !== 'object') return spec
+
+  const offers = await buildX402CrosshostOffers()
+  if (offers.length === 0) return spec
+
+  const paths = spec.paths
+  if (!paths || typeof paths !== 'object') return spec
+
+  const operation = paths[X402_CROSSHOST_OPERATION_PATH]
+  if (!operation || typeof operation !== 'object') return spec
+
+  const methodObj = operation[X402_CROSSHOST_OPERATION_METHOD]
+  if (!methodObj || typeof methodObj !== 'object') return spec
+
+  methodObj['x-payment-info'] = {
+    offers,
+    realm: 'api.ainative.studio',
   }
   return spec
 }
