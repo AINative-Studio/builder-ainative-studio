@@ -143,8 +143,27 @@ export default async function AppSubdirPage({ params }: Props) {
   // components/webmcp-tools.tsx's doc comment on CompanyWebMcpSsrBootstrap.
   const webMcpInfo = { slug, name: entry.name || slug, tagline: entry.tagline, idea: entry.idea }
 
+  // #2210 — AX "Structured Data" gap on generated sites: OpenGraph tags
+  // already pass (Builder's root metadata), but the real checker
+  // (core's check_structured_data) only awards its point when ALL THREE
+  // signals are present (JSON-LD + the literal "schema.org" string +
+  // OpenGraph) — a single signal scores 0 by its own integer-division
+  // scoring (weight=1, score = min(1, signals/3)). Real per-company data
+  // only (name/tagline/url) — no fabricated rating, price, or review data
+  // that doesn't exist for a generated company (#517's "never fabricate
+  // rating data" rule, same reasoning as app/page.tsx's own productJsonLd).
+  const companyJsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: entry.name || slug,
+    url: `${appOrigin}/build/${slug}`,
+    description: entry.tagline || entry.idea || `${entry.name || slug}, built and run on AINative.`,
+    applicationCategory: 'BusinessApplication',
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#fff' }}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(companyJsonLd) }} />
       <CompanyWebMcpSsrBootstrap info={webMcpInfo} />
       <CompanyWebMcpTools info={webMcpInfo} />
       {/* #2209 — AX "SSR Detection" gap on generated sites: the real company
