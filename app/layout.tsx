@@ -140,6 +140,10 @@ export const metadata: Metadata = {
   },
   alternates: {
     canonical: 'https://builder.ainative.studio',
+    // #2218 — real RSS feed over the genuine /guides articles (lib/data/
+    // seo-guides.ts), not a placeholder. Next.js renders this as a real
+    // <link rel="alternate" type="application/rss+xml"> tag in <head>.
+    types: { 'application/rss+xml': 'https://builder.ainative.studio/feed.xml' },
   },
   verification: {},
 }
