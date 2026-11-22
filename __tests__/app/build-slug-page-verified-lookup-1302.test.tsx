@@ -198,3 +198,39 @@ describe('/build/[slug] page — an offline or deleted company shows a clear mes
     expect(text).not.toContain('still being built')
   })
 })
+
+/**
+ * #2208 — AX "Claimable Resources" gap on generated sites: the real checker
+ * (core's check_claimable_resources) scans the company's own /build/{slug}
+ * page body for a fixed literal phrase list. Only true for a genuinely
+ * unclaimed company (no ownerEmail) — stating it on an already-owned
+ * company's page would be factually wrong.
+ */
+describe('/build/[slug] page — claimable-resource language (#2208)', () => {
+  const baseEntry = {
+    chatId: 'chat-1',
+    name: 'Wrench',
+    color: '#2f6d86',
+    idea: 'an idea',
+    track: 'company' as const,
+    slug: 'wrench',
+    createdAt: new Date().toISOString(),
+  }
+
+  it('states claimable-resource language, including the exact checker phrase, for an unclaimed (no ownerEmail) company', async () => {
+    resolveAppVerified.mockResolvedValueOnce({ entry: { ...baseEntry }, verified: true })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'wrench' }) })
+    const text = renderToText(tree).toLowerCase()
+    expect(text).toContain('claim this project')
+  })
+
+  it('does NOT state claimable-resource language for an already-claimed (has ownerEmail) company', async () => {
+    resolveAppVerified.mockResolvedValueOnce({
+      entry: { ...baseEntry, ownerEmail: 'founder@example.com' },
+      verified: true,
+    })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'wrench' }) })
+    const text = renderToText(tree).toLowerCase()
+    expect(text).not.toContain('claim this project')
+  })
+})

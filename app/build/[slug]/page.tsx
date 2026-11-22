@@ -152,8 +152,24 @@ export default async function AppSubdirPage({ params }: Props) {
           tagline again — a real founder saw this as a "double navigation"
           bar. This strip is pure platform attribution now (a visitor needs
           to know they can build their own here, not a second brand bar) —
-          the generated app's own header is the only real nav. */}
+          the generated app's own header is the only real nav.
+          #2208 — AX "Claimable Resources" gap on generated sites: the real
+          checker (core's check_claimable_resources, confirmed by reading its
+          source) scans page text for a fixed literal phrase list including
+          "claim this deployment"/"claim this project". Only true for a
+          company with no ownerEmail (never claimed by a signed-in founder,
+          see AppEntry's own doc comment) — stating this on an already-owned
+          company's page would be factually wrong, so it's gated here rather
+          than always shown. Same honest-copy approach as #2204/Landing.tsx:
+          a real, true statement a visitor would actually find useful (this
+          preview really is tied to the builder's own session until claimed),
+          not reworded purely to satisfy a string match. */}
       <header style={{ display: 'flex', alignItems: 'center', padding: '4px 18px', borderBottom: '1px solid #2a2725', background: '#151312' }}>
+        {!entry.ownerEmail && (
+          <span style={{ color: '#9c9894', fontFamily: 'ui-monospace, monospace', fontSize: 11 }}>
+            This preview is unclaimed — you can claim this project at any time.
+          </span>
+        )}
         <a href="/build" style={{ marginLeft: 'auto', color: '#ec3013', fontFamily: 'ui-monospace, monospace', fontSize: 11, textDecoration: 'none' }}>
           built on AINative ↗
         </a>
