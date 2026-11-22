@@ -147,6 +147,18 @@ export default async function AppSubdirPage({ params }: Props) {
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#fff' }}>
       <CompanyWebMcpSsrBootstrap info={webMcpInfo} />
       <CompanyWebMcpTools info={webMcpInfo} />
+      {/* #2209 — AX "SSR Detection" gap on generated sites: the real company
+          name/idea only ever appeared inside a <meta>/<title> tag or a
+          serialized React Flight payload (self.__next_f.push(...)) that
+          needs JS execution to render — confirmed via raw curl of the SSR
+          HTML, zero <h1> anywhere in the document. A real, server-rendered
+          <h1> here gives a non-JS crawler/agent the company name as actual
+          text, same signal the checker looks for. sr-only (not visually
+          hidden entirely, which some crawlers also skip) so it doesn't
+          create the #844 "double navigation bar" the attribution header's
+          own doc comment below already guards against — the generated
+          app's own in-iframe header stays the only SIGHTED nav. */}
+      <h1 className="sr-only">{entry.name || slug}</h1>
       {/* #844 follow-up: this used to repeat the company name + tagline right
           above the generated app's OWN header, which shows the same name/
           tagline again — a real founder saw this as a "double navigation"

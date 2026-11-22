@@ -56,6 +56,29 @@ function renderToText(node: React.ReactNode): string {
   return parts.join(' ')
 }
 
+/** #2209 — finds real host elements of a given tag (e.g. 'h1') anywhere in
+ *  the tree, returning their rendered text. Distinct from renderToText,
+ *  which only collects strings and can't tell whether a given piece of text
+ *  is inside a real <h1> vs any other element. */
+function findElementsByType(node: React.ReactNode, type: string): string[] {
+  const found: string[] = []
+  const visit = (n: React.ReactNode) => {
+    if (n == null || typeof n === 'boolean') return
+    if (typeof n === 'string' || typeof n === 'number') return
+    if (Array.isArray(n)) {
+      n.forEach(visit)
+      return
+    }
+    if (React.isValidElement(n)) {
+      const children = (n.props as { children?: React.ReactNode })?.children
+      if (n.type === type) found.push(renderToText(children))
+      visit(children)
+    }
+  }
+  visit(node)
+  return found
+}
+
 describe('/build/[slug] page — verified vs. unverified registry miss (#1302)', () => {
   it('shows the honest "could not load" message when the registry lookup itself failed (verified: false)', async () => {
     resolveAppVerified.mockResolvedValueOnce({ entry: null, verified: false })
@@ -232,5 +255,41 @@ describe('/build/[slug] page — claimable-resource language (#2208)', () => {
     const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'wrench' }) })
     const text = renderToText(tree).toLowerCase()
     expect(text).not.toContain('claim this project')
+  })
+})
+
+/**
+ * #2209 — AX "SSR Detection" gap on generated sites: real checker source
+ * (core's check_ssr_detection) gates a full pass on `has_h1 = "<h1" in
+ * body_lower` — a plain literal substring check. The real company name/idea
+ * never appeared as actual SSR'd text before this fix (only inside <meta>/
+ * <title> tags or a client-hydration-only React Flight payload).
+ */
+describe('/build/[slug] page — real server-rendered <h1> with the company name (#2209)', () => {
+  const baseEntry = {
+    chatId: 'chat-1',
+    name: 'Wrench',
+    color: '#2f6d86',
+    idea: 'an idea',
+    track: 'company' as const,
+    slug: 'wrench',
+    createdAt: new Date().toISOString(),
+  }
+
+  it('renders a real <h1> element containing the company name', async () => {
+    resolveAppVerified.mockResolvedValueOnce({ entry: { ...baseEntry }, verified: true })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'wrench' }) })
+    const h1s = findElementsByType(tree, 'h1')
+    expect(h1s).toContain('Wrench')
+  })
+
+  it('falls back to the slug for the <h1> when the company has no name', async () => {
+    resolveAppVerified.mockResolvedValueOnce({
+      entry: { ...baseEntry, name: undefined },
+      verified: true,
+    })
+    const tree = await AppSubdirPage({ params: Promise.resolve({ slug: 'wrench' }) })
+    const h1s = findElementsByType(tree, 'h1')
+    expect(h1s).toContain('wrench')
   })
 })
