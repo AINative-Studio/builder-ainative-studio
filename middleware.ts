@@ -581,11 +581,19 @@ export const config = {
      *   apple-icon (these have NO extension, so the ext-list below misses them —
      *   without this, /opengraph-image was auth-redirected to /login and social
      *   crawlers got "/login" instead of the OG image → black default preview).
-     * - static asset extensions (.png/.svg/.ico/.json/.webmanifest/.txt/.xml/.mp3/.wav/.ogg)
+     * - static asset extensions (.png/.svg/.ico/.json/.webmanifest/.txt/.xml/.md/.mp3/.wav/.ogg)
      *   mp3/wav/ogg added for the landing page's ambient audio (public/audio/*)
      *   — without this, an anonymous visitor's <audio> requests 307-redirected
      *   to /login instead of serving the file (confirmed live 2026-09-14).
+     *   #2218 — .md added: public/SKILL.md, public/auth.md (both real, already
+     *   shipped) were being falsely 404'd by the Markdown-negotiation logic
+     *   below whenever a request carried `Accept: text/markdown` — confirmed
+     *   live (`curl -H 'Accept: text/markdown' .../SKILL.md` → fabricated 404,
+     *   "does not exist", while a plain request serves the real file).
+     *   isLikelyUnknownPath's top-level-segment check has no way to know a
+     *   public/*.md file is real, so the exclusion belongs here, same as every
+     *   other static-asset extension already on this list.
      */
-    '/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.json|opengraph-image|twitter-image|icon|apple-icon|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webmanifest|txt|xml|json|css|js|woff2?|mp3|wav|ogg)$).*)',
+    '/((?!_next/static|_next/image|favicon.ico|sitemap.xml|robots.txt|manifest.json|opengraph-image|twitter-image|icon|apple-icon|.*\\.(?:png|jpg|jpeg|svg|gif|ico|webmanifest|txt|xml|md|json|css|js|woff2?|mp3|wav|ogg)$).*)',
   ],
 }

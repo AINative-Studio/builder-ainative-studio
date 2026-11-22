@@ -178,3 +178,50 @@ describe('middleware — /build/{slug} Markdown content negotiation (#2205/#2206
     expect(res.headers.get('content-type')).not.toBe('text/markdown; charset=utf-8')
   })
 })
+
+/**
+ * #2218 — `config.matcher`'s static-asset exclusion list already skipped
+ * middleware entirely for .txt/.xml/.json/etc, but NOT .md, even though real
+ * static .md files exist (public/SKILL.md, public/auth.md, and the new
+ * public/AGENTS.md). Confirmed live before this fix:
+ * `curl -H 'Accept: text/markdown' https://builder.ainative.studio/SKILL.md`
+ * returned a FABRICATED 404 ("does not exist") via the Markdown-404
+ * fallback below, even though the real file serves fine on a plain
+ * request — isLikelyUnknownPath has no way to know a public/*.md path is
+ * real. The fix adds `.md` to the same extension-exclusion list every
+ * other static-asset extension is already on, so middleware (and this
+ * false-404 logic) never runs for these paths at all in production — this
+ * test asserts that against the real exported matcher pattern directly,
+ * since Next.js's actual request-to-middleware dispatch (which `matcher`
+ * configures) isn't itself exercised by calling `middleware()` in a test.
+ */
+describe('middleware — config.matcher excludes real static .md files (#2218)', () => {
+  // The matcher value itself, re-imported fresh so this test breaks loudly
+  // if the pattern/shape ever changes, rather than silently testing a stale
+  // copy pasted into the test file.
+  async function matcherPattern(): Promise<RegExp> {
+    const mod = await import('@/middleware')
+    const last = mod.config.matcher[mod.config.matcher.length - 1]
+    return new RegExp(last)
+  }
+
+  it('does NOT match real static .md files — middleware never runs for them', async () => {
+    const pattern = await matcherPattern()
+    expect(pattern.test('/SKILL.md')).toBe(false)
+    expect(pattern.test('/auth.md')).toBe(false)
+    expect(pattern.test('/AGENTS.md')).toBe(false)
+  })
+
+  it('still matches a real page path — the exclusion is scoped to the extension, not overly broad', async () => {
+    const pattern = await matcherPattern()
+    expect(pattern.test('/pricing')).toBe(true)
+    expect(pattern.test('/build/wrench')).toBe(true)
+  })
+
+  it('still excludes the other pre-existing static-asset extensions (no regression from editing this pattern)', async () => {
+    const pattern = await matcherPattern()
+    for (const path of ['/llms.txt', '/sitemap.xml', '/manifest.json', '/favicon.ico']) {
+      expect(pattern.test(path)).toBe(false)
+    }
+  })
+})
