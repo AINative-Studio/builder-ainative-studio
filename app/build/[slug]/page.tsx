@@ -143,8 +143,22 @@ export default async function AppSubdirPage({ params }: Props) {
   // components/webmcp-tools.tsx's doc comment on CompanyWebMcpSsrBootstrap.
   const webMcpInfo = { slug, name: entry.name || slug, tagline: entry.tagline, idea: entry.idea }
 
+  // #2210 — AX "Structured Data" gap: the real checker scans this page's SSR
+  // HTML for a parseable `<script type="application/ld+json">` block and
+  // gives zero credit for OpenGraph tags alone. Minimal real Organization
+  // schema from the already-resolved registry entry — name/description/url
+  // only, nothing fabricated (no rating, no pricing that doesn't exist).
+  const jsonLd = {
+    '@context': 'https://schema.org',
+    '@type': 'Organization',
+    name: entry.name || slug,
+    description: entry.tagline || entry.idea || undefined,
+    url: `https://builder.ainative.studio/build/${slug}`,
+  }
+
   return (
     <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: '#fff' }}>
+      <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(jsonLd) }} />
       <CompanyWebMcpSsrBootstrap info={webMcpInfo} />
       <CompanyWebMcpTools info={webMcpInfo} />
       {/* #844 follow-up: this used to repeat the company name + tagline right
