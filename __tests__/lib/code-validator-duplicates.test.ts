@@ -465,4 +465,88 @@ describe('code-validator: LOCAL DECL SHADOWS IMPORT is comment/string-blind', ()
     expect(/import\s*\{[^}]*\bButton\b[^}]*\}\s*from/.test(result.code)).toBe(false)
     expect(/function Button\b/.test(result.code)).toBe(true)
   })
+
+  /**
+   * #2220 — the "shadowed by local declaration" fix above (and the
+   * equivalent prod "Button" case) scanned the WHOLE multi-file
+   * `// --- FILE: x ---` blob for local declarations before this fix,
+   * so a real cross-file import (file B legitimately importing a name file
+   * A exports) read as "shadowed" purely because file A's own top-level
+   * `export const Name` showed up in the same global scan — stripping a
+   * perfectly correct import and producing a false "Element type is
+   * invalid" downstream. Confirmed live for real companies `revela`
+   * (XIcon/MenuIcon from a sibling Icons.tsx) and `younova` (TaskList from
+   * a sibling TaskList.tsx), both already-fixed-and-closed companies this
+   * bug was making the overnight render-integrity loop re-flag as broken.
+   */
+  describe('cross-file FILE marker scoping (#2220)', () => {
+    it('does NOT drop a named import satisfied by a SIBLING file\'s export', () => {
+      const code = [
+        '// --- FILE: src/components/Icons.tsx ---',
+        "import React from 'react';",
+        'export const XIcon = (props) => <div {...props} />;',
+        'export const MenuIcon = (props) => <div {...props} />;',
+        '',
+        '// --- FILE: src/components/Navbar.tsx ---',
+        "import { XIcon, MenuIcon } from './Icons'",
+        "import React, { useState } from 'react';",
+        'export const Navbar = () => {',
+        '  const [open] = useState(false);',
+        '  return open ? <XIcon size={24} /> : <MenuIcon size={24} />;',
+        '};',
+      ].join('\n')
+
+      const result = validateJavaScriptCode(code)
+
+      expect(result.valid).toBe(true)
+      expect(result.fixes?.some((f) => /shadowed by local declaration/i.test(f))).toBeFalsy()
+      expect(/import\s*\{\s*XIcon,\s*MenuIcon\s*\}\s*from\s*'\.\/Icons'/.test(result.code)).toBe(true)
+    })
+
+    it('still drops a genuine SAME-FILE shadow when FILE markers are present', () => {
+      const code = [
+        '// --- FILE: src/App.tsx ---',
+        "import { Button } from './components/ui/button'",
+        "function Button({ children }) { return <button>{children}</button>; }",
+        'export default function App(){ return <Button>Hi</Button>; }',
+      ].join('\n')
+
+      const result = validateJavaScriptCode(code)
+
+      expect(result.valid).toBe(true)
+      expect(/import\s*\{[^}]*\bButton\b[^}]*\}\s*from/.test(result.code)).toBe(false)
+      expect(/function Button\b/.test(result.code)).toBe(true)
+    })
+
+    it('does not cross-file-shadow a THIRD file that genuinely needs the import', () => {
+      // Three files: A exports Icon, B shadows it locally (legit same-file
+      // shadow, should still be dropped there), C imports it from A (must
+      // survive — C's own segment has no local Icon declaration at all).
+      const code = [
+        '// --- FILE: src/Icons.tsx ---',
+        'export const Icon = () => <div/>;',
+        '',
+        '// --- FILE: src/Weird.tsx ---',
+        "import { Icon } from './Icons'",
+        'function Icon(){ return <span/>; }', // same-file shadow
+        'export default function Weird(){ return <Icon/>; }',
+        '',
+        '// --- FILE: src/Clean.tsx ---',
+        "import { Icon } from './Icons'",
+        'export default function Clean(){ return <Icon/>; }',
+      ].join('\n')
+
+      const result = validateJavaScriptCode(code)
+
+      expect(result.valid).toBe(true)
+      // Weird.tsx's import of Icon was correctly dropped (real same-file shadow)
+      const weirdSection = result.code.split('--- FILE: src/Clean.tsx ---')[0]
+      expect(/import\s*\{[^}]*\bIcon\b[^}]*\}\s*from\s*'\.\/Icons'/.test(
+        weirdSection.split('--- FILE: src/Weird.tsx ---')[1] || '',
+      )).toBe(false)
+      // Clean.tsx's import of Icon survives (no local shadow in its own file)
+      const cleanSection = result.code.split('--- FILE: src/Clean.tsx ---')[1] || ''
+      expect(/import\s*\{[^}]*\bIcon\b[^}]*\}\s*from\s*'\.\/Icons'/.test(cleanSection)).toBe(true)
+    })
+  })
 })

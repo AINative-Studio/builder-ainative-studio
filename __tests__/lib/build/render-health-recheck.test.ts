@@ -63,9 +63,14 @@ describe('checkRenderHealth', () => {
     expect(result.truncatedFiles).toEqual([])
     expect(result.validationError).toContain('sensorReadings')
     expect(result.clean).toBe(false)
-    // Not a missingImports/truncatedFiles-class defect, so the self-heal
-    // check has nothing to report either way.
-    expect(result.confirmedRenderBreaking).toBe(false)
+    // #2220: a bare undefined-VARIABLE reference (not a JSX component) has
+    // no applicable self-heal injector in buildSandpackFiles() — it
+    // genuinely survives self-heal, so this is correctly confirmedRenderBreaking
+    // now that builtValidationError re-checks validateJavaScriptCode against
+    // the self-healed output too (previously this fell through as neither
+    // selfHealed nor confirmedRenderBreaking — a real gap, not a safe "fine").
+    expect(result.builtValidationError).toContain('sensorReadings')
+    expect(result.confirmedRenderBreaking).toBe(true)
     expect(result.selfHealed).toBe(false)
   })
 
@@ -101,6 +106,39 @@ describe('checkRenderHealth', () => {
     expect(result.truncatedFiles).toContain('/src/components/Pricing.tsx')
     expect(result.clean).toBe(false)
     expect(result.builtTruncatedFiles).toEqual([])
+    expect(result.selfHealed).toBe(true)
+    expect(result.confirmedRenderBreaking).toBe(false)
+  })
+
+  /**
+   * #2220 — validationError (validateJavaScriptCode's "Element type is
+   * invalid" check) was never re-verified against the self-healed
+   * buildSandpackFiles() output, only missingImports/truncatedFiles were
+   * (#2198's fix). A bare JSX identifier used with zero import anywhere —
+   * but genuinely defined/exported in a SIBLING file — is exactly the
+   * shape buildSandpackFiles()'s sibling-import injector resolves, yet
+   * this read as validationError-driven "confirmed render-breaking" before
+   * this fix. Confirmed live for real companies `revela`
+   * (XIcon/MenuIcon/.../ from a sibling Icons.tsx) and `younova` (TaskList
+   * from a sibling default-exported TaskList.tsx) — both already fixed and
+   * closed (#2026/#2027, #2021/#2029/#2031), which this bug in the
+   * RE-VERIFICATION tool itself was making read as still-broken again.
+   */
+  it('reports selfHealed:true (not confirmedRenderBreaking) for a bare JSX identifier the sibling-import injector resolves (the revela/younova #2220 shape)', () => {
+    const files = {
+      '/src/App.tsx': `export default function App() {\n  return <Navbar />\n}`,
+      '/src/components/Icons.tsx': `export const XIcon = (props) => <div {...props} />;\nexport const MenuIcon = (props) => <div {...props} />;`,
+      '/src/components/Navbar.tsx': `import React, { useState } from 'react'\nexport const Navbar = () => {\n  const [open] = useState(false);\n  return open ? <XIcon size={24} /> : <MenuIcon size={24} />;\n}`,
+    }
+    const result = checkRenderHealth(files)
+    // Raw persisted Navbar.tsx really does reference XIcon/MenuIcon with no
+    // import anywhere — a genuine raw validationError.
+    expect(result.validationError).toContain('is used but not defined or imported')
+    expect(result.clean).toBe(false)
+    // But buildSandpackFiles()'s sibling-import injector adds the correct
+    // `import { XIcon, MenuIcon } from './Icons'`, so this never reaches a
+    // real visitor as a crash.
+    expect(result.builtValidationError).toBeNull()
     expect(result.selfHealed).toBe(true)
     expect(result.confirmedRenderBreaking).toBe(false)
   })
