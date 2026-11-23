@@ -23,6 +23,7 @@ import { findMissingLocalImports, findTruncatedFiles } from './completeness-gate
 import { validateJavaScriptCode } from '../code-validator'
 import { buildSandpackFiles } from '../sandpack/build-files'
 import { getBuiltinFiles } from '../sandpack/setup'
+import { shouldUseSandpack } from './preview-engine'
 
 const CODE_FILE = /\.(t|j)sx?$/
 
@@ -118,6 +119,21 @@ export interface RenderHealthResult {
   builtTruncatedFiles: string[]
   confirmedRenderBreaking: boolean
   selfHealed: boolean
+  /**
+   * #2221 — true when `shouldUseSandpack(files)` is false, i.e. this
+   * company's REAL serving path is `app/api/preview/[id]/route.ts`'s
+   * single-file flatten of `gen.generatedCode` (a separate text blob), not
+   * the `files` map this function validates via `buildSandpackFiles()`.
+   * Confirmed live for `driftly` (#2151/#2221): `checkRenderHealth()`
+   * reported `clean: true` from a genuinely-clean `files` map while the
+   * real page stayed broken, because `generatedCode` had drifted from
+   * `files` (#1994/#2153) and this function never looks at `generatedCode`
+   * at all. A `clean`/`selfHealed` verdict on a result with
+   * `singleFileFlowUncovered: true` is NOT a real-page confirmation —
+   * callers (e.g. scripts/recheck-known-render-issues.ts) should surface
+   * this rather than suggest closing a tracking issue on it alone.
+   */
+  singleFileFlowUncovered: boolean
 }
 
 /**
@@ -145,6 +161,7 @@ export function checkRenderHealth(files: Record<string, string> | undefined): Re
       builtTruncatedFiles: [],
       confirmedRenderBreaking: false,
       selfHealed: false,
+      singleFileFlowUncovered: false,
     }
   }
 
@@ -209,5 +226,6 @@ export function checkRenderHealth(files: Record<string, string> | undefined): Re
     builtTruncatedFiles,
     confirmedRenderBreaking,
     selfHealed,
+    singleFileFlowUncovered: !shouldUseSandpack(files),
   }
 }
