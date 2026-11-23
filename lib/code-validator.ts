@@ -633,20 +633,45 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
   // with `Duplicate declaration "Button"`. The local definition is the real
   // component, so drop the conflicting named import specifier (builder#64).
   {
-    const localDecls = new Set<string>()
-    const declRe = /^(?:export\s+(?:default\s+)?)?(?:function|class|const|let)\s+([A-Za-z_$][\w$]*)/gm
-    // Scan a comment/string-masked view (see maskCommentsAndStringsForShadowScan's
-    // own doc comment) — a declaration-shaped line inside a disabled comment or a
-    // template-literal demo snippet must never register as a real local
-    // declaration here, or the import rewrite below strips the file's only real
-    // binding for that name as "shadowed".
-    const maskedForShadowScan = maskCommentsAndStringsForShadowScan(fixedCode)
-    let dm: RegExpExecArray | null
-    while ((dm = declRe.exec(maskedForShadowScan)) !== null) localDecls.add(dm[1])
+    // #2220-root-cause: multi-file output (`// --- FILE: x ---` markers, the
+    // same convention Fix 11 above already respects) legitimately has file A
+    // `export const Icon = ...` and file B `import { Icon } from './A'` —
+    // that is a normal cross-file import, NOT a same-file shadow. Scanning
+    // `fixedCode` as one undivided blob (the original form of this fix) put
+    // every file's top-level declarations into one global `localDecls` set,
+    // so file B's perfectly legitimate import of file A's real export read
+    // as "shadowed by a local declaration" and got silently stripped —
+    // confirmed live for `revela` (XIcon/MenuIcon from './Icons') and
+    // `younova` (TaskList from './components/TaskList'), both re-flagged as
+    // "Element type is invalid" by validateJavaScriptCode's downstream
+    // findUnresolvedComponents() check purely because of this strip, not
+    // because either company's real code was ever broken. Scope the
+    // declaration scan AND the strip to one file segment at a time — a
+    // single-file (no-marker) payload is just one segment, so that path is
+    // unchanged.
+    const FILE_MARKER_GLOBAL = /^\/\/\s*---\s*FILE:\s*.+?\s*---\s*$/gm
+    const markerIndices: number[] = []
+    let fmMatch: RegExpExecArray | null
+    while ((fmMatch = FILE_MARKER_GLOBAL.exec(fixedCode)) !== null) markerIndices.push(fmMatch.index)
+    const boundaries = markerIndices.length === 0 || markerIndices[0] !== 0 ? [0, ...markerIndices] : markerIndices
+    const removedShadowed: string[] = []
+    const segments = boundaries.map((start, i) => fixedCode.slice(start, boundaries[i + 1] ?? fixedCode.length))
 
-    if (localDecls.size > 0) {
-      const removedShadowed: string[] = []
-      fixedCode = fixedCode.replace(
+    const fixedSegments = segments.map((segment) => {
+      const localDecls = new Set<string>()
+      const declRe = /^(?:export\s+(?:default\s+)?)?(?:function|class|const|let)\s+([A-Za-z_$][\w$]*)/gm
+      // Scan a comment/string-masked view (see maskCommentsAndStringsForShadowScan's
+      // own doc comment) — a declaration-shaped line inside a disabled comment or a
+      // template-literal demo snippet must never register as a real local
+      // declaration here, or the import rewrite below strips the file's only real
+      // binding for that name as "shadowed".
+      const maskedForShadowScan = maskCommentsAndStringsForShadowScan(segment)
+      let dm: RegExpExecArray | null
+      while ((dm = declRe.exec(maskedForShadowScan)) !== null) localDecls.add(dm[1])
+
+      if (localDecls.size === 0) return segment
+
+      return segment.replace(
         // Same `type\s+` pitfall as Fix 11 above (#1099 item 6): it must be
         // its own capture group, consumed before the optional default-name
         // group, or `import type { X } from 'y'` gets `type` mistaken for a
@@ -668,9 +693,11 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
           return `${pre}${typeKeyword || ''}${parts.join(', ')}${tail}`
         },
       )
-      if (removedShadowed.length > 0) {
-        fixes.push(`Removed import(s) shadowed by local declaration: ${[...new Set(removedShadowed)].join(', ')}`)
-      }
+    })
+
+    if (removedShadowed.length > 0) {
+      fixedCode = fixedSegments.join('')
+      fixes.push(`Removed import(s) shadowed by local declaration: ${[...new Set(removedShadowed)].join(', ')}`)
     }
   }
 

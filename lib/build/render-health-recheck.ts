@@ -77,6 +77,18 @@ export interface RenderHealthResult {
   truncatedFiles: string[]
   /** validateJavaScriptCode()'s error (duplicate decl / unresolved component / object-as-child / undefined reference / fatal parse), or null when clean. */
   validationError: string | null
+  /**
+   * #2220 — same validateJavaScriptCode() error, but re-run against
+   * buildSandpackFiles()'s self-healed output instead of the raw persisted
+   * blob. missingImports/truncatedFiles already got this treatment from
+   * #2198 (builtMissingImports/builtTruncatedFiles below); validationError
+   * did not, which let a bare-undeclared-JSX-identifier case the sibling-
+   * import injector already resolves (e.g. #2026/#2029's revela/younova,
+   * both genuinely fixed on main) still read as "confirmed render-breaking"
+   * here. Null whenever the self-healed pipeline itself throws (left at the
+   * raw value in that case — see the try/catch below) or when it's clean.
+   */
+  builtValidationError: string | null
   /** True only when hasFilesMap and every check below passed. */
   clean: boolean
   /**
@@ -127,6 +139,7 @@ export function checkRenderHealth(files: Record<string, string> | undefined): Re
       missingImports: [],
       truncatedFiles: [],
       validationError: null,
+      builtValidationError: null,
       clean: false,
       builtMissingImports: [],
       builtTruncatedFiles: [],
@@ -156,18 +169,32 @@ export function checkRenderHealth(files: Record<string, string> | undefined): Re
   // finding, not something this re-check should hide a crash behind.
   let builtMissingImports = missingImports
   let builtTruncatedFiles = truncatedFiles
+  // #2220: starts as the raw validationError (same fail-open fallback as
+  // builtMissingImports/builtTruncatedFiles above) — if the self-heal
+  // pipeline throws before this gets overwritten below, a raw validation
+  // failure is never silently treated as resolved.
+  let builtValidationError: string | null = validationError
   try {
     const built = buildSandpackFiles(files)
     const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
     const builtAppCode = built['/App.tsx'] ?? primaryCode
     builtMissingImports = findMissingLocalImports(builtAppCode, built)
     builtTruncatedFiles = findTruncatedFiles(built).filter((p) => !builtinPaths.has(p))
+
+    const builtCompanyFiles = Object.fromEntries(
+      Object.entries(built).filter(([path]) => !builtinPaths.has(path)),
+    )
+    const builtBlob = buildFileMarkerBlob(builtCompanyFiles)
+    const builtValidation = validateJavaScriptCode(builtBlob, { importsStripped: false, lenient: true })
+    builtValidationError = builtValidation.valid ? null : builtValidation.error || 'invalid'
   } catch {
-    // leave builtMissingImports/builtTruncatedFiles at the raw fallback above
+    // leave builtMissingImports/builtTruncatedFiles/builtValidationError at
+    // their raw fallbacks set above the try block
   }
 
-  const hadRawDefect = missingImports.length > 0 || truncatedFiles.length > 0
-  const survivesSelfHeal = builtMissingImports.length > 0 || builtTruncatedFiles.length > 0
+  const hadRawDefect = missingImports.length > 0 || truncatedFiles.length > 0 || validationError !== null
+  const survivesSelfHeal =
+    builtMissingImports.length > 0 || builtTruncatedFiles.length > 0 || builtValidationError !== null
   const confirmedRenderBreaking = hadRawDefect && survivesSelfHeal
   const selfHealed = hadRawDefect && !survivesSelfHeal
 
@@ -176,6 +203,7 @@ export function checkRenderHealth(files: Record<string, string> | undefined): Re
     missingImports,
     truncatedFiles,
     validationError,
+    builtValidationError,
     clean,
     builtMissingImports,
     builtTruncatedFiles,

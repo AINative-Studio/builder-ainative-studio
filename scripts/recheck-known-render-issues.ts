@@ -112,6 +112,18 @@ export const TRACKED_COMPANIES: TrackedCompany[] = [
     issueRef: '#2151',
     note: 'Confirmed CLEAN as of 2026-11-20 (likely manually regenerated) — kept here so a regression shows up immediately.',
   },
+  {
+    label: 'revela',
+    chatId: '-TRhRDvEXrmh-eQBF0zGr',
+    issueRef: '#2026, #2027, #2220',
+    note: 'Raw Navbar.tsx/HowItWorks.tsx use XIcon/MenuIcon/LoginIcon/AnalyticsIcon/LightningIcon with zero imports — genuinely self-healed by buildSandpackFiles()\'s sibling-import injector (confirmed #2220). Before #2220\'s fix this read as CONFIRMED RENDER-BREAKING because validationError was never re-checked against the self-healed output — kept here so a real regression in that injector shows up immediately.',
+  },
+  {
+    label: 'younova',
+    chatId: 'hN2q6yoEMkCXzrcbm-5-6',
+    issueRef: '#2021, #2029, #2031, #2220',
+    note: 'Raw App.tsx uses TaskList with zero import — genuinely self-healed by buildLocalDefaultExportMap()\'s default-export sibling injector (confirmed #2220). Same before/after-#2220 note as revela above.',
+  },
 ]
 
 async function fetchGenerationFiles(chatId: string): Promise<Record<string, string> | undefined> {
@@ -145,24 +157,21 @@ async function main() {
         continue
       }
 
-      // #2198: result.selfHealed is only about missingImports/truncatedFiles
-      // — a raw structural defect that lib/sandpack/build-files.ts's real
-      // self-heal pipeline (stubTruncatedFiles/stubMissingLocalComponents)
-      // already repairs before Sandpack ever renders it, so it's a real
-      // generation-quality gap worth the completeness-backfill sweep, but
-      // NOT a live render-breaking crash. validateJavaScriptCode's
-      // undefined-reference/parse-error check is a separate signal this
-      // re-check does NOT re-verify against the self-healed pipeline, so a
-      // validationError always counts as still-confirmed-broken here rather
-      // than risk the same false-clean mistake in the other direction.
+      // #2220: result.selfHealed/result.confirmedRenderBreaking now account
+      // for validateJavaScriptCode's validationError too (re-run against the
+      // self-healed buildSandpackFiles() output as builtValidationError), not
+      // just missingImports/truncatedFiles — so a raw defect of ANY of the
+      // three kinds that the real pipeline already repairs before Sandpack
+      // renders it is correctly classified selfHealed here, not confirmed-broken.
       if (result.clean) {
         clean++
         console.log(`${prefix} CLEAN — re-verify and consider updating the tracking issue`)
-      } else if (result.selfHealed && !result.validationError) {
+      } else if (result.selfHealed) {
         clean++
         console.log(
           `${prefix} RAW DEFECT, SELF-HEALED — not a live crash (missingImports=` +
-            `${JSON.stringify(result.missingImports)} truncatedFiles=${JSON.stringify(result.truncatedFiles)}); ` +
+            `${JSON.stringify(result.missingImports)} truncatedFiles=${JSON.stringify(result.truncatedFiles)} ` +
+            `validationError=${result.validationError ? JSON.stringify(result.validationError) : 'null'}); ` +
             `feeds the completeness-backfill sweep, not a render-breaking claim`,
         )
       } else {
@@ -170,7 +179,7 @@ async function main() {
         console.log(
           `${prefix} CONFIRMED RENDER-BREAKING builtMissingImports=${JSON.stringify(result.builtMissingImports)} ` +
             `builtTruncatedFiles=${JSON.stringify(result.builtTruncatedFiles)} ` +
-            `validationError=${result.validationError ? JSON.stringify(result.validationError) : 'null'}`,
+            `builtValidationError=${result.builtValidationError ? JSON.stringify(result.builtValidationError) : 'null'}`,
         )
       }
       if (company.note) console.log(`      note: ${company.note}`)
