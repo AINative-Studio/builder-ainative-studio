@@ -142,6 +142,36 @@ describe('checkRenderHealth', () => {
     expect(result.selfHealed).toBe(true)
     expect(result.confirmedRenderBreaking).toBe(false)
   })
+
+  /**
+   * #2221 — checkRenderHealth() only ever validates the `files` map via
+   * buildSandpackFiles(). For a genuinely single-file company (no cross-file
+   * imports, one real source file), the page a visitor actually hits is
+   * served from a SEPARATE `generatedCode` text blob
+   * (app/api/preview/[id]/route.ts) that can drift from `files`
+   * (#1994/#2153) — confirmed live for driftly, which this function reports
+   * clean:true while the real page stays broken. singleFileFlowUncovered
+   * flags this gap so a caller never treats a clean/selfHealed verdict here
+   * as full confirmation on its own.
+   */
+  it('reports singleFileFlowUncovered:true for a genuinely single-file app (no cross-file imports)', () => {
+    const files = {
+      '/src/App.tsx': `export default function App() {\n  return <div>Hi</div>\n}`,
+    }
+    const result = checkRenderHealth(files)
+    expect(result.clean).toBe(true)
+    expect(result.singleFileFlowUncovered).toBe(true)
+  })
+
+  it('reports singleFileFlowUncovered:false for a genuinely multi-file app with cross-file imports', () => {
+    const files = {
+      '/src/App.tsx': `import Header from './components/Header'\nexport default function App() {\n  return <div><Header /></div>\n}`,
+      '/src/components/Header.tsx': `export default function Header() {\n  return <header>Hi</header>\n}`,
+    }
+    const result = checkRenderHealth(files)
+    expect(result.clean).toBe(true)
+    expect(result.singleFileFlowUncovered).toBe(false)
+  })
 })
 
 describe('buildFileMarkerBlob', () => {

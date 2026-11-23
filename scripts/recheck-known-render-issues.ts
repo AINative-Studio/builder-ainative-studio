@@ -109,8 +109,8 @@ export const TRACKED_COMPANIES: TrackedCompany[] = [
   {
     label: 'driftly',
     chatId: '94PwzN2gZ_8H9CovLRI9_',
-    issueRef: '#2151',
-    note: 'Confirmed CLEAN as of 2026-11-20 (likely manually regenerated) — kept here so a regression shows up immediately.',
+    issueRef: '#2151, #2221',
+    note: "This tool's files-map check reports CLEAN, but #2221 confirmed the real live page (GET /api/preview/{chatId}) is still broken — the files map and generatedCode blob have drifted apart (#1994/#2153). This is exactly the singleFileFlowUncovered:true case: do NOT treat a clean result here as #2151 being fixed until PR #2155 (generatedCode/files drift fix) lands and the real preview URL is re-checked directly.",
   },
   {
     label: 'revela',
@@ -163,16 +163,30 @@ async function main() {
       // just missingImports/truncatedFiles — so a raw defect of ANY of the
       // three kinds that the real pipeline already repairs before Sandpack
       // renders it is correctly classified selfHealed here, not confirmed-broken.
+      // #2221: a clean/selfHealed verdict only covers the `files` map via
+      // buildSandpackFiles() — for a single-file company (shouldUseSandpack
+      // false), the REAL page is served from a separate `generatedCode` blob
+      // this function never looks at, which can drift from `files`
+      // (#1994/#2153, confirmed live for driftly/#2151). Never suggest
+      // closing a tracking issue off a clean/selfHealed result alone when
+      // this is true — it means "the files map looks fine", not "the real
+      // page is fine".
+      const uncoveredSuffix = result.singleFileFlowUncovered
+        ? ' — WARNING: single-file preview path (generatedCode) not covered by this check; do NOT close the tracking issue off this result alone, verify the real /api/preview/{chatId} page too'
+        : ''
+
       if (result.clean) {
         clean++
-        console.log(`${prefix} CLEAN — re-verify and consider updating the tracking issue`)
+        console.log(
+          `${prefix} CLEAN${result.singleFileFlowUncovered ? '' : ' — re-verify and consider updating the tracking issue'}${uncoveredSuffix}`,
+        )
       } else if (result.selfHealed) {
         clean++
         console.log(
           `${prefix} RAW DEFECT, SELF-HEALED — not a live crash (missingImports=` +
             `${JSON.stringify(result.missingImports)} truncatedFiles=${JSON.stringify(result.truncatedFiles)} ` +
             `validationError=${result.validationError ? JSON.stringify(result.validationError) : 'null'}); ` +
-            `feeds the completeness-backfill sweep, not a render-breaking claim`,
+            `feeds the completeness-backfill sweep, not a render-breaking claim${uncoveredSuffix}`,
         )
       } else {
         confirmedBroken++
