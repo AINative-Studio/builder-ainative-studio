@@ -367,7 +367,21 @@ const CACHE_TTL_MS = 60_000
 type GenCacheEntry = { rows: any[]; fetchedAt: number }
 const genCache = new Map<number, GenCacheEntry>()
 
-export async function listGenerations(limit = 50): Promise<any[]> {
+// Default raised from the old hard 1000-row read every call site used
+// (#2188): the table is append-only — every chat turn, not just every
+// company, adds a row — so a fixed cap this low silently drops newer rows
+// off the showcase gallery AND the `/build/{slug}` unregistered-company
+// fallback (resolveShowcaseOnlyBySlug) AND the obedience-backfill sweep as
+// the table grows past it, with no error or visible symptom beyond "that
+// company just doesn't show up". 5000 matches the ceiling already used
+// elsewhere in this codebase for similarly unbounded ZeroDB tables (e.g.
+// lib/build/anon-drafts.ts, lib/poppy/conversations.ts,
+// app/api/admin/funnel-summary/route.ts) — not a permanent fix (the table
+// has no upper bound), but it buys the same multiple-of-growth headroom
+// those call sites rely on. The underlying lack of any stable server-side
+// ordering guarantee on this endpoint (see loadGeneration's comment above)
+// is a separate, deeper concern this does not address.
+export async function listGenerations(limit = 5000): Promise<any[]> {
   const cached = genCache.get(limit)
   const now = Date.now()
   if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {

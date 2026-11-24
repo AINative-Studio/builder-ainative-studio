@@ -1862,7 +1862,7 @@ export async function resolveAppVerified(slug: string): Promise<{ entry: AppEntr
 export async function resolveShowcaseOnlyBySlug(slug: string): Promise<{ chatId: string; name: string; idea: string } | null> {
   if (!slug) return null
   try {
-    const rows = await listGenerations(1000)
+    const rows = await listGenerations(5000)
     for (const r of rows) {
       if (r?.is_showcase !== true && r?.is_showcase !== undefined) continue
       if (!isQualityApp(r.generated_code || '', r.chat_id)) continue
