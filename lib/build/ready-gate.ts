@@ -26,6 +26,7 @@ import { isRenderable, type ParseGateResult } from '@/lib/code-validator'
 import {
   findMissingLocalImports,
   findUndeclaredJsxComponents,
+  findMissingReactHookImports,
   findTruncatedFiles,
   findMissingDefaultExports,
   findDuplicateLandmarkElements,
@@ -186,6 +187,23 @@ export async function checkAppReady(chatId: string): Promise<ReadyCheck> {
       ok: false,
       reason: 'missing_local_import',
       error: `Undeclared JSX component(s) — used but never imported: ${undeclared.join(', ')}`,
+    }
+  }
+
+  // HOOK-IMPORT GATE (#2230, "the cartly repro"): a file can call a built-in
+  // React hook (useState/useEffect/...) with zero import of it in that file —
+  // neither of the two gates above catches this (findMissingLocalImports only
+  // walks LOCAL specifiers; findUndeclaredJsxComponents only walks JSX TAG
+  // usage, and a bare hook call is neither). Each file bundles as its own ES
+  // module, so this throws a real ReferenceError at render time. Same 422
+  // retry path as the completeness gates above.
+  const missingHooks = findMissingReactHookImports(stored.code, stored.files ?? undefined)
+  if (missingHooks.length > 0) {
+    return {
+      checked: true,
+      ok: false,
+      reason: 'missing_hook_import',
+      error: `React hook(s) used but never imported from 'react' in their file: ${missingHooks.join(', ')}`,
     }
   }
 

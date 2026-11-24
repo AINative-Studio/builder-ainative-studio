@@ -28,6 +28,7 @@ import { checkAppReady } from '@/lib/build/ready-gate'
 
 const COMPLETE_BLOB = [
   `// --- FILE: src/App.tsx ---`,
+  `import { useState } from 'react'`,
   `import Sidebar from './components/Sidebar'`,
   `export default function App(){ const [n, setN] = useState(0); return <div><Sidebar/><button onClick={() => setN(n + 1)}>{n}</button></div> }`,
   `// --- FILE: src/components/Sidebar.tsx ---`,
