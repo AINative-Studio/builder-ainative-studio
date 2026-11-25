@@ -133,6 +133,30 @@ describe('runTaskResolutions (#433)', () => {
     expect(h.updateTask).toHaveBeenCalledWith('a::b', 't1', expect.objectContaining({ stage: 'todo' }))
   })
 
+  it('#2202 — tags a Gitea tree-lookup 400 rejection as "Stuck" instead of the generic "unexpected error" message, so a permanently-broken repo is distinguishable from a one-off throw', async () => {
+    const { GiteaTreeLookupError } = await import('@/lib/git/gitea-client')
+    h.listTasks.mockResolvedValue([task({ id: 't-stuck' })])
+    h.resolveTask.mockRejectedValue(new GiteaTreeLookupError('ws-acme', 'acme', 400))
+    await expect(runTaskResolutions('a::b', 'my-co')).resolves.toEqual({ attempted: 1, completed: 0, merged: 0, redeployed: 0, reaped: 0, completedNoCoverage: 0, deferred: 1 })
+    expect(h.updateTask).toHaveBeenCalledWith('a::b', 't-stuck', expect.objectContaining({
+      stage: 'todo',
+      output: expect.stringContaining('Stuck'),
+    }))
+    const [, , payload] = h.updateTask.mock.calls.find(([, id]) => id === 't-stuck')!
+    expect(payload.output).toContain('ws-acme/acme')
+    expect(payload.output).not.toContain('unexpected error')
+  })
+
+  it('#2202 — a non-400 thrown error (e.g. a Gitea 500, or any other throw) keeps the pre-existing generic "unexpected error" message, not the Stuck one', async () => {
+    const { GiteaTreeLookupError } = await import('@/lib/git/gitea-client')
+    h.listTasks.mockResolvedValue([task({ id: 't-transient' })])
+    h.resolveTask.mockRejectedValue(new GiteaTreeLookupError('ws-acme', 'acme', 500))
+    await runTaskResolutions('a::b', 'my-co')
+    const [, , payload] = h.updateTask.mock.calls.find(([, id]) => id === 't-transient')!
+    expect(payload.output).toContain('unexpected error')
+    expect(payload.output).not.toContain('Stuck')
+  })
+
   it('returns 0/0 when there are no tasks at all', async () => {
     h.listTasks.mockResolvedValue([])
     const res = await runTaskResolutions('a::b', 'my-co')

@@ -30,6 +30,7 @@ import { listTasks, updateTask, needsSplit, type BuildTask } from '@/lib/build/t
 import { resolveTask } from '@/lib/build/task-resolver'
 import { splitTask } from '@/lib/build/task-splitter'
 import { resolveApp } from '@/lib/build/app-registry'
+import { isGiteaTreeLookupError } from '@/lib/git/gitea-client'
 
 /**
  * Found during an overnight founder-dashboard-integrity sweep: resolveTask()
@@ -399,9 +400,22 @@ async function raceTaskResolution(
     // Best-effort: if this write itself fails, the row stays `in_progress`
     // and isStaleInProgress's reaper is still the fallback — never worse
     // than before this fix.
+    //
+    // #2202 — a Gitea tree-lookup 400 (a ref that can't be resolved to any
+    // tree at all, e.g. a repo whose default branch never got its auto-init
+    // commit) fails identically every single night with no escalation,
+    // indistinguishable in this `output` field from any other one-off
+    // transient throw. Tagging it "Stuck" when the thrown error says so
+    // doesn't change retry behavior (still deferred, still retried next
+    // run) — it just makes a permanently-broken repo visible by reading the
+    // task's own output, instead of looking exactly like ordinary noise.
+    const output =
+      isGiteaTreeLookupError(err) && err.status === 400
+        ? `Stuck — Gitea's tree lookup for ${err.org}/${err.repo} returned 400 (the repo's ref likely can't be resolved to any tree at all, e.g. a missing/renamed default branch). This will keep failing identically every night until a human checks the repo's real default_branch/branches in Gitea. Will retry next run.`
+        : `Deferred — resolution threw an unexpected error (${err instanceof Error ? err.message : String(err)}). Will retry next run.`
     await updateTask(scopeKey, task.id, {
       stage: 'todo',
-      output: `Deferred — resolution threw an unexpected error (${err instanceof Error ? err.message : String(err)}). Will retry next run.`,
+      output,
     }).catch(() => {})
     return 'timed-out'
   }
