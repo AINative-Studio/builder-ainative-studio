@@ -192,15 +192,42 @@ function safeReplace(code: string, regex: RegExp, replacement: string): string {
  * `: string`, `: number`, `: boolean`) so the code can run as a plain,
  * non-module `<script>` body. Comment/string/template-literal-safe — see
  * this module's doc comment.
+ *
+ * Real bug confirmed live (driftly, #2151 investigation, 2026-11-25): a
+ * UNION type annotation — `(id: number | string) =>`, one of this
+ * generator's own common patterns for an id that may come from either a
+ * numeric DB row or a string slug — only had its FIRST member stripped by
+ * the bare `:\s*number`/`:\s*string` regexes above, leaving the trailing
+ * `| string` fragment behind: `(id | string) =>`. That's no longer a type
+ * annotation at all — Babel's errorRecovery parses the parenthesized
+ * expression as a bitwise-OR of two bare identifiers, and `id` loses its
+ * binding as the function's own declared parameter. Every later reference
+ * to `id` inside that function body then reads as a genuinely undeclared
+ * variable to findUndefinedReferences()'s scope walk — not a false
+ * positive in that checker, a real corruption introduced by THIS stripping
+ * step, surfacing live as the public "This build needs another pass" page
+ * for a company whose actual stored generation is valid TypeScript.
+ *
+ * Fixed by extending each basic-type regex to also consume a trailing
+ * union chain of the SAME basic types (` | any`, ` | string`, ` | number`,
+ * ` | boolean`, repeated) immediately after the first match, so the whole
+ * annotation — not just its first member — is removed in one span. A
+ * union involving a type this function doesn't know how to strip (e.g.
+ * `: number | CustomType`) is deliberately left exactly as before (only
+ * the matched basic-type member stripped, same partial behavior this
+ * function already had) rather than guessed at — over-stripping an unknown
+ * type name is a worse failure mode than leaving one known-basic member
+ * of a mixed union in place.
  */
+const UNION_TAIL = '(?:\\s*\\|\\s*(?:any|string|number|boolean))*'
 export function stripExportsAndBasicTypes(code: string): string {
   let out = safeReplace(code, /export\s+default\s+/g, '')
   out = safeReplace(out, /export\s+/g, '')
   out = safeReplace(out, /:\s*React\.FC<.*?>/g, '')
   out = safeReplace(out, /:\s*React\.FC/g, '')
-  out = safeReplace(out, /:\s*any/g, '')
-  out = safeReplace(out, /:\s*string/g, '')
-  out = safeReplace(out, /:\s*number/g, '')
-  out = safeReplace(out, /:\s*boolean/g, '')
+  out = safeReplace(out, new RegExp(`:\\s*any${UNION_TAIL}`, 'g'), '')
+  out = safeReplace(out, new RegExp(`:\\s*string${UNION_TAIL}`, 'g'), '')
+  out = safeReplace(out, new RegExp(`:\\s*number${UNION_TAIL}`, 'g'), '')
+  out = safeReplace(out, new RegExp(`:\\s*boolean${UNION_TAIL}`, 'g'), '')
   return out
 }

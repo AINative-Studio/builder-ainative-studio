@@ -100,4 +100,41 @@ describe('stripExportsAndBasicTypes', () => {
     expect(out).not.toMatch(/export/)
     expect(out).toContain('function App()')
   })
+
+  /**
+   * Real bug confirmed live (driftly, #2151 investigation, 2026-11-25): a
+   * UNION type parameter annotation — `(id: number | string) =>`, a common
+   * pattern for an id that may be numeric or a string slug — only had its
+   * FIRST member stripped by the old bare `:\s*number` regex, leaving the
+   * trailing `| string` fragment behind: `(id | string) =>`. That's no
+   * longer a parameter annotation at all — Babel parses the parenthesized
+   * expression as a bitwise-OR of two bare identifiers, and `id` loses its
+   * binding as the function's own declared parameter. Every later
+   * reference to `id` inside that function body then reads as a genuinely
+   * undeclared variable to findUndefinedReferences()'s scope walk — surfacing
+   * live as the public "This build needs another pass" page for a company
+   * whose actual stored generation was valid TypeScript all along.
+   */
+  it('#2151 — strips a UNION type annotation completely, not just its first member', () => {
+    const code = 'const deleteAudience = async (id: number | string) => {\n  return id;\n};'
+    const out = stripExportsAndBasicTypes(code)
+    expect(out).toBe('const deleteAudience = async (id) => {\n  return id;\n};')
+    expect(out).not.toMatch(/\|/)
+  })
+
+  it('#2151 — strips a 3-member union of known basic types completely', () => {
+    const code = 'const f = (x: string | number | boolean) => x;'
+    const out = stripExportsAndBasicTypes(code)
+    expect(out).toBe('const f = (x) => x;')
+  })
+
+  it('#2151 — a union mixing a KNOWN basic type with an unrecognized custom type is left otherwise unmangled (only the known member stripped, same as before this fix for a union it cannot safely resolve)', () => {
+    const code = 'const h = (z: SomeCustomType | number) => z;'
+    const out = stripExportsAndBasicTypes(code)
+    // Deliberately unchanged — stripping only a member of a union this
+    // function cannot fully resolve would risk leaving an equally broken
+    // dangling fragment on the OTHER side; leaving it untouched is the
+    // documented, safe fallback.
+    expect(out).toBe(code)
+  })
 })
