@@ -411,7 +411,7 @@ export async function runShowcaseObedienceBackfillSweep(
 
   let rows: any[]
   try {
-    rows = await listGenerations(1000)
+    rows = await listGenerations(5000)
   } catch {
     rows = []
   }

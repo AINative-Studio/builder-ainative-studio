@@ -22,7 +22,7 @@ export async function GET(request: NextRequest) {
   // listGenerations caches the result, so the bigger read is paid once.
   let zerodbEntries: ShowcaseEntry[] = []
   try {
-    const rows = await listGenerations(1000)
+    const rows = await listGenerations(5000)
     zerodbEntries = rows
       // Real gap fixed 2026-09-10: `is_showcase` is already computed
       // correctly at persist time (generation-persist.ts's persistGeneration:
