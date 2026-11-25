@@ -240,7 +240,19 @@ export async function POST(request: NextRequest) {
     }
   } catch { /* anonymous or auth hiccup — register unowned as before */ }
 
-  const track = b.track === 'company' ? 'company' : 'app'
+  // #2133: track must be STICKY across regens — every other identity field in
+  // this function (name/tagline/color/idea) already falls back to `existing`
+  // when the client omits it, but track didn't: ANY falsy/invalid b.track
+  // defaulted straight to 'app', silently flipping an already-registered
+  // company's track on a regen call that didn't resend it (confirmed live:
+  // tidemark sits at track:'app' in production right now, which gates its
+  // public /build/{slug} link behind the app-track login wall — see #2133).
+  // Only an explicit, valid client value may now CHANGE the track; otherwise
+  // the existing registration's track wins, and only a genuinely new company
+  // (no existing row) still defaults to 'app'.
+  const requestedTrack = b.track === 'company' || b.track === 'app' ? b.track : undefined
+  const existingTrack = existing?.track === 'company' ? 'company' : existing?.track === 'app' ? 'app' : undefined
+  const track = requestedTrack ?? existingTrack ?? 'app'
   const companyName = b.name ? String(b.name).slice(0, 120) : (existing?.name || slug)
 
   const ok = await registerApp({
