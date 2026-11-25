@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { buildSandpackFiles } from '@/lib/sandpack/build-files'
+import { findTruncatedFiles } from '@/lib/build/completeness-gate'
 
 /**
  * #2022 — a syntactically truncated generated file reaches Sandpack's
@@ -152,8 +153,52 @@ const ContactFormSection = () => {
     // component that compiles but returns nothing (which React rejects
     // with "Nothing was returned from render").
     expect(stubbed).toContain('Auto-stubbed')
-    expect(stubbed).toContain('=> null')
+    expect(stubbed).toContain('return null')
     expect(stubbed).not.toContain('e.preventDefault')
+  })
+
+  it("the named-export stub itself is never re-flagged as truncated by findTruncatedFiles' own SIGNAL 3 (overnight render-integrity loop, #2198)", () => {
+    // Real bug found live: this loop's self-heal re-verification re-runs
+    // findTruncatedFiles() against buildSandpackFiles()'s OWN output to
+    // confirm a raw defect doesn't survive into what Sandpack actually
+    // renders (see lib/build/render-health-recheck.ts). For 'luminary'
+    // (chatId xW3lIi44cTNLYsOdeOUzj, this exact ContactFormSection.tsx
+    // content), that re-check wrongly reported the defect as still live:
+    // the named-export stub this function generates (`() => null`, an
+    // implicit-return arrow with no JSX) is EXACTLY the shape SIGNAL 3
+    // itself flags as "parses, has an export, but never reaches return/JSX"
+    // — the safety net's own repair tripped the same detector it exists to
+    // satisfy. An explicit `return null` fixes this with zero behavior
+    // change for Sandpack/React.
+    const LUMINARY_CONTACT_FORM_RAW = `import React, { useState } from 'react';
+import Label from './ui/Label';
+import Input from './ui/Input';
+import Textarea from './ui/Textarea';
+import Button from './ui/Button';
+
+const ContactFormSection = () => {
+  const [formData, setFormData] = useState({
+    name: '', email: '', phone: '', zipCode: '', subject: '', message: '',
+  });
+  const [submitted, setSubmitted] = useState(false);
+
+  const handleChange = (e) => {
+    setFormData({ ...formData, [e.target.name]: e.target.value });
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+}
+}`
+    const built = buildSandpackFiles({
+      '/src/App.tsx': [
+        "import { ContactFormSection } from './components/ContactFormSection'",
+        'export default function App(){ return <ContactFormSection/> }',
+      ].join('\n'),
+      '/src/components/ContactFormSection.tsx': LUMINARY_CONTACT_FORM_RAW,
+    })
+    const rebuiltTruncated = findTruncatedFiles(built).filter((p) => p.includes('ContactFormSection'))
+    expect(rebuiltTruncated).toEqual([])
   })
 
   it('leaves a component-shaped file with zero export alone when a real sibling file elsewhere already exports under its OWN name — only a path with no clean declaration-to-export match gets stubbed', () => {
