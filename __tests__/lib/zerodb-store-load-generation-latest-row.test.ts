@@ -167,4 +167,73 @@ describe('loadGeneration picks the newest row for a multi-turn chat (younova-cla
     expect(sentBody.limit).toBe(100)
     expect(sentBody.filters).toEqual({ chat_id: 'chat-limit-check' })
   })
+
+  // #2134 — confirmed live for 2/25 sampled showcase entries (graintrack,
+  // a-waitlist-landing-page-for-a-premium-coffee): the #2050 fix above only
+  // checks `trim().length > 0`, which a short failed-retry/aborted-edit row
+  // also satisfies without being anywhere close to a real app. That bar is
+  // weaker than isQualityApp()'s (length >= 2000 + structural check) — the
+  // same gate app/api/showcase/route.ts already requires for an entry to be
+  // showcase-eligible in the first place — so a newer short junk row can
+  // still shadow a real, older, quality generation underneath it.
+  const REAL_APP_CODE = `export default function App() {\n  return (\n    <div className="min-h-screen">${'      <p>Real pricing page copy.</p>\n'.repeat(80)}    </div>\n  )\n}`
+
+  it('skips a newer SHORT junk row (non-empty but not quality) and falls back to an older quality row', async () => {
+    expect(REAL_APP_CODE.length).toBeGreaterThanOrEqual(2000)
+    fetchMock.mockResolvedValueOnce(
+      okResponse({
+        data: [
+          {
+            row_data: {
+              chat_id: 'chat-junk-shadow',
+              created_at: '2026-11-10T00:00:00.000Z',
+              prompt: 'build a landing page',
+              generated_code: REAL_APP_CODE,
+              code_length: REAL_APP_CODE.length,
+            },
+          },
+          {
+            row_data: {
+              chat_id: 'chat-junk-shadow',
+              created_at: '2026-11-13T00:00:00.000Z',
+              prompt: 'add a pricing section',
+              generated_code: 'Sorry, something went wrong generating that. Please try again.',
+              code_length: 65,
+            },
+          },
+        ],
+      }),
+    )
+    const gen = await loadGeneration('chat-junk-shadow')
+    expect(gen?.generatedCode).toBe(REAL_APP_CODE)
+  })
+
+  it('still picks the newer row when it is itself a real quality generation (no regression)', async () => {
+    const olderCode = REAL_APP_CODE
+    const newerCode = REAL_APP_CODE.replace('Real pricing page copy.', 'Real pricing page copy, v2.')
+    fetchMock.mockResolvedValueOnce(
+      okResponse({
+        data: [
+          {
+            row_data: {
+              chat_id: 'chat-two-quality-rows',
+              created_at: '2026-11-10T00:00:00.000Z',
+              generated_code: olderCode,
+              code_length: olderCode.length,
+            },
+          },
+          {
+            row_data: {
+              chat_id: 'chat-two-quality-rows',
+              created_at: '2026-11-13T00:00:00.000Z',
+              generated_code: newerCode,
+              code_length: newerCode.length,
+            },
+          },
+        ],
+      }),
+    )
+    const gen = await loadGeneration('chat-two-quality-rows')
+    expect(gen?.generatedCode).toBe(newerCode)
+  })
 })
