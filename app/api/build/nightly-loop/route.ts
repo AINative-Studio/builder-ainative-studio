@@ -40,6 +40,15 @@
  *      comfortable as the enrolled-company count keeps growing. Every company
  *      lands in exactly one shard (see selectShard).
  *
+ *   4. FAIRNESS ROTATION (#2137). A bounded budget plus a STABLE batch order
+ *      means a shard whose batch is longer than its budget/concurrency can
+ *      clear defers the exact same tail companies every single night,
+ *      forever — not a crash, plain positional starvation, and it exactly
+ *      explains #2137's "same handful of companies stuck `in_progress`,
+ *      never reseeded" symptom. `rotateForFairness` changes which item the
+ *      batch starts admitting from each day, so no company is permanently
+ *      stuck past the cutoff (see concurrent-map.ts's doc comment).
+ *
  * The Action's own `--max-time` is also raised past this route's budget so the
  * client can no longer time out before the server has finished and answered.
  */
@@ -61,7 +70,7 @@ import { runNightlyCommsOutreach } from '@/lib/build/comms-policy'
 import { fetchPlanByEmail, type AdminPlanLookup } from '@/lib/ainative/admin-plan-lookup'
 import { getAinativeApiKey } from '@/lib/build/env-keys'
 import { normalizeTier } from '@/lib/ainative/plan'
-import { mapWithConcurrency, selectShard } from '@/lib/build/concurrent-map'
+import { mapWithConcurrency, selectShard, rotateForFairness } from '@/lib/build/concurrent-map'
 import { assessSwarmHealth, readTaskStatus, hoursSince, MAX_TASKS_CHECKED, STALL_SLA_HOURS, type SwarmHealthVerdict } from '@/lib/build/swarm-task-health'
 import { logger } from '@/lib/logger'
 import type { LoopEnrollment } from '@/lib/build/loop-enrollment'
@@ -147,7 +156,13 @@ export async function GET(request: NextRequest) {
     // calls. A malformed/out-of-range spec degrades to the whole list — see
     // selectShard; processing everyone is the safe failure mode for a nightly
     // cron, processing nobody would silently skip a night.
-    const batch = selectShard(enrolled, rawShard, rawShards)
+    // #2137 — rotate the batch's starting point by a day index, so a shard
+    // whose batch doesn't fully fit this run's budget doesn't defer the SAME
+    // tail companies every night forever (see concurrent-map.ts's doc
+    // comment on rotateForFairness). Pure reordering: shard membership,
+    // concurrency, and deadline semantics below are all unchanged.
+    const dayIndex = Math.floor(startedAt / 86_400_000)
+    const batch = rotateForFairness(selectShard(enrolled, rawShard, rawShards), dayIndex)
     const sharded = batch.length !== enrolled.length
 
     logger.info('Nightly autonomous loop starting', {
