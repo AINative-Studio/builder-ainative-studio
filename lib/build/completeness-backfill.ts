@@ -539,7 +539,10 @@ export async function runShowcaseCompletenessBackfillSweep(
 
     const scopeKey = chatScopeKey('guest:anon', slug)
     const existing = await listTasksForCompany(slug)
-    if (hasOpenTaskForReason(existing, firstReason)) {
+    // #2151 rebase note: this showcase sweep only checks structural gaps
+    // (missing/undeclared/truncated) above, never the render-defect check
+    // that PR adds — isRenderDefect is honestly false here, not a stub.
+    if (hasOpenTaskForReason(existing, firstReason, false)) {
       record({
         slug,
         disposition: 'already_tracked',
@@ -569,7 +572,7 @@ export async function runShowcaseCompletenessBackfillSweep(
     ]
 
     const task = await createTask(scopeKey, {
-      title: taskTitleFor(firstReason),
+      title: taskTitleFor(firstReason, false),
       detail: detailLines.join('\n'),
       stage: 'todo',
       source: 'cody',
