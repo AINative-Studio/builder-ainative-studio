@@ -96,6 +96,7 @@ import {
   findUndeclaredJsxComponents,
   findTruncatedFiles,
   findMissingDefaultExports,
+  findShadcnComponentsImportedFromLucide,
 } from '@/lib/build/completeness-gate'
 import { validateJavaScriptCode } from '@/lib/code-validator'
 import { createTask, listTasksForCompany } from '@/lib/build/task-store'
@@ -134,6 +135,7 @@ export interface CompletenessBackfillCompanyResult {
   /** #2151: validateJavaScriptCode()'s error when the CURRENT durable code fails it — the same check that produces the public "This build needs another pass" page. */
   renderError?: string
   missingDefaultExports?: string[]
+  shadcnFromLucide?: string[]
   reason?: string
 }
 
@@ -159,6 +161,7 @@ function firstReasonFor(
   undeclared: string[],
   truncated: string[],
   missingDefaults: string[],
+  shadcnFromLucide: string[],
   renderError?: string,
 ): string {
   if (missing.length > 0) {
@@ -172,6 +175,9 @@ function firstReasonFor(
   }
   if (missingDefaults.length > 0) {
     return `local module(s) imported as a default export but never export one: ${missingDefaults.join(', ')}`
+  }
+  if (shadcnFromLucide.length > 0) {
+    return `shadcn UI component(s) imported from 'lucide-react' (icon-only package, no such export): ${shadcnFromLucide.join(', ')}`
   }
   return `generation fails validateJavaScriptCode() at render time — this is the exact check behind the public "This build needs another pass" page: ${renderError}`
 }
@@ -283,6 +289,7 @@ export async function runCompletenessBackfillSweep(
     const undeclared = findUndeclaredJsxComponents(code, files)
     const truncated = findTruncatedFiles(files)
     const missingDefaults = findMissingDefaultExports(files)
+    const shadcnFromLucide = findShadcnComponentsImportedFromLucide(files)
     // #2151: the same check that produces the live "This build needs another
     // pass" page (app/api/preview/[id]/route.ts) — never previously run from
     // any backfill/backlog path, so a company whose current generation
@@ -290,15 +297,26 @@ export async function runCompletenessBackfillSweep(
     const renderCheck = validateJavaScriptCode(code, { importsStripped: false, lenient: true })
     const renderError = renderCheck.valid ? undefined : (renderCheck.error || 'code fails validation').slice(0, 300)
 
-    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0 && missingDefaults.length === 0 && !renderError) {
+    if (
+      missing.length === 0 &&
+      undeclared.length === 0 &&
+      truncated.length === 0 &&
+      missingDefaults.length === 0 &&
+      shadcnFromLucide.length === 0 &&
+      !renderError
+    ) {
       record({ slug, disposition: 'clean' })
       continue
     }
 
     gapsFound++
     const isRenderDefect =
-      missing.length === 0 && undeclared.length === 0 && truncated.length === 0 && missingDefaults.length === 0
-    const firstReason = firstReasonFor(missing, undeclared, truncated, missingDefaults, renderError)
+      missing.length === 0 &&
+      undeclared.length === 0 &&
+      truncated.length === 0 &&
+      missingDefaults.length === 0 &&
+      shadcnFromLucide.length === 0
+    const firstReason = firstReasonFor(missing, undeclared, truncated, missingDefaults, shadcnFromLucide, renderError)
 
     if (dryRun) {
       record({
@@ -308,6 +326,7 @@ export async function runCompletenessBackfillSweep(
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
         missingDefaultExports: missingDefaults,
+        shadcnFromLucide,
         renderError,
       })
       continue
@@ -322,6 +341,7 @@ export async function runCompletenessBackfillSweep(
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
         missingDefaultExports: missingDefaults,
+        shadcnFromLucide,
         renderError,
       })
       continue
@@ -336,6 +356,7 @@ export async function runCompletenessBackfillSweep(
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
         missingDefaultExports: missingDefaults,
+        shadcnFromLucide,
         renderError,
       })
       continue
@@ -346,6 +367,7 @@ export async function runCompletenessBackfillSweep(
       ...undeclared.map((u) => `Undeclared JSX component used but never imported: ${u}`),
       ...truncated.map((t) => `File fails a strict parse (truncated/incomplete generation): ${t}`),
       ...missingDefaults.map((d) => `Local module imported as a default export but never exports one: ${d}`),
+      ...shadcnFromLucide.map((d) => `shadcn UI component imported from 'lucide-react' instead of './components/ui/*': ${d}`),
       ...(renderError ? [`Fails validateJavaScriptCode() at render time (visitors see "This build needs another pass"): ${renderError}`] : []),
     ]
 
@@ -366,6 +388,7 @@ export async function runCompletenessBackfillSweep(
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
         missingDefaultExports: missingDefaults,
+        shadcnFromLucide,
         renderError,
       })
       continue
@@ -386,6 +409,7 @@ export async function runCompletenessBackfillSweep(
       undeclaredJsx: undeclared,
       truncatedFiles: truncated,
       missingDefaultExports: missingDefaults,
+      shadcnFromLucide,
       renderError,
     })
   }
@@ -537,14 +561,24 @@ export async function runShowcaseCompletenessBackfillSweep(
     const undeclared = findUndeclaredJsxComponents(fullCode, files)
     const truncated = findTruncatedFiles(files)
     const missingDefaults = findMissingDefaultExports(files)
+    const shadcnFromLucide = findShadcnComponentsImportedFromLucide(files)
 
-    if (missing.length === 0 && undeclared.length === 0 && truncated.length === 0 && missingDefaults.length === 0) {
+    if (
+      missing.length === 0 &&
+      undeclared.length === 0 &&
+      truncated.length === 0 &&
+      missingDefaults.length === 0 &&
+      shadcnFromLucide.length === 0
+    ) {
       record({ slug, disposition: 'clean' })
       continue
     }
 
     gapsFound++
-    const firstReason = firstReasonFor(missing, undeclared, truncated, missingDefaults)
+    // #2151 rebase note: this showcase sweep only checks structural gaps
+    // above, never the render-defect check that PR adds — renderError is
+    // honestly undefined here, not a stub.
+    const firstReason = firstReasonFor(missing, undeclared, truncated, missingDefaults, shadcnFromLucide, undefined)
 
     if (dryRun) {
       record({
@@ -554,6 +588,7 @@ export async function runShowcaseCompletenessBackfillSweep(
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
         missingDefaultExports: missingDefaults,
+        shadcnFromLucide,
       })
       continue
     }
@@ -561,8 +596,9 @@ export async function runShowcaseCompletenessBackfillSweep(
     const scopeKey = chatScopeKey('guest:anon', slug)
     const existing = await listTasksForCompany(slug)
     // #2151 rebase note: this showcase sweep only checks structural gaps
-    // (missing/undeclared/truncated) above, never the render-defect check
-    // that PR adds — isRenderDefect is honestly false here, not a stub.
+    // (missing/undeclared/truncated/missingDefaults/shadcnFromLucide) above,
+    // never the render-defect check that PR adds — isRenderDefect is
+    // honestly false here, not a stub.
     if (hasOpenTaskForReason(existing, firstReason, false)) {
       record({
         slug,
@@ -571,6 +607,7 @@ export async function runShowcaseCompletenessBackfillSweep(
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
         missingDefaultExports: missingDefaults,
+        shadcnFromLucide,
       })
       continue
     }
@@ -584,6 +621,7 @@ export async function runShowcaseCompletenessBackfillSweep(
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
         missingDefaultExports: missingDefaults,
+        shadcnFromLucide,
       })
       continue
     }
@@ -593,6 +631,7 @@ export async function runShowcaseCompletenessBackfillSweep(
       ...undeclared.map((u) => `Undeclared JSX component used but never imported: ${u}`),
       ...truncated.map((t) => `File fails a strict parse (truncated/incomplete generation): ${t}`),
       ...missingDefaults.map((d) => `Local module imported as a default export but never exports one: ${d}`),
+      ...shadcnFromLucide.map((d) => `shadcn UI component imported from 'lucide-react' instead of './components/ui/*': ${d}`),
     ]
 
     const task = await createTask(scopeKey, {
@@ -611,6 +650,7 @@ export async function runShowcaseCompletenessBackfillSweep(
         undeclaredJsx: undeclared,
         truncatedFiles: truncated,
         missingDefaultExports: missingDefaults,
+        shadcnFromLucide,
       })
       continue
     }
@@ -629,6 +669,7 @@ export async function runShowcaseCompletenessBackfillSweep(
       undeclaredJsx: undeclared,
       truncatedFiles: truncated,
       missingDefaultExports: missingDefaults,
+      shadcnFromLucide,
     })
   }
 
