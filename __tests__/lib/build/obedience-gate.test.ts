@@ -24,6 +24,8 @@ import {
   buildObediencePrompt,
   narrowToPrimitiveComplianceOnly,
   evaluatePrimitiveComplianceRetry,
+  narrowToVisitorTrackingOnly,
+  evaluateVisitorTrackingRetry,
 } from '@/lib/build/obedience-gate'
 
 const dataManagingApp = (dbBacked: boolean) => `
@@ -1877,6 +1879,64 @@ describe('obedience-gate: targeted primitive-compliance retry (#624)', () => {
 
     it('reports NO progress (and flags it) if a retry somehow makes things WORSE', () => {
       const result = evaluatePrimitiveComplianceRetry(['ZeroPipeline'], ['ZeroPipeline', 'ZeroVoice'])
+      expect(result.madeProgress).toBe(false)
+      expect(result.closed).toBe(false)
+    })
+  })
+})
+
+/**
+ * #2135: narrowToVisitorTrackingOnly + evaluateVisitorTrackingRetry are the
+ * pure decision logic behind chat-ws's targeted visitor-tracking follow-up
+ * retry (closeVisitorTrackingGap) — the SAME pattern #624 established for
+ * primitiveComplianceGaps, applied to a different gap. Confirmed live
+ * (issue #2135, many independent samples): the general one-shot obedience
+ * re-prompt isn't reliable enough on its own for this gap — roughly a
+ * quarter to a third of LANDING PAGE/STORE TEASER generations shipped with
+ * zero `/api/db/visitors` call despite the gate flagging every one.
+ */
+describe('obedience-gate: targeted visitor-tracking retry (#2135)', () => {
+  describe('narrowToVisitorTrackingOnly', () => {
+    it('produces a result carrying ONLY the visitor-tracking gap, nothing else', () => {
+      const r = narrowToVisitorTrackingOnly()
+      expect(r.visitorTrackingGap).toBe(true)
+      expect(r.ok).toBe(false)
+      expect(r.persistenceGap).toBe(false)
+      expect(r.aikitGaps).toEqual([])
+      expect(r.primitiveComplianceGaps).toEqual([])
+      expect(r.fakeLeadCaptureGap).toBe(false)
+      expect(r.hardcodedToggleGap).toBe(false)
+    })
+
+    it('buildObediencePrompt on the narrowed result emits ONLY the visitor-tracking section', () => {
+      const r = narrowToVisitorTrackingOnly()
+      const prompt = buildObediencePrompt('a landing page', r)
+      expect(prompt).toMatch(/FIRE THE MANDATED VISITOR-TRACKING BEACON/)
+      expect(prompt).toMatch(/\/api\/db\/visitors/)
+      // None of the other repair sections should appear — this must be a
+      // FOCUSED re-prompt, not a repeat of the general one.
+      expect(prompt).not.toMatch(/PERSIST REAL DATA/)
+      expect(prompt).not.toMatch(/USE AIKIT COMPONENTS/)
+      expect(prompt).not.toMatch(/YOU WERE TOLD TO CALL THESE REAL PRIMITIVES/)
+      expect(prompt).not.toMatch(/PERSIST THE EMAIL\/WAITLIST CAPTURE FORM/)
+    })
+  })
+
+  describe('evaluateVisitorTrackingRetry', () => {
+    it('reports progress AND closed when the gap resolves', () => {
+      const result = evaluateVisitorTrackingRetry(true, false)
+      expect(result.madeProgress).toBe(true)
+      expect(result.closed).toBe(true)
+    })
+
+    it('reports NO progress when the gap is still open (the real bug this fixes: adopting a no-op retry)', () => {
+      const result = evaluateVisitorTrackingRetry(true, true)
+      expect(result.madeProgress).toBe(false)
+      expect(result.closed).toBe(false)
+    })
+
+    it('reports NO progress when there was never a gap to close', () => {
+      const result = evaluateVisitorTrackingRetry(false, false)
       expect(result.madeProgress).toBe(false)
       expect(result.closed).toBe(false)
     })

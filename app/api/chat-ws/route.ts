@@ -15,7 +15,7 @@ import { validateOutput, validateFileImports } from '@/lib/build/output-validato
 import { hasDefaultExport } from '@/lib/component-detector'
 import { buildValidationFallbackComponent } from '@/lib/validation-fallback'
 import { runValidationRetryLoop, buildRepairPrompt, extractErrorWindow } from '@/lib/generation-retry'
-import { checkObedience, buildObediencePrompt, narrowToPrimitiveComplianceOnly, evaluatePrimitiveComplianceRetry, findPrimitiveComplianceGaps } from '@/lib/build/obedience-gate'
+import { checkObedience, buildObediencePrompt, narrowToPrimitiveComplianceOnly, evaluatePrimitiveComplianceRetry, findPrimitiveComplianceGaps, narrowToVisitorTrackingOnly, evaluateVisitorTrackingRetry } from '@/lib/build/obedience-gate'
 import { traceComplianceRetry } from '@/lib/build/primitive-compliance-trace'
 import { buildRagContext } from '@/lib/build/rag-context'
 import { shouldDecompose, buildDecompositionPrompt, buildFixAndDecomposePrompt } from '@/lib/build/decomposition'
@@ -523,6 +523,94 @@ async function closePrimitiveComplianceGap(
   const final = checkObedience(current, message, validRole, obedienceOptions)
   gapsAfter = final.primitiveComplianceGaps // #786: the real fix — always freshly set from the SAME check `closed` derives from
   return finish({ code: current, closed: final.primitiveComplianceGaps.length === 0 })
+}
+
+/**
+ * #2135: same targeted-retry pattern as closePrimitiveComplianceGap (#624),
+ * applied to visitorTrackingGap. The general obedience re-prompt above only
+ * gets ONE shot at every boolean gap (visitor tracking, fake lead capture,
+ * AX, etc.) before shipping — confirmed live this isn't reliable enough for
+ * visitor tracking specifically (issue #2135: ~25-33% of LANDING PAGE/STORE
+ * TEASER generations ship with zero `/api/db/visitors` call despite the
+ * gate correctly flagging every one of them). This gives it the same
+ * bounded, narrowly-focused follow-up chance primitiveComplianceGaps
+ * already gets, instead of silently shipping the gap the moment the first
+ * general re-prompt doesn't happen to close it.
+ */
+async function closeVisitorTrackingGap(
+  code: string,
+  message: string,
+  validRole: Parameters<typeof checkObedience>[2],
+  obedienceOptions: Parameters<typeof checkObedience>[3],
+  selectedGenModel: string | undefined,
+  chatId: string,
+  branch: 'non-combined' | 'combined-single-file' | 'combined-multi-file' | 'combined-rejected-fallback' | 'non-combined-repair-invalid-fallback',
+  maxAttempts = 2,
+): Promise<{ code: string; closed: boolean }> {
+  let current = code
+  let attemptsRun = 0
+  const isMultiFile = hasRealFileMarker(current)
+  const finish = async (result: { code: string; closed: boolean }) => {
+    await traceComplianceRetry({
+      chatId, branch: `visitor-tracking:${branch}`, isMultiFile, attemptsRun,
+      gapsBefore: ['visitorTracking'],
+      gapsAfter: result.closed ? [] : ['visitorTracking'],
+      closed: result.closed,
+    }).catch(() => {})
+    return result
+  }
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    attemptsRun = attempt
+    const before = checkObedience(current, message, validRole, obedienceOptions)
+    if (!before.visitorTrackingGap) return finish({ code: current, closed: true })
+
+    console.log(`📡 Visitor-tracking gap still open (attempt ${attempt}/${maxAttempts}, ${isMultiFile ? 'multi-file' : 'single-file'})`)
+    const fixInstructions = buildObediencePrompt(message, narrowToVisitorTrackingOnly())
+    const raw = await runClaudePass(
+      isMultiFile
+        ? 'You add exactly one required analytics beacon to a working multi-file React app. Return ONLY the files in the // --- FILE: … --- marker format (the SAME files, same structure). Keep every existing feature; do not break anything.'
+        : 'You add exactly one required analytics beacon to a working React app. Return ONLY the full corrected app in ```jsx markers. Keep every existing feature; do not break anything.',
+      isMultiFile
+        ? [
+            `Apply ONLY this fix to the multi-file app below (keep every feature, change nothing else):`,
+            fixInstructions,
+            '',
+            'Output EVERY file with a marker line in EXACTLY this format (nothing before the first marker):',
+            '',
+            '// --- FILE: src/App.tsx ---',
+            '<code>',
+            '// --- FILE: src/components/Sidebar.tsx ---',
+            '<code>',
+            '',
+            'CURRENT APP:',
+            current.slice(0, 32000),
+          ].join('\n')
+        : `${fixInstructions}\n\nCURRENT APP:\n\`\`\`jsx\n${current.slice(0, 32000)}\n\`\`\``,
+      16000, selectedGenModel,
+    )
+    const validated = validateGeneratedCode(raw)
+    if (!validated.valid || !validated.code || validated.code.length < 200) {
+      console.log(`📡 Visitor-tracking retry ${attempt} produced invalid/empty output — keeping prior version.`)
+      continue
+    }
+    // Multi-file in, multi-file out: reject a candidate that collapsed back
+    // to a single file (a real regression a bounded retry must never adopt).
+    if (isMultiFile && !hasRealFileMarker(validated.code)) {
+      console.log(`📡 Visitor-tracking retry ${attempt} lost the multi-file structure — rejecting, keeping prior version.`)
+      continue
+    }
+    const after = checkObedience(validated.code, message, validRole, obedienceOptions)
+    const { madeProgress, closed } = evaluateVisitorTrackingRetry(before.visitorTrackingGap, after.visitorTrackingGap)
+    if (madeProgress) {
+      console.log(`📡 Visitor-tracking retry ${attempt} closed the gap — adopting.`)
+      current = validated.code
+      if (closed) return finish({ code: current, closed: true })
+    } else {
+      console.log(`📡 Visitor-tracking retry ${attempt} made no progress — keeping prior version, trying again.`)
+    }
+  }
+  const final = checkObedience(current, message, validRole, obedienceOptions)
+  return finish({ code: current, closed: !final.visitorTrackingGap })
 }
 
 // Fallback chains (used when Claude is unavailable)
@@ -2036,6 +2124,21 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       console.warn(`⚠️ Primitive-compliance retry (combined-multi-file) did NOT close the gap: ${after.primitiveComplianceGaps.join(', ')}`)
                     }
                   }
+                  // #2135: same targeted follow-up, for visitorTrackingGap.
+                  if (after.visitorTrackingGap) {
+                    const visitorCloseResult = await closeVisitorTrackingGap(
+                      finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                      responseId, 'combined-multi-file',
+                    )
+                    if (visitorCloseResult.code !== finalContent) {
+                      finalContent = visitorCloseResult.code
+                      validation = validateGeneratedCode(finalContent)
+                      checkpoint.record('visitor-tracking', finalContent, true)
+                    }
+                    if (!visitorCloseResult.closed) {
+                      console.warn('⚠️ Visitor-tracking retry (combined-multi-file) did NOT close the gap.')
+                    }
+                  }
                 } else if (v.valid && obeyImproved && (v.code?.length || 0) > 200) {
                   // split didn't take but the fixes did — still an improvement.
                   console.log('🔧 Combined pass fixed rules (single-file) — adopting.')
@@ -2055,6 +2158,20 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                     }
                     if (!closeResult.closed) {
                       console.warn(`⚠️ Primitive-compliance retry (combined-single-file) did NOT close the gap: ${after.primitiveComplianceGaps.join(', ')}`)
+                    }
+                  }
+                  if (after.visitorTrackingGap) {
+                    const visitorCloseResult = await closeVisitorTrackingGap(
+                      finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                      responseId, 'combined-single-file',
+                    )
+                    if (visitorCloseResult.code !== finalContent) {
+                      finalContent = visitorCloseResult.code
+                      validation = validateGeneratedCode(finalContent)
+                      checkpoint.record('visitor-tracking', finalContent, true)
+                    }
+                    if (!visitorCloseResult.closed) {
+                      console.warn('⚠️ Visitor-tracking retry (combined-single-file) did NOT close the gap.')
                     }
                   }
                 } else {
@@ -2084,6 +2201,20 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       finalContent = closeResult.code
                       validation = validateGeneratedCode(finalContent)
                       checkpoint.record('primitive-compliance', finalContent, true)
+                    }
+                  }
+                  if (ob.visitorTrackingGap) {
+                    const visitorCloseResult = await closeVisitorTrackingGap(
+                      finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                      responseId, 'combined-rejected-fallback',
+                    )
+                    if (!visitorCloseResult.closed) {
+                      console.warn('⚠️ Visitor-tracking retry (combined-rejected-fallback) did NOT close the gap.')
+                    }
+                    if (visitorCloseResult.code !== finalContent) {
+                      finalContent = visitorCloseResult.code
+                      validation = validateGeneratedCode(finalContent)
+                      checkpoint.record('visitor-tracking', finalContent, true)
                     }
                   }
                 }
@@ -2157,7 +2288,21 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                       checkpoint.record('primitive-compliance', finalContent, true)
                     }
                   }
-                } else if (ob.primitiveComplianceGaps.length > 0) {
+                  if (after.visitorTrackingGap) {
+                    const visitorCloseResult = await closeVisitorTrackingGap(
+                      finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                      responseId, 'non-combined',
+                    )
+                    if (!visitorCloseResult.closed) {
+                      console.warn('⚠️ Visitor-tracking retry (non-combined) did NOT close the gap.')
+                    }
+                    if (visitorCloseResult.code !== finalContent) {
+                      finalContent = visitorCloseResult.code
+                      validation = validateGeneratedCode(finalContent)
+                      checkpoint.record('visitor-tracking', finalContent, true)
+                    }
+                  }
+                } else if (ob.primitiveComplianceGaps.length > 0 || ob.visitorTrackingGap) {
                   // Real bug found live (issue #640, 2026-09-10): when the
                   // repair pass's OWN response fails validation (obValidation
                   // invalid, e.g. it referenced an undefined component), the
@@ -2170,17 +2315,38 @@ OUTPUT: Generate 150-300 lines of COMPLETE, WORKING, INTERACTIVE code. Visually 
                   // app fell back to fake /api/db/invoices as a direct
                   // result. Same shape as #636's combined-branch fix — run
                   // the targeted retry directly on the pre-repair content.
-                  const closeResult = await closePrimitiveComplianceGap(
-                    finalContent, message, validRole, obedienceOptions, selectedGenModel,
-                    responseId, 'non-combined-repair-invalid-fallback',
-                  )
-                  if (!closeResult.closed) {
-                    console.warn(`⚠️ Primitive-compliance retry (non-combined-repair-invalid-fallback) did NOT close the gap: ${ob.primitiveComplianceGaps.join(', ')}`)
+                  if (ob.primitiveComplianceGaps.length > 0) {
+                    const closeResult = await closePrimitiveComplianceGap(
+                      finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                      responseId, 'non-combined-repair-invalid-fallback',
+                    )
+                    if (!closeResult.closed) {
+                      console.warn(`⚠️ Primitive-compliance retry (non-combined-repair-invalid-fallback) did NOT close the gap: ${ob.primitiveComplianceGaps.join(', ')}`)
+                    }
+                    if (closeResult.code !== finalContent) {
+                      finalContent = closeResult.code
+                      validation = validateGeneratedCode(finalContent)
+                      checkpoint.record('primitive-compliance', finalContent, true)
+                    }
                   }
-                  if (closeResult.code !== finalContent) {
-                    finalContent = closeResult.code
-                    validation = validateGeneratedCode(finalContent)
-                    checkpoint.record('primitive-compliance', finalContent, true)
+                  // #2135: same fallback coverage for visitorTrackingGap —
+                  // this branch exists specifically because #640 found gaps
+                  // silently surviving when the repair pass's own output is
+                  // invalid; visitor tracking is exposed to the exact same
+                  // failure mode.
+                  if (ob.visitorTrackingGap) {
+                    const visitorCloseResult = await closeVisitorTrackingGap(
+                      finalContent, message, validRole, obedienceOptions, selectedGenModel,
+                      responseId, 'non-combined-repair-invalid-fallback',
+                    )
+                    if (!visitorCloseResult.closed) {
+                      console.warn('⚠️ Visitor-tracking retry (non-combined-repair-invalid-fallback) did NOT close the gap.')
+                    }
+                    if (visitorCloseResult.code !== finalContent) {
+                      finalContent = visitorCloseResult.code
+                      validation = validateGeneratedCode(finalContent)
+                      checkpoint.record('visitor-tracking', finalContent, true)
+                    }
                   }
                 }
               } else if (needsDecomp) {
