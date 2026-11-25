@@ -2628,6 +2628,7 @@ export interface ParseGateResult {
     | 'object_as_child'
     | 'undefined_reference'
     | 'missing_local_import'
+    | 'missing_hook_import'
     | 'truncated_file'
     | 'duplicate_landmark'
     | 'generated_tests_failed'

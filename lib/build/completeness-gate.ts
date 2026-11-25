@@ -801,6 +801,102 @@ export function findUndeclaredJsxComponents(
   }
 }
 
+/** Built-in React hooks that must come from 'react' itself. Deliberately NOT
+ * any arbitrary `useXxx(...)` call — a generated app's own custom hook
+ * (`useCart`, `useAuth`, ...) may legitimately be defined locally or imported
+ * from anywhere, and this gate must never flag one just because it isn't
+ * imported from 'react'. */
+const REACT_HOOK_NAMES = new Set([
+  'useState',
+  'useEffect',
+  'useLayoutEffect',
+  'useInsertionEffect',
+  'useCallback',
+  'useMemo',
+  'useRef',
+  'useContext',
+  'useReducer',
+  'useImperativeHandle',
+  'useDebugValue',
+  'useDeferredValue',
+  'useId',
+  'useSyncExternalStore',
+  'useTransition',
+])
+
+/**
+ * Matches a call to a hook-shaped identifier: `useXxx(` or `useXxx<T>(` — an
+ * optional TS generic type argument may sit between the name and the call
+ * parens (`useRef<HTMLInputElement>(null)` is a common shadcn-style pattern).
+ * Never preceded by a word character or `.`, so `React.useState(...)` (a
+ * namespace member access, which needs no import of its own) is ignored.
+ */
+const HOOK_CALL = /(?<![.\w$])(use[A-Z]\w*)\s*(?:<[^<>()]*>)?\s*\(/g
+
+/** Local binding names a file imports from 'react' specifically (any clause
+ * shape: default+named, namespace-only, named-only, multi-line). */
+function reactImportBindings(content: string): Set<string> {
+  const bindings = new Set<string>()
+  const re = /import\s+([^'";]+?)\s+from\s*['"]react['"]/g
+  let m: RegExpExecArray | null
+  while ((m = re.exec(content)) !== null) {
+    for (const b of parseClauseBindings(m[1].trim())) bindings.add(b)
+  }
+  return bindings
+}
+
+/**
+ * HOOK-IMPORT GATE (overnight render-integrity sweep, issue #2230 — repro:
+ * live showcase generation "cartly", 2026-11-24) — a file calls a built-in
+ * React hook (`useState`, `useEffect`, ...) without importing it from
+ * 'react' in THAT file. Each generated file is bundled as its own ES module
+ * (same per-file-scope premise findUndeclaredJsxComponents's header above
+ * documents), so a hook used without a local import throws a real
+ * `ReferenceError: useState is not defined` at render time — a render-
+ * breaking crash undetected by any existing gate: findMissingLocalImports
+ * only walks LOCAL (relative/@) specifiers, and findUndeclaredJsxComponents
+ * only walks JSX TAG usage — a bare call like `useState(null)` is neither.
+ *
+ * Confirmed live: cartly's FeaturedProducts.tsx calls
+ * `const [selected, setSelected] = useState(null)` with zero import of React
+ * or useState anywhere in the file (it only imports local ./ui/* components)
+ * — clicking "View" on a product card throws and the section dies.
+ */
+export function findMissingReactHookImports(
+  code: string,
+  files?: Record<string, string>,
+): string[] {
+  try {
+    let map = files && Object.keys(files).length > 0 ? files : null
+    if (!map) {
+      const split = splitMarkerBlob(code || '')
+      if (Object.keys(split).length > 0) map = split
+    }
+    if (!map) return []
+
+    const problems = new Set<string>()
+    for (const [path, content] of Object.entries(map)) {
+      if (!CODE_FILE.test(path) || path.endsWith('.d.ts') || typeof content !== 'string') continue
+      const masked = maskComments(content)
+      const used = new Set<string>()
+      for (const m of masked.matchAll(HOOK_CALL)) {
+        if (REACT_HOOK_NAMES.has(m[1])) used.add(m[1])
+      }
+      if (used.size === 0) continue
+      const imported = reactImportBindings(masked)
+      for (const name of used) {
+        if (imported.has(name)) continue
+        if (definesIdentifier(content, name)) continue // locally shadowed — not react's own
+        problems.add(name)
+      }
+    }
+    return [...problems]
+  } catch {
+    // Pure detector must never block on its own failure — fail-open.
+    return []
+  }
+}
+
 /**
  * DUPLICATE-LANDMARK DETECTOR (builder#816, repro: `agentive-product`,
  * issue #815) — a narrow, deterministic DOM-SHAPE check for a bug class the
