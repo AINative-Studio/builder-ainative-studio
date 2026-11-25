@@ -173,6 +173,78 @@ export async function syncEnrollmentOwnerKey(companyId: string, ownerKey: string
   }
 }
 
+/**
+ * Backfill a stale `track` on an ALREADY-enrolled company (found during the
+ * #2132/#2133 tidemark investigation).
+ *
+ * THE BUG: register-app's POST handler recomputes `track` from the request
+ * body on EVERY call (first registration AND every later regeneration — see
+ * `const track = b.track === 'company' ? 'company' : 'app'` in
+ * app/api/build/register-app/route.ts) and writes that fresh value straight
+ * onto the `builder_app_registry` row every time. But `enrollCompany()` is
+ * only ever called once, guarded by `isEnrolled()` — so if a founder pivots
+ * their build between the company (marketing-landing-page) and app
+ * (real-working-tool) track after their first registration, the registry's
+ * `track` correctly reflects the founder's CURRENT choice, while this
+ * append-only enrollment store's `track` is frozen at whatever it was on
+ * first enrollment, forever.
+ *
+ * Why this matters: `app/api/build/nightly-loop/route.ts` branches its ENTIRE
+ * per-company backlog strategy on the ENROLLMENT's `e.track` (not the
+ * registry's), choosing between the app-track resolver-pipeline branch and
+ * the company-track "Nightly backlog" seed-task branch. A stale enrollment
+ * track routes a company through the wrong nightly-loop branch indefinitely
+ * after a pivot, even though every other system (middleware's auth gate,
+ * the dashboard, obedience-gate) now correctly sees the founder's current
+ * track.
+ *
+ * Fix: whenever register-app resolves a `track` for an already-enrolled
+ * company, also call this so the enrollment row's `track` catches up —
+ * appending a corrected row (same append-only convention as
+ * `syncEnrollmentOwnerKey`) that carries the existing enrollment's other
+ * fields forward unchanged. A no-op (returns `true`, nothing written) when
+ * the company isn't enrolled yet, or its latest row already carries this
+ * exact `track`.
+ */
+export async function syncEnrollmentTrack(companyId: string, track: 'app' | 'company'): Promise<boolean> {
+  if (!configured() || !companyId || !track) return false
+  try {
+    const rows = await fetchAllRows()
+    const own = rows
+      .map((r) => r.row_data as (LoopEnrollment & { kind?: string }) | undefined)
+      .filter(
+        (rd): rd is LoopEnrollment & { kind?: string } =>
+          Boolean(rd) && rd!.companyId === companyId && rd!.kind !== 'run' && rd!.kind !== 'run_health',
+      )
+    if (!own.length) return true
+    own.sort((a, b) => (b.enrolledAt || '').localeCompare(a.enrolledAt || ''))
+    const latest = own[0]
+    if (latest.track === track) return true
+
+    const res = await fetch(rowsUrl(), {
+      method: 'POST',
+      headers: headers(),
+      body: JSON.stringify({
+        row_data: {
+          companyId: latest.companyId,
+          companyName: latest.companyName,
+          track,
+          goal: latest.goal,
+          ownerKey: latest.ownerKey,
+          enabled: latest.enabled,
+          enrolledAt: new Date().toISOString(),
+          autoDuration: latest.autoDuration,
+          autoExpiresAt: latest.autoExpiresAt,
+        },
+      }),
+      signal: AbortSignal.timeout(20000),
+    })
+    return res.ok
+  } catch {
+    return false
+  }
+}
+
 /** Record the outcome of a nightly run (appended as an event row for the dashboard). */
 export async function recordRun(companyId: string, taskId: string | null, status: string): Promise<void> {
   if (!configured()) return
