@@ -96,6 +96,61 @@ const RUNTIME_PROVIDED: RegExp[] = [
 
 const FILE_MARKER = /^\/\/\s*---\s*FILE:\s*(.+?)\s*---\s*$/
 
+/**
+ * Component names lib/sandpack/build-files.ts's wrong-bundle-import safety
+ * net (#2016 — `detachFromWrongPathImport`, its `aikitComponents` array and
+ * `shadcnMap`'s flattened values) relocates to their real bundle at Sandpack
+ * build time whenever the component is actually rendered as JSX somewhere in
+ * the file — regardless of which (wrong) local path the generated code
+ * imported it from. Kept in sync by hand with that file's lists, same
+ * intentional tradeoff as `KNOWN_GLOBAL_JSX_NAMES` below (avoids coupling
+ * this generation-time gate to the Sandpack-preview build pipeline).
+ *
+ * Real bug found live (overnight loop, 2026-11-18, company 'brambleworks',
+ * chatId abhH0__eEeOeiZfsggnIk): `import { AIKitBanner } from
+ * './components/ui'` — the wrong bundle, AIKitBanner really lives in
+ * components/aikit — with `<AIKitBanner>` genuinely used in JSX. The real
+ * build pipeline auto-corrects this and the app renders fine (confirmed via
+ * the real generated file: AIKitBanner is rendered, not just imported), but
+ * `isRuntimeProvided()` below only recognizes 'components/ui/<file>' (one
+ * level deeper) and bare 'components/aikit' (which has a real index.ts of
+ * its own) — not the bare 'components/ui' barrel, which has no index.ts and
+ * only ever "resolves" because of this exact name-aware runtime correction.
+ * Without this list, a perfectly renderable generation using this pattern is
+ * wrongly flagged missing, failing the ready-gate and forcing an unneeded
+ * regeneration retry.
+ */
+const WRONG_BUNDLE_CORRECTABLE_NAMES = new Set([
+  'MetricCard', 'AIKitPriceCard', 'AIKitRating', 'AgentCard', 'SwarmView',
+  'SafetyBadge', 'GuardrailPanel', 'ChatBubble', 'StreamingIndicator', 'CodeDisplay',
+  'TokenUsageBar', 'ConnectionStatus', 'AIKitHeader', 'AIKitSidebar', 'AIKitTable',
+  'AIKitTimeline', 'AIKitBanner', 'AIKitAvatar', 'Skeleton', 'SkeletonCard',
+  'EmptyState', 'AIKitProductCard', 'AIKitPagination', 'AIKitBreadcrumb',
+  'AIKitStepper', 'VideoPlayer', 'StreamingText', 'MediaGallery', 'AgentTimeline',
+  'Button', 'Card', 'CardHeader', 'CardContent', 'CardTitle', 'CardDescription', 'CardFooter',
+  'Badge', 'Avatar', 'AvatarImage', 'AvatarFallback', 'Input',
+  'Tabs', 'TabsList', 'TabsTrigger', 'TabsContent', 'Label',
+  'Table', 'TableHeader', 'TableBody', 'TableRow', 'TableHead', 'TableCell',
+  'Separator', 'Progress', 'CircularProgress',
+  'Alert', 'AlertTitle', 'AlertDescription',
+  'Dialog', 'DialogOverlay', 'DialogContent', 'DialogHeader', 'DialogTitle', 'DialogDescription', 'DialogFooter',
+  'Select', 'SelectTrigger', 'SelectValue', 'SelectContent', 'SelectItem',
+  'Checkbox', 'RadioGroup', 'RadioGroupItem',
+  'Accordion', 'AccordionItem', 'AccordionTrigger', 'AccordionContent',
+  'Popover', 'PopoverTrigger', 'PopoverContent',
+  'Switch', 'Textarea',
+  'Tooltip', 'TooltipProvider', 'TooltipTrigger', 'TooltipContent',
+  'DropdownMenu', 'DropdownMenuTrigger', 'DropdownMenuContent', 'DropdownMenuItem', 'DropdownMenuLabel', 'DropdownMenuSeparator',
+  'ScrollArea', 'ScrollBar', 'Slider',
+  'Toast', 'ToastDescription', 'ToastTitle',
+])
+
+/** Is `name` used as a JSX element tag anywhere in `content`? Mirrors build-files.ts's own `<${c}[\s/>]` usage check — the exact precondition its wrong-bundle-import safety net (#2016) requires before it will relocate an import away from the wrong bundle path. Scans a comment-masked view so a mere mention in a comment can't satisfy it. */
+function usedAsJsxTag(content: string, name: string): boolean {
+  const esc = name.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+  return new RegExp(`<${esc}[\\s/>]`).test(maskComments(content))
+}
+
 /** Is this specifier a LOCAL module reference (relative or @/ alias)? */
 function isLocalSpecifier(spec: string): boolean {
   return /^(\.\.?\/|@\/)/.test(spec)
@@ -385,6 +440,9 @@ export function findMissingLocalImports(
           // identifiers have NO definition anywhere.
           if (imp.bindings.length > 0 && imp.bindings.every((b) => definesIdentifier(allContent, b))) continue
           if (imp.bindings.length === 0) continue // side-effect import of a non-asset — unverifiable, don't block
+          // Wrong-bundle AIKit/shadcn import the real build pipeline relocates
+          // on its own (#2016) — see WRONG_BUNDLE_CORRECTABLE_NAMES above.
+          if (imp.bindings.every((b) => WRONG_BUNDLE_CORRECTABLE_NAMES.has(b) && usedAsJsxTag(content, b))) continue
           missing.add(imp.spec)
         }
       }
@@ -395,6 +453,9 @@ export function findMissingLocalImports(
         if (ASSET_EXT.test(imp.spec) || isRuntimeProvided(imp.spec)) continue
         if (imp.bindings.length === 0) continue
         if (imp.bindings.every((b) => definesIdentifier(raw, b))) continue
+        // Wrong-bundle AIKit/shadcn import the real build pipeline relocates
+        // on its own (#2016) — see WRONG_BUNDLE_CORRECTABLE_NAMES above.
+        if (imp.bindings.every((b) => WRONG_BUNDLE_CORRECTABLE_NAMES.has(b) && usedAsJsxTag(raw, b))) continue
         missing.add(imp.spec)
       }
     }
