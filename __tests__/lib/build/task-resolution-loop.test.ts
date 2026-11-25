@@ -610,6 +610,48 @@ describe('runTaskResolutions reaps orphaned in_progress tasks', () => {
     const res = await runTaskResolutions('a::b', 'my-co')
     expect(res).toEqual({ attempted: 1, completed: 1, merged: 0, redeployed: 0, reaped: 0, completedNoCoverage: 0, deferred: 0 })
   })
+
+  /**
+   * #2223 — real wrench/zova/flo report: 3 company-track companies' "Nightly
+   * backlog" row sat `in_progress` for 6-9+ days with no new task seeded,
+   * raising the question of whether isStaleInProgress()'s 30-minute reaper
+   * (this describe block) actually reaches a COMPANY-track row at all, or
+   * only ever exercises an 'app'-track/`source: 'cody'` shape in practice.
+   *
+   * Confirmed by reading the source: isStaleInProgress() and this reap step
+   * check only `stage`/`updatedAt` — never `source` or any track field — so
+   * there is no code-level reason a `source: 'recurring'` row (the exact
+   * shape nightly-loop/route.ts's company-track branch seeds at
+   * `stage: 'in_progress'`) would be treated differently from any other
+   * orphaned row. This test makes that explicit and real wrench's actual
+   * stuck row shape, rather than leaving it implied by the generic
+   * `source: 'cody'` fixture default every other reaper test above uses.
+   *
+   * (#2223's real root cause turned out to be upstream of this reaper
+   * entirely — the company-track branch's OWN true-up step, #2132/#2137's
+   * give-up logic, is what actually clears a stuck company-track row once
+   * core's swarm status resolves; this reaper is the generic fallback
+   * backstop. Both paths independently reaching a company-track row is
+   * exactly the redundancy #2223 asked to confirm, not a contradiction.)
+   */
+  it('#2223 — reaps a stale in_progress company-track seeded row (source: recurring) exactly like any other orphaned task', async () => {
+    const stuckCompanyTrackRow = task({
+      id: 'wrench-nightly',
+      scopeKey: 'admin@ainative.studio::wrench',
+      title: 'Nightly backlog: wrench',
+      source: 'recurring',
+      stage: 'in_progress',
+      updatedAt: '2000-01-01T00:00:00.000Z',
+    })
+    h.listTasks.mockResolvedValue([stuckCompanyTrackRow])
+    const res = await runTaskResolutions('admin@ainative.studio::wrench', 'wrench')
+    expect(res.reaped).toBe(1)
+    expect(h.updateTask).toHaveBeenCalledWith(
+      'admin@ainative.studio::wrench',
+      'wrench-nightly',
+      expect.objectContaining({ stage: 'failed' }),
+    )
+  })
 })
 
 /**
