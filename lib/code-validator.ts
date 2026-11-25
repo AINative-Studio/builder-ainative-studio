@@ -309,10 +309,22 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
 
   // Fix TRUNCATION: If code is truncated mid-expression, find the last complete statement and close from there
   // This handles cases where the LLM output was cut at 512 tokens
-  const openBraces = (fixedCode.match(/\{/g) || []).length
-  const closeBraces = (fixedCode.match(/\}/g) || []).length
-  const openParens = (fixedCode.match(/\(/g) || []).length
-  const closeParens = (fixedCode.match(/\)/g) || []).length
+  //
+  // Counted on a string/comment-MASKED copy (builder#2193): a brace/paren
+  // character inside string content — e.g. a model-generated metadata
+  // `description` that was itself truncated mid-parenthetical, leaving a
+  // dangling unmatched `(` in display text, not code — is not a real
+  // code-structure imbalance. Counting the raw text misreads that as
+  // "truncated mid-expression" and enters the repair branch below, which
+  // then chops real trailing lines off an otherwise 100%-valid file and
+  // splices in synthetic closing brackets, actively corrupting it (confirmed
+  // live: /app/layout.tsx on two sampled companies, both carrying a
+  // truncated-description string ending in an unmatched `(`).
+  const maskedForBalance = maskStringsAndBlockCommentsOnly(fixedCode)
+  const openBraces = (maskedForBalance.match(/\{/g) || []).length
+  const closeBraces = (maskedForBalance.match(/\}/g) || []).length
+  const openParens = (maskedForBalance.match(/\(/g) || []).length
+  const closeParens = (maskedForBalance.match(/\)/g) || []).length
   const unclosedBraces = openBraces - closeBraces
   const unclosedParens = openParens - closeParens
 
@@ -338,11 +350,12 @@ function autoFixCode(code: string): { code: string; fixes: string[] } {
     // Truncate to last good line and close brackets
     fixedCode = lines.slice(0, lastGoodLine + 1).join('\n')
 
-    // Recount after truncation
-    const ob = (fixedCode.match(/\{/g) || []).length
-    const cb = (fixedCode.match(/\}/g) || []).length
-    const op = (fixedCode.match(/\(/g) || []).length
-    const cp = (fixedCode.match(/\)/g) || []).length
+    // Recount after truncation — same masked-text rule as above.
+    const maskedAfterTruncate = maskStringsAndBlockCommentsOnly(fixedCode)
+    const ob = (maskedAfterTruncate.match(/\{/g) || []).length
+    const cb = (maskedAfterTruncate.match(/\}/g) || []).length
+    const op = (maskedAfterTruncate.match(/\(/g) || []).length
+    const cp = (maskedAfterTruncate.match(/\)/g) || []).length
 
     let suffix = ''
     // Close JSX return: need );\n} pattern
