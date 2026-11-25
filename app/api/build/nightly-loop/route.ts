@@ -95,6 +95,77 @@ export const maxDuration = 300
 export const NIGHTLY_COMPANY_CONCURRENCY = Number(process.env.NIGHTLY_COMPANY_CONCURRENCY || 8)
 
 /**
+ * Per-company hard ceiling (#2223 follow-up) — mapWithConcurrency's own
+ * `deadline` only stops ADMITTING a new company once the route's wall-clock
+ * budget is spent; by its own documented design, "already-running items are
+ * allowed to finish." That design only holds if every company's own
+ * pipeline is itself bounded — it wasn't. Confirmed live: a manually
+ * triggered run (2026-11-25, investigating #2223) started
+ * (`count=100, batch=100, budgetMs=210000`), logged nothing else for 8+
+ * minutes — past its own 210s admission budget — and the triggering request
+ * never got a response at all (not even a 5xx; the connection just never
+ * resolved). One company's pipeline step with no timeout of its own (a
+ * network/LLM call missing an AbortSignal) can occupy its
+ * mapWithConcurrency worker slot forever, and because `Promise.all` over
+ * all workers cannot resolve until every slot does, that single stuck
+ * company blocks the ENTIRE route's response — not just its own result —
+ * indefinitely. No other per-step timeout in this pipeline (dispatch,
+ * comms, media, task resolution) adds up to a bound on the company's TOTAL
+ * time, so this needs its own explicit ceiling, same pattern as
+ * coverage-runner.ts's 120s RUN_TIMEOUT_MS and task-resolution-loop.ts's
+ * per-task deadline (#2105).
+ *
+ * Set well under NIGHTLY_COMPANY_CONCURRENCY workers' fair share of
+ * nightlyLoopBudgetMs() (210s / a few sequential admissions per worker) so
+ * a timed-out company frees its slot with room for the worker to pick up
+ * more real work before the route's own deadline, rather than merely
+ * capping the damage at exactly the budget boundary.
+ */
+function companyTimeoutMs(): number {
+  return Number(process.env.NIGHTLY_COMPANY_TIMEOUT_MS || 90_000)
+}
+
+/** Thrown by runCompanyWithTimeout() when a company's pipeline exceeds companyTimeoutMs() — distinguishes a real hang from any other per-company error. */
+export class CompanyTimeoutError extends Error {
+  constructor(companyId: string, timeoutMs: number) {
+    super(`company "${companyId}" exceeded its ${timeoutMs}ms pipeline ceiling — one or more steps never resolved`)
+    this.name = 'CompanyTimeoutError'
+  }
+}
+
+/**
+ * Races runForCompany() against companyTimeoutMs() so one hung company can
+ * never occupy a mapWithConcurrency worker slot forever. On timeout, throws
+ * CompanyTimeoutError — mapWithConcurrency's own try/catch around worker()
+ * already captures any throw as `{ done: true, error }` for that one item
+ * and continues the batch, so this needs no change to concurrent-map.ts
+ * itself, only an honest failure signal for THIS company.
+ *
+ * Deliberately does not abort whatever is still in flight inside
+ * runForCompany() (no AbortController threaded through) — the real fix for
+ * an individual hanging network call is giving THAT call its own
+ * AbortSignal.timeout at its own call site; this is the backstop that keeps
+ * the rest of tonight's run moving even when some such call is missing one,
+ * not a replacement for giving every I/O call its own bound.
+ */
+async function runCompanyWithTimeout(
+  e: LoopEnrollment,
+  resolvePlanTier: (ownerKey: string | undefined) => Promise<string | null>,
+  deadline: number | undefined,
+  timeoutMs: number = companyTimeoutMs(),
+): Promise<CompanyOutcome> {
+  let timer: ReturnType<typeof setTimeout>
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new CompanyTimeoutError(e.companyId, timeoutMs)), timeoutMs)
+  })
+  try {
+    return await Promise.race([runForCompany(e, resolvePlanTier, deadline), timeout])
+  } finally {
+    clearTimeout(timer!)
+  }
+}
+
+/**
  * The route's self-imposed wall-clock budget for ADMITTING new companies —
  * deliberately well under `maxDuration` (300s) so in-flight companies have
  * room to finish, the response can be serialized, and the function is never
@@ -211,7 +282,7 @@ export async function GET(request: NextRequest) {
     const outcomes = await mapWithConcurrency(
       batch,
       NIGHTLY_COMPANY_CONCURRENCY,
-      (e) => runForCompany(e, resolvePlanTier, deadline),
+      (e) => runCompanyWithTimeout(e, resolvePlanTier, deadline),
       { deadline },
     )
 

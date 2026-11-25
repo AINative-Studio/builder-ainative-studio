@@ -475,4 +475,59 @@ describe('GET /api/build/nightly-loop — backlog task seeding (#898)', () => {
     const data = await res.json()
     expect(data.tasksCompletedNoCoverage).toBe(0)
   })
+
+  /**
+   * #2223 follow-up (real production incident, 2026-11-25): mapWithConcurrency's
+   * own `deadline` only stops ADMITTING a new company once the route's budget
+   * is spent — "already-running items are allowed to finish" by design. That
+   * design silently assumed every company's own pipeline is itself bounded.
+   * It wasn't: runNightlyLoop() (the real swarm-dispatch call, awaited early in
+   * runForCompany()) can hang on a network call with no AbortSignal of its
+   * own, and because mapWithConcurrency's Promise.all cannot resolve until
+   * every worker slot does, ONE hung company blocked the ENTIRE route's
+   * response indefinitely — confirmed live: a manually triggered run logged
+   * its own startup line and then nothing else for 8+ minutes, well past its
+   * own 210s admission budget, with the triggering request never receiving a
+   * response at all.
+   *
+   * These tests prove the fix (runCompanyWithTimeout(), exported alongside
+   * CompanyTimeoutError): a per-company hard ceiling races runForCompany(),
+   * so a hang in any one company is recorded as a real, honest failure for
+   * THAT company and frees its worker slot — the rest of the batch, and the
+   * route's own response, complete on schedule regardless.
+   */
+  describe('#2223 — a hung company pipeline can never block the whole route forever', () => {
+    beforeEach(() => {
+      process.env.NIGHTLY_COMPANY_TIMEOUT_MS = '300'
+    })
+    afterEach(() => {
+      delete process.env.NIGHTLY_COMPANY_TIMEOUT_MS
+    })
+
+    it('times out a company whose swarm dispatch never resolves, and still returns a real 200 with the rest of the batch processed', async () => {
+      const hungCompany = { ...APP_ENROLLMENT, companyId: 'wrench', companyName: 'wrench' }
+      const healthyCompany = { ...APP_ENROLLMENT, companyId: 'beacon', companyName: 'Beacon' }
+      h.listEnrolled.mockResolvedValue([hungCompany, healthyCompany])
+      h.runNightlyLoop.mockImplementation(async (e: { companyId: string }) => {
+        if (e.companyId === 'wrench') return new Promise(() => {}) // never resolves — the real hang shape
+        return { companyId: 'beacon', briefing: null, taskId: 'task-1', status: 'dispatched', detail: 'ok' }
+      })
+
+      const res = await GET(req())
+      expect(res.status).toBe(200)
+      const data = await res.json()
+
+      // Both companies were STARTED (neither deferred by the admission
+      // deadline) and both are accounted for in `processed` — the hung one
+      // via its honest timeout failure, not a dropped/missing result.
+      expect(data.deferred).toBe(0)
+      expect(data.processed).toBe(2)
+      expect(data.failed).toBeGreaterThanOrEqual(1)
+      // The healthy company's own dispatch still shows up — proof the hang
+      // in wrench's worker slot did not also sink beacon's real result.
+      expect(data.results).toEqual(
+        expect.arrayContaining([expect.objectContaining({ companyId: 'beacon', status: 'dispatched' })]),
+      )
+    })
+  })
 })
