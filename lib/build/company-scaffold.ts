@@ -29,6 +29,9 @@
  * FileMap-in/FileMap-out convention, not a repeat of its I/O).
  */
 
+import { shadcnFiles } from '../sandpack/shadcn-bundle'
+import { aikitFiles } from '../sandpack/aikit-bundle'
+
 export interface FileMap {
   [relativePath: string]: string
 }
@@ -183,6 +186,33 @@ function hasFile(files: FileMap, relPath: string): boolean {
 }
 
 /**
+ * Does any generated file import the AIKit/shadcn sibling bundle (`./aikit`,
+ * `./ui/<name>`, `./components/aikit`, `./components/ui/<name>`)? Mirrors
+ * completeness-gate.ts's own RUNTIME_PROVIDED sibling-relative shape — that
+ * gate is right to never flag these as a missing-import defect for the
+ * Sandpack PREVIEW path, because lib/sandpack/setup.ts's getBuiltinFiles()
+ * always injects a real, working implementation at those exact paths before
+ * a company's own files are overlaid (lib/sandpack/build-files.ts).
+ *
+ * This scaffold feeds a DIFFERENT path — the real per-company Railway/Gitea
+ * deploy (company-deploy.ts calls generateCompanyScaffold() directly on the
+ * raw generation, with no Sandpack builtin merge at all). A generation that
+ * imports these paths without actually writing real files there (confirmed
+ * live this run across multiple sampled companies — e.g. wrench, crumble —
+ * whose Hero.tsx/Pricing.tsx/Footer.tsx import `./ui/button`/`./ui/badge`
+ * with no `src/components/ui/button.tsx` anywhere in the payload) renders
+ * fine in the free Sandpack preview but fails to even `next build` once
+ * deployed for real: "Module not found: Can't resolve './ui/button'". PURE.
+ */
+function needsUiKitBundle(files: FileMap): boolean {
+  return Object.values(files).some(
+    (content) =>
+      typeof content === 'string' &&
+      /from\s+['"](?:\.{1,2}\/)+(?:components\/)?(?:ui\/[a-z-]+|aikit)(?:\/|['"])/.test(content),
+  )
+}
+
+/**
  * Fill in every file a company's generated payload is missing to become a
  * genuinely buildable Next.js project. PURE — never mutates the input,
  * never touches disk. Existing files always win: a company's own generated
@@ -190,6 +220,22 @@ function hasFile(files: FileMap, relPath: string): boolean {
  */
 export function generateCompanyScaffold(files: FileMap): FileMap {
   const scaffolded: FileMap = { ...files }
+
+  // Same "only fill genuine gaps" rule as every config file below — a real
+  // generated src/components/ui/button.tsx (however unlikely to exist
+  // alongside the import that needs it) is never overwritten. Re-pathed to
+  // both the `src/components/...` and root `components/...` prefixes, same
+  // as lib/sandpack/setup.ts's getBuiltinFiles() duplication, since a
+  // sibling-relative `./ui/x` import resolves differently depending on
+  // whether the importing file itself lives under `src/`.
+  if (needsUiKitBundle(files)) {
+    for (const [bundlePath, content] of Object.entries({ ...shadcnFiles, ...aikitFiles })) {
+      const srcRelPath = bundlePath.replace(/^\/+/, '')
+      if (!hasFile(scaffolded, srcRelPath)) scaffolded[srcRelPath] = content
+      const rootRelPath = srcRelPath.replace(/^src\//, '')
+      if (!hasFile(scaffolded, rootRelPath)) scaffolded[rootRelPath] = content
+    }
+  }
 
   if (!hasFile(files, 'package.json')) {
     scaffolded['package.json'] = JSON.stringify(SCAFFOLD_PACKAGE_JSON, null, 2)

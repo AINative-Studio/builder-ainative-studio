@@ -195,3 +195,55 @@ describe('generateCompanyScaffold — real multi-file generation shape (Driftwoo
     expect(result['Dockerfile']).toBeDefined()
   })
 })
+
+// Real bug confirmed live this run (overnight loop): company-scaffold.ts
+// feeds the real per-company Railway/Gitea deploy (company-deploy.ts calls
+// generateCompanyScaffold() directly on the raw generation with no Sandpack
+// builtin merge at all) — unlike the free Sandpack preview, which always
+// gets a real working `./ui/*`/`./aikit` implementation injected underneath
+// via lib/sandpack/setup.ts's getBuiltinFiles(). Sampled several live
+// showcase generations (wrench, crumble) whose sibling components import
+// `./ui/button`/`./ui/badge`/`./ui/separator` with no real file at that path
+// anywhere in the payload — renders fine in the Sandpack preview (the
+// builtin fills the gap there) but would fail `next build` once actually
+// deployed: "Module not found: Can't resolve './ui/button'".
+describe('generateCompanyScaffold — AIKit/shadcn sibling bundle gap (Railway deploy path)', () => {
+  const brokenMultiFile = {
+    'src/App.tsx': "import Navbar from './components/Navbar'\nexport default function App() { return null }",
+    'src/components/Navbar.tsx': "import { Button } from './ui/button'\nexport default function Navbar() { return <Button /> }",
+  }
+
+  it('fills the real shadcn ui/aikit builtin files when a sibling imports them but never writes real ones', () => {
+    const result = generateCompanyScaffold(brokenMultiFile)
+    expect(result['src/components/ui/button.tsx']).toBeDefined()
+    expect(result['src/components/ui/button.tsx']).toMatch(/export/)
+    // Duplicated to the root `components/` prefix too, same as
+    // lib/sandpack/setup.ts's getBuiltinFiles() — a file one level deeper
+    // than `src/App.tsx` needs the non-`src` sibling path to resolve.
+    expect(result['components/ui/button.tsx']).toBeDefined()
+  })
+
+  it('fills the real AIKit builtin bundle for a `./components/aikit` / `./aikit` import too', () => {
+    const result = generateCompanyScaffold({
+      'src/App.tsx': "import { MetricCard } from './components/aikit'\nexport default function App() { return <MetricCard /> }",
+    })
+    expect(result['src/components/aikit/index.ts']).toBeDefined()
+    expect(result['src/components/aikit/MetricCard.tsx']).toBeDefined()
+  })
+
+  it('never overwrites a real ui/aikit file the company actually generated itself', () => {
+    const realButton = 'export function Button() { return <button className="my-real-button" /> }'
+    const result = generateCompanyScaffold({
+      ...brokenMultiFile,
+      'src/components/ui/button.tsx': realButton,
+    })
+    expect(result['src/components/ui/button.tsx']).toBe(realButton)
+  })
+
+  it('does nothing when no file imports the ui/aikit sibling bundle at all', () => {
+    const noUiKit = { 'src/App.tsx': 'export default function App() { return null }' }
+    const result = generateCompanyScaffold(noUiKit)
+    expect(result['src/components/ui/button.tsx']).toBeUndefined()
+    expect(result['src/components/aikit/index.ts']).toBeUndefined()
+  })
+})
