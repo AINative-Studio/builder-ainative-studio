@@ -96,8 +96,23 @@ function looksLikeLeadCapture(code: string): boolean {
   // had one — which, combined with it genuinely having no /api/db call,
   // false-flagged hasFakeLeadCaptureGap on a page that was never supposed to
   // have a waitlist form in the first place.
+  //
+  // Real, live false-NEGATIVE found this run (driftly, 2026-11-18): its
+  // waitlist form uses the injected shadcn `<Input>` wrapper
+  // (lib/sandpack/shadcn-bundle.ts) with no `type="email"` prop passed
+  // through at all — the wrapper itself never defaults one, so the real
+  // rendered `<input>` has no `type` attribute whatsoever. `hasEmailInput`
+  // required a literal `type="email"` and so never matched, meaning
+  // `hasFakeLeadCaptureGap` never ran at all — driftly's handler (local
+  // `submitted` flag only, confirmed zero `/api/db/waitlist` calls anywhere
+  // in its generated files) sailed through the obedience gate and the
+  // backfill sweep undetected. An email-shaped placeholder (`you@startup.com`,
+  // `name@company.com`) is just as strong a real-world signal that a field is
+  // an email-capture input as the `type` attribute — add it as a second,
+  // independent way to satisfy this half of the check.
   const masked = maskComments(code || '')
-  const hasEmailInput = /type=["']email["']/i.test(masked)
+  const hasEmailInput =
+    /type=["']email["']/i.test(masked) || /placeholder=["'][^"']*@[^"']*\.[^"']+["']/i.test(masked)
   const hasSubmitHandler = /(handleSubmit|handleEarlyAccess|handleWaitlist|handleSignup|onSubmit)\s*[:=]/.test(masked)
   return hasEmailInput && hasSubmitHandler
 }
