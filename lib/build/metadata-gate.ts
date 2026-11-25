@@ -23,6 +23,21 @@
  *    i.e. `title: '{Name} — Ecommerce Application'` for a CRM, a field-service
  *    platform, a knowledge marketplace, etc.
  *
+ *  - #1971 (fixed, date predates this gate): `generateNextLayoutTs()` now
+ *    runs the idea/prompt text through `escapeJsStringLiteral()`
+ *    (lib/ainative-file-generator.ts) before splicing it into the
+ *    `description`/`openGraph.description`/`twitter.description` single-
+ *    quoted string literals, escaping backslashes, quotes, and — critically
+ *    — turning a raw `\r\n`/`\n` into the two-character escape `\n`. A
+ *    company generated before that fix landed can still have a RAW,
+ *    unescaped newline byte sitting inside one of those single-quoted
+ *    literals — an immediate `Unterminated string literal` parse error for
+ *    any real TS/Next.js build of the file. Confirmed live (#2143, company
+ *    "Value Economy", 2026-11-17): `ts.transpileModule()` on the stored
+ *    `/app/layout.tsx` threw 10 diagnostics starting with exactly that
+ *    message. Like #1952/#2024 above, the generation-time fix was never
+ *    paired with a backfill sweep against already-stored companies.
+ *
  * Neither fix was ever applied to a company's already-persisted
  * `/app/layout.tsx` — generation-time fixes never retroactively repair
  * existing durable files, the same caveat every other gate/backfill pair in
@@ -48,6 +63,33 @@ export interface MetadataFreshnessResult {
 
 const TITLE_RE = /title:\s*'([^']*) — ([^']*) Application'/
 
+// #2143/#1971 backfill: only the exact three `description: '...'` literals
+// generateNextLayoutTs() itself emits (top-level metadata, openGraph,
+// twitter) — never a blanket single-quote scan over the whole file, which
+// would risk flagging a legitimate multi-line construct a founder added
+// elsewhere after generation. `(?:[^'\\]|\\.)*` walks the literal the same
+// way a real tokenizer would — an escaped char (`\\.`) is consumed as a
+// pair so an escaped quote (`\\'`) can never be mistaken for the literal's
+// closing quote.
+const DESCRIPTION_LITERAL_RE = /description:\s*'((?:[^'\\]|\\.)*)'/g
+
+/**
+ * True when a stored layout.tsx has a RAW, unescaped newline byte inside one
+ * of its `description: '...'` string literals — the exact #1971 generator
+ * bug (fixed in `escapeJsStringLiteral()`, never backfilled). A real escape
+ * sequence shows up as the two characters `\` and `n`, which this regex
+ * class (`[^'\\]`) never matches raw inside the literal's body — only an
+ * ACTUAL newline byte (`\n`/`\r`) trips this, so an already-escaped,
+ * generated-after-#1971 company never false-positives here.
+ */
+export function hasUnescapedDescriptionNewline(persistedLayoutTs: string): boolean {
+  const layout = persistedLayoutTs || ''
+  for (const m of layout.matchAll(DESCRIPTION_LITERAL_RE)) {
+    if (/[\r\n]/.test(m[1])) return true
+  }
+  return false
+}
+
 /**
  * PURE — no I/O. `persistedLayoutTs` is the company's current durable
  * `/app/layout.tsx` file content; `prompt`/`code` are the same inputs
@@ -69,6 +111,12 @@ export function checkMetadataFreshness(
   if (/metadataBase:\s*new URL\('https:\/\/this\.app'\)/.test(layout)) {
     reasons.push(
       'layout.tsx metadataBase is the literal placeholder domain "https://this.app" — the #1952 unanchored-name-scan bug signature (fixed in extractAppMetadata, never backfilled).',
+    )
+  }
+
+  if (hasUnescapedDescriptionNewline(layout)) {
+    reasons.push(
+      'layout.tsx has a raw, unescaped newline inside a description string literal — the #1971 generator bug (fixed in escapeJsStringLiteral, never backfilled); a real Next.js build of this file fails immediately with "Unterminated string literal".',
     )
   }
 

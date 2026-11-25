@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { checkMetadataFreshness } from '@/lib/build/metadata-gate'
+import { checkMetadataFreshness, hasUnescapedDescriptionNewline } from '@/lib/build/metadata-gate'
 
 /**
  * Metadata freshness gate — detects the two confirmed, already-fixed
@@ -82,5 +82,59 @@ describe('checkMetadataFreshness', () => {
     const layout = `export const metadata = { title: 'Something totally custom' }`
     const r = checkMetadataFreshness(WRENCH_PROMPT, '', layout)
     expect(r.stale).toBe(false)
+  })
+
+  // #2143/#1971: a layout.tsx generated before escapeJsStringLiteral() turned
+  // a raw newline into the two-character `\n` escape still has an ACTUAL
+  // newline byte inside a description literal — the exact "Value Economy"
+  // repro from #2143 (pasted multi-line prompt text landed unescaped in the
+  // single-quoted description).
+  it('flags the #1971 raw-newline-in-description bug', () => {
+    const layout = `export const metadata: Metadata = {
+  title: 'Wrench — Saas Application',
+  description: 'Build a real app for this idea: https://example.com/a
+https://example.com/b',
+  metadataBase: new URL('https://wrench.app'),
+}
+export default function RootLayout() { return null }
+`
+    const r = checkMetadataFreshness(WRENCH_PROMPT, '', layout)
+    expect(r.stale).toBe(true)
+    expect(r.reasons.some((x) => x.includes('#1971'))).toBe(true)
+  })
+
+  it('does NOT flag a description whose newline was already escaped (post-#1971 generation)', () => {
+    const layout = layoutTsWithTitle('Wrench', 'Saas', 'https://wrench.app').replace(
+      "description: 'whatever',",
+      "description: 'Build a real app for this idea: https://example.com/a\\nhttps://example.com/b',",
+    )
+    const r = checkMetadataFreshness(WRENCH_PROMPT, '', layout)
+    expect(r.stale).toBe(false)
+  })
+})
+
+describe('hasUnescapedDescriptionNewline', () => {
+  it('returns false for an empty/missing layout.tsx', () => {
+    expect(hasUnescapedDescriptionNewline('')).toBe(false)
+  })
+
+  it('returns false when no description literal is present at all', () => {
+    expect(hasUnescapedDescriptionNewline(`export const metadata = { title: 'x' }`)).toBe(false)
+  })
+
+  it('catches the raw newline inside openGraph.description, not just the top-level one', () => {
+    const layout = `export const metadata = {
+  description: 'fine',
+  openGraph: {
+    description: 'broken
+across two lines',
+  },
+}`
+    expect(hasUnescapedDescriptionNewline(layout)).toBe(true)
+  })
+
+  it('does not false-positive on an escaped quote inside the literal', () => {
+    const layout = `export const metadata = { description: 'founder\\'s real one-line pitch' }`
+    expect(hasUnescapedDescriptionNewline(layout)).toBe(false)
   })
 })
