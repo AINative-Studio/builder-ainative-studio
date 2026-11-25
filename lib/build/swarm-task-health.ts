@@ -124,7 +124,7 @@ export function normalizeSwarmStatus(raw: unknown): SwarmTaskStatus {
   return 'unknown'
 }
 
-function hoursSince(iso: string): number {
+export function hoursSince(iso: string): number {
   const t = new Date(iso).getTime()
   if (Number.isNaN(t)) return 0
   return Math.max(0, (Date.now() - t) / (60 * 60 * 1000))
