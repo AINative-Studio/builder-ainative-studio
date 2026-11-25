@@ -150,4 +150,21 @@ describe('loadGeneration picks the newest row for a multi-turn chat (younova-cla
     const gen = await loadGeneration('chat-all-empty')
     expect(gen?.generatedCode).toBe('   ')
   })
+
+  // #2138 — this query has no server-side order-by (see this file's own doc
+  // comment above), so a chat_id with more rows than `limit` can have its
+  // real quality row silently excluded from the fetched set entirely —
+  // confirmed live for issue761-verify (hasCode:true on /showcase, but
+  // permanently "Preview Unavailable"). loadChatHistory() reads this exact
+  // same table/filter and already uses limit:100 — this just removes the
+  // unexplained 50-vs-100 asymmetry between the two sibling functions.
+  it('queries with the same row limit (100) loadChatHistory already uses for this table', async () => {
+    fetchMock.mockResolvedValueOnce(okResponse({ data: [] }))
+    await loadGeneration('chat-limit-check')
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    const [, init] = fetchMock.mock.calls[0]
+    const sentBody = JSON.parse(init.body)
+    expect(sentBody.limit).toBe(100)
+    expect(sentBody.filters).toEqual({ chat_id: 'chat-limit-check' })
+  })
 })
