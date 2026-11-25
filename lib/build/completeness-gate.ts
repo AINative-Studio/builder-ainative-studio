@@ -565,6 +565,24 @@ export function findTruncatedFiles(files?: Record<string, string>): string[] {
       // non-rendering constants/types/hooks with no return or JSX at all),
       // and never a re-export barrel (`export { default } from '...'`,
       // `export * from '...'`), which also legitimately has neither.
+      //
+      // Requires an actual BLOCK body (`function ... { ... }` or
+      // `(...) => { ... }`) somewhere in the file before this can fire.
+      // Overnight render-integrity sweep (2026-11-21, live repro: this same
+      // luminary ContactFormSection.tsx, one step further down its own
+      // lifecycle): once stubTruncatedFiles() replaces a genuinely-cut-off
+      // block-bodied file with its own safe `export const X = () => null`
+      // stub (an EXPRESSION-bodied arrow — no `{` at all), re-running this
+      // same detector against that stub re-triggered SIGNAL 3 on its own
+      // output: no `return` keyword, no JSX, export present — a false
+      // "still truncated" verdict on code that already parsed clean and is
+      // semantically complete (an expression-bodied arrow has nothing left
+      // to cut off; it's one finished statement by construction). Nothing
+      // in production re-scans built/stubbed output today, but this loop's
+      // own corrected verification method (#2198) does, so the gap was
+      // real. Block-bodied functions keep the existing behavior exactly —
+      // this only excuses a file with no block body anywhere to be cut off
+      // from.
       if (
         /\.(t|j)sx$/.test(path) &&
         looksLikeComponentFile(path) &&
@@ -572,7 +590,8 @@ export function findTruncatedFiles(files?: Record<string, string>): string[] {
         /\bexport\b/.test(masked) &&
         !/\bexport\s*(?:\*|\{[^}]*\})\s*from\s*['"]/.test(masked) &&
         !/<[A-Za-z]|<>/.test(masked) &&
-        !/\breturn\b/.test(masked)
+        !/\breturn\b/.test(masked) &&
+        (/=>\s*\{/.test(masked) || /\bfunction\b[^{;]*\{/.test(masked))
       ) {
         broken.push(path)
       }
