@@ -411,3 +411,198 @@ describe('runCompletenessBackfillSweep — idempotency and failure handling', ()
     expect(loadGeneration).toHaveBeenCalledTimes(1)
   })
 })
+
+/**
+ * Overnight render/dashboard-integrity loop finding (mirrors #2126's
+ * `runShowcaseObedienceBackfillSweep` tests in obedience-backfill.test.ts
+ * exactly): `/showcase` lists real, publicly-linkable `/build/{slug}` pages
+ * for anonymous, never-registered generations (synthesizing a display slug
+ * from the title + chatId), but `runCompletenessBackfillSweep` above only
+ * ever iterates the app REGISTRY — so a real #2013/#2119-class truncated-
+ * file bug on one of these pages has no remediation path, ever, no matter
+ * how many times the registry sweep runs. Confirmed live:
+ * `wallkind-z4nabG`'s `/src/components/LeadsPanel.tsx` and
+ * `a-game-that-helps-students-get-cyber-security-PRBKNy`'s
+ * `/src/components/PhishingSimulator.tsx` both trip the real
+ * `findTruncatedFiles()` detector today, and neither is reachable by the
+ * registry sweep.
+ */
+const SHOWCASE_PADDING = 'x'.repeat(2000) // isQualityApp() requires code.length >= 2000
+
+async function loadShowcase(opts: {
+  rows: Array<{ chat_id: string; generated_code: string; prompt?: string; title?: string; is_showcase?: boolean }>
+  registryEntries?: Record<string, { entry: unknown; verified: boolean }>
+  generations?: Record<string, FakeGeneration | null>
+  existingTasksBySlug?: Record<string, { stage: string; title: string }[]>
+  createTaskFails?: boolean
+}) {
+  const listGenerations = vi.fn(async () => opts.rows)
+  const resolveAppVerified = vi.fn(async (slug: string) => {
+    const r = (opts.registryEntries || {})[slug]
+    return r || { entry: null, verified: true }
+  })
+  const loadGeneration = vi.fn(async (chatId: string) => {
+    const gens = opts.generations || {}
+    if (!(chatId in gens)) return null
+    const gen = gens[chatId]
+    if (gen === null) throw new Error('durable read blew up')
+    return gen
+  })
+  const createTask = vi.fn(async (_scopeKey: string, input: any) => {
+    if (opts.createTaskFails) return null
+    return { id: 't_fake', scopeKey: _scopeKey, stage: 'todo', source: 'cody', ...input }
+  })
+  const listTasksForCompany = vi.fn(async (slug: string) => (opts.existingTasksBySlug || {})[slug] || [])
+  const chatScopeKey = (ownerKey: string, companySlug: string) => `${ownerKey}::${companySlug}`
+  const openIssueForNewTask = vi.fn(async (_scopeKey: string, _gitOrg: unknown, _slug: string, task: unknown) => task)
+
+  vi.doMock('@/lib/build/app-registry', () => ({ listAllAppsWithStatus: vi.fn(), resolveAppVerified }))
+  vi.doMock('@/lib/zerodb-store', () => ({ loadGeneration, listGenerations }))
+  vi.doMock('@/lib/build/task-store', () => ({ createTask, listTasksForCompany }))
+  vi.doMock('@/lib/build/task-resolver', () => ({ openIssueForNewTask }))
+  vi.doMock('@/lib/build/chat-store', () => ({ chatScopeKey }))
+
+  const mod = await import('@/lib/build/completeness-backfill')
+  return {
+    ...mod,
+    listGenerations,
+    resolveAppVerified,
+    loadGeneration,
+    createTask,
+    listTasksForCompany,
+    openIssueForNewTask,
+  }
+}
+
+describe('runShowcaseCompletenessBackfillSweep — unregistered showcase generations', () => {
+  it('fails closed (registryOk: false) when the generation list read comes back empty', async () => {
+    const { runShowcaseCompletenessBackfillSweep } = await loadShowcase({ rows: [] })
+
+    const r = await runShowcaseCompletenessBackfillSweep({ dryRun: false })
+
+    expect(r.registryOk).toBe(false)
+    expect(r.checked).toBe(0)
+  })
+
+  it('skips a row that is not showcase-eligible (is_showcase: false)', async () => {
+    const { runShowcaseCompletenessBackfillSweep } = await loadShowcase({
+      rows: [{ chat_id: 'chat-1', generated_code: SHOWCASE_PADDING + CLEAN_CODE, title: 'Quill', is_showcase: false }],
+    })
+
+    const r = await runShowcaseCompletenessBackfillSweep({ dryRun: false })
+
+    expect(r.checked).toBe(0)
+    expect(r.results).toEqual([])
+  })
+
+  it('skips a row that fails isQualityApp (too short)', async () => {
+    const { runShowcaseCompletenessBackfillSweep } = await loadShowcase({
+      rows: [{ chat_id: 'chat-1', generated_code: 'too short', title: 'Quill', is_showcase: true }],
+    })
+
+    const r = await runShowcaseCompletenessBackfillSweep({ dryRun: false })
+
+    expect(r.checked).toBe(0)
+  })
+
+  it('skips an entry that already resolves to a real registry entry (the other sweep\'s job)', async () => {
+    const { runShowcaseCompletenessBackfillSweep, createTask } = await loadShowcase({
+      rows: [{ chat_id: 'chat-wrench', generated_code: SHOWCASE_PADDING + CLEAN_CODE, title: 'Wrench', is_showcase: true }],
+      registryEntries: { 'wrench-chat-w': { entry: { slug: 'wrench' }, verified: true } },
+    })
+
+    const r = await runShowcaseCompletenessBackfillSweep({ dryRun: false })
+
+    expect(r.checked).toBe(0)
+    expect(createTask).not.toHaveBeenCalled()
+  })
+
+  it('files a task under a guest:anon scope for a real truncated-file gap on an unregistered generation', async () => {
+    const TRUNCATED = `
+import React, { useState } from 'react'
+export default function LeadsPanel() {
+  const [deals, setDeals] = useState([])
+}
+`
+    const { runShowcaseCompletenessBackfillSweep, createTask, resolveAppVerified } = await loadShowcase({
+      rows: [
+        {
+          chat_id: 'chat-wallkind',
+          generated_code: SHOWCASE_PADDING + CLEAN_CODE,
+          prompt: 'wallkind',
+          title: 'Wallkind',
+          is_showcase: true,
+        },
+      ],
+      generations: {
+        'chat-wallkind': {
+          generatedCode: SHOWCASE_PADDING + CLEAN_CODE,
+          files: { '/src/App.tsx': CLEAN_CODE, '/src/components/LeadsPanel.tsx': TRUNCATED },
+        },
+      },
+    })
+
+    const r = await runShowcaseCompletenessBackfillSweep({ dryRun: false })
+
+    expect(r.checked).toBe(1)
+    expect(r.gapsFound).toBe(1)
+    expect(r.tasksFiled).toBe(1)
+    expect(r.results[0].truncatedFiles).toEqual(['/src/components/LeadsPanel.tsx'])
+    expect(resolveAppVerified).toHaveBeenCalledWith('wallkind-chat-w')
+    expect(createTask).toHaveBeenCalledWith(
+      'guest:anon::wallkind-chat-w',
+      expect.objectContaining({ stage: 'todo', source: 'cody' }),
+    )
+  })
+
+  it('dry run never files a task', async () => {
+    const { runShowcaseCompletenessBackfillSweep, createTask } = await loadShowcase({
+      rows: [{ chat_id: 'chat-wallkind', generated_code: SHOWCASE_PADDING + MISSING_IMPORT_CODE, title: 'Wallkind', is_showcase: true }],
+    })
+
+    const r = await runShowcaseCompletenessBackfillSweep({ dryRun: true })
+
+    expect(r.gapsFound).toBe(1)
+    expect(r.tasksFiled).toBe(0)
+    expect(createTask).not.toHaveBeenCalled()
+  })
+
+  it('--only scopes the showcase sweep to named synthesized slugs', async () => {
+    const { runShowcaseCompletenessBackfillSweep, loadGeneration } = await loadShowcase({
+      rows: [
+        { chat_id: 'chat-quill', generated_code: SHOWCASE_PADDING + CLEAN_CODE, title: 'Quill', is_showcase: true },
+        { chat_id: 'chat-ridge', generated_code: SHOWCASE_PADDING + CLEAN_CODE, title: 'Ridgeline', is_showcase: true },
+      ],
+      generations: {
+        'chat-quill': { generatedCode: SHOWCASE_PADDING + CLEAN_CODE },
+        'chat-ridge': { generatedCode: SHOWCASE_PADDING + CLEAN_CODE },
+      },
+    })
+
+    const r = await runShowcaseCompletenessBackfillSweep({ dryRun: true, onlySlugs: ['ridgeline-chat-r'] })
+
+    expect(r.checked).toBe(1)
+    expect(r.results.map((x) => x.slug)).toEqual(['ridgeline-chat-r'])
+    expect(loadGeneration).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not double-file when a non-terminal task for the same gap already exists', async () => {
+    const { runShowcaseCompletenessBackfillSweep, createTask } = await loadShowcase({
+      rows: [{ chat_id: 'chat-wallkind', generated_code: SHOWCASE_PADDING + MISSING_IMPORT_CODE, title: 'Wallkind', is_showcase: true }],
+      existingTasksBySlug: {
+        'wallkind-chat-w': [
+          {
+            stage: 'todo',
+            title: 'Fix generation completeness gap: imported local module(s) never defined in the payload: ./components/Analytics',
+          },
+        ],
+      },
+    })
+
+    const r = await runShowcaseCompletenessBackfillSweep({ dryRun: false })
+
+    expect(r.gapsFound).toBe(1)
+    expect(r.results[0].disposition).toBe('already_tracked')
+    expect(createTask).not.toHaveBeenCalled()
+  })
+})
