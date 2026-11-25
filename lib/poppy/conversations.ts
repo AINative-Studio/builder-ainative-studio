@@ -105,8 +105,10 @@ async function ensureTable(table: string): Promise<void> {
 
 async function readRows<T>(table: string): Promise<T[]> {
   try {
+    // api.ainative.studio's rows endpoint caps `limit` at 1000 server-side
+    // (confirmed via its own public OpenAPI spec) — 5000 422s every call.
     const res = await fetch(
-      `${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${table}/rows?limit=5000`,
+      `${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${table}/rows?limit=1000`,
       { headers: headers(), signal: AbortSignal.timeout(15000) },
     )
     if (!res.ok) return []

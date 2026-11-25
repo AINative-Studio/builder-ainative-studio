@@ -33,8 +33,10 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    // api.ainative.studio's rows endpoint caps `limit` at 1000 server-side
+    // (confirmed via its own public OpenAPI spec) — 5000 422s every call.
     const res = await fetch(
-      `${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${FUNNEL_TABLE}/rows?limit=5000`,
+      `${AINATIVE_API}/api/v1/projects/${PROJECT_ID}/database/tables/${FUNNEL_TABLE}/rows?limit=1000`,
       { headers: { Authorization: `Bearer ${API_KEY}`, 'X-API-Key': API_KEY }, signal: AbortSignal.timeout(20000) },
     )
     if (!res.ok) return Response.json({ shareReachingLastStep: 0, medianTimeFirstArtifactToLastStepMs: null, sampleSize: 0 })

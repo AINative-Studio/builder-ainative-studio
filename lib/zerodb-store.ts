@@ -399,21 +399,23 @@ const CACHE_TTL_MS = 60_000
 type GenCacheEntry = { rows: any[]; fetchedAt: number }
 const genCache = new Map<number, GenCacheEntry>()
 
-// Default raised from the old hard 1000-row read every call site used
-// (#2188): the table is append-only — every chat turn, not just every
-// company, adds a row — so a fixed cap this low silently drops newer rows
-// off the showcase gallery AND the `/build/{slug}` unregistered-company
-// fallback (resolveShowcaseOnlyBySlug) AND the obedience-backfill sweep as
-// the table grows past it, with no error or visible symptom beyond "that
-// company just doesn't show up". 5000 matches the ceiling already used
-// elsewhere in this codebase for similarly unbounded ZeroDB tables (e.g.
-// lib/build/anon-drafts.ts, lib/poppy/conversations.ts,
-// app/api/admin/funnel-summary/route.ts) — not a permanent fix (the table
-// has no upper bound), but it buys the same multiple-of-growth headroom
-// those call sites rely on. The underlying lack of any stable server-side
-// ordering guarantee on this endpoint (see loadGeneration's comment above)
-// is a separate, deeper concern this does not address.
-export async function listGenerations(limit = 5000): Promise<any[]> {
+// #2188 raised this default from 1000 to 5000, reasoning that 5000 "matches
+// the ceiling already used elsewhere in this codebase" (lib/build/anon-drafts.ts,
+// lib/poppy/conversations.ts, app/api/admin/funnel-summary/route.ts). That
+// premise was wrong: api.ainative.studio's own public OpenAPI spec
+// (GET /api/v1/projects/{id}/database/tables/{table}/rows) declares `limit`'s
+// real schema as `{maximum: 1000, minimum: 1, default: 100}` — there is no
+// 5000 ceiling anywhere on this endpoint, in this table or any other. Every
+// `limit=5000` call has been 422ing in production since #2228 deployed
+// (confirmed live via Railway deploy logs), and since 422 is a client error
+// zerodbRequest's retry logic correctly does NOT retry it — so the call
+// fails immediately and every caller silently got `[]`/stale-cache instead
+// of rows. Live impact confirmed: /api/showcase's gallery dropped from ~163
+// entries to 11. Reverting to 1000 (the real, confirmed-correct ceiling) to
+// stop the active breakage. This does NOT re-fix #2188's original concern
+// (rows past 1000 are still invisible as the table grows) — that needs real
+// pagination (multiple requests with an offset/cursor), tracked separately.
+export async function listGenerations(limit = 1000): Promise<any[]> {
   const cached = genCache.get(limit)
   const now = Date.now()
   if (cached && now - cached.fetchedAt < CACHE_TTL_MS) {
