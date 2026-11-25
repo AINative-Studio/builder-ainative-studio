@@ -189,6 +189,22 @@ export interface ReconcileSweepResult {
   deadRegistrations: number
   deadRegistrationSlugs: string[]
   deadRegistrationsTruncated: boolean
+  /**
+   * #2156: registry rows with NO chatId at all (never `stuck`/`deadRegistrations`
+   * — both of those require a chatId to even reach `fetchDeploymentHealthStages`)
+   * that are ALSO `enrolled: true` in the nightly loop. Distinct from the plain
+   * `no_chat_id` skip (an unenrolled, free-tier company simply hasn't generated
+   * anything yet — routine, not alarming): this cohort is being nightly-swept
+   * for maintenance work on a company with nothing to maintain, every single
+   * night, with no stored product anywhere to recover. See this module's
+   * `reconcileRegistration` for the live repro ("flo", 24+ consecutive nights).
+   *
+   * Capped the same way as `deadRegistrationSlugs` — a response-size safety
+   * net, not a claim this cohort is rare.
+   */
+  enrolledWithNoChatId: number
+  enrolledWithNoChatIdSlugs: string[]
+  enrolledWithNoChatIdTruncated: boolean
   results: ReconcileCompanyResult[]
 }
 
@@ -242,7 +258,21 @@ export async function reconcileRegistration(
     if (!entry.chatId) {
       // No chatId means there is no generation to resolve stored code for, so
       // neither the gate nor the commit has anything to act on.
-      return { slug, disposition: 'unknown', reconciled: false, reason: 'no_chat_id' }
+      //
+      // #2156: a company can reach this with `enrolled: true` — the nightly
+      // loop keeps creating "Nightly backlog" tasks for it every night even
+      // though there is nothing here to maintain (confirmed live: "flo", 24+
+      // consecutive nightly tasks against a chatId:null registry row). That
+      // cohort is a DIFFERENT, more urgent case than an unenrolled company with
+      // no chatId (nothing yet asked to generate — routine): it is burning real
+      // nightly-loop cycles, forever, on a company with no stored product at
+      // all. Tag it with its own reason so the sweep can count and list it
+      // separately instead of folding it into the generic, expected
+      // `no_chat_id` bucket. Visibility only — still correctly left alone here;
+      // see ReconcileSweepResult.enrolledWithNoChatIdSlugs for the product
+      // decision this exists to surface.
+      const reason = entry.enrolled ? 'no_chat_id_but_enrolled' : 'no_chat_id'
+      return { slug, disposition: 'unknown', reconciled: false, reason }
     }
 
     const read = await fetchDeploymentHealthStages('builder_app_generation', slug)
@@ -401,6 +431,9 @@ export async function runRegistrationReconcileSweep(
         ? [result.slug]
         : [],
       deadRegistrationsTruncated: false,
+      enrolledWithNoChatId: result.reason === 'no_chat_id_but_enrolled' ? 1 : 0,
+      enrolledWithNoChatIdSlugs: result.reason === 'no_chat_id_but_enrolled' ? [result.slug] : [],
+      enrolledWithNoChatIdTruncated: false,
       results: [result],
     }
   }
@@ -417,7 +450,8 @@ export async function runRegistrationReconcileSweep(
       ok: true, dryRun, registryOk: false, total: 0, candidates: 0,
       reconciled: 0, committed: 0, skipped: 0, truncated: false, remaining: 0,
       byDisposition: {}, deadRegistrations: 0, deadRegistrationSlugs: [],
-      deadRegistrationsTruncated: false, results: [],
+      deadRegistrationsTruncated: false, enrolledWithNoChatId: 0,
+      enrolledWithNoChatIdSlugs: [], enrolledWithNoChatIdTruncated: false, results: [],
     }
   }
 
@@ -466,6 +500,14 @@ export async function runRegistrationReconcileSweep(
   const deadRegistrationSlugs = deadRegistrationResults.slice(0, MAX_DEAD_REGISTRATION_SLUGS).map((r) => r.slug)
   const deadRegistrationsTruncated = deadRegistrationResults.length > MAX_DEAD_REGISTRATION_SLUGS
 
+  // #2156: nightly-enrolled companies with no chatId at all — see
+  // ReconcileSweepResult.enrolledWithNoChatIdSlugs for the full reasoning.
+  const enrolledWithNoChatIdResults = results.filter((r) => r.reason === 'no_chat_id_but_enrolled')
+  const enrolledWithNoChatIdSlugs = enrolledWithNoChatIdResults
+    .slice(0, MAX_DEAD_REGISTRATION_SLUGS)
+    .map((r) => r.slug)
+  const enrolledWithNoChatIdTruncated = enrolledWithNoChatIdResults.length > MAX_DEAD_REGISTRATION_SLUGS
+
   if (truncated) {
     // Surfaced as a warning, not swallowed: a sweep that cannot finish the
     // platform inside its budget is an operational signal (the read pass needs
@@ -489,6 +531,17 @@ export async function runRegistrationReconcileSweep(
     })
   }
 
+  if (enrolledWithNoChatIdResults.length > 0) {
+    // #2156: its own warning line, same posture as #1956's — a nightly-enrolled
+    // company with no chatId at all is burning real cron cycles on a company
+    // with nothing to maintain, and had no visibility before this.
+    logger.warn('Registration reconciliation sweep found nightly-enrolled companies with no chatId at all', {
+      count: enrolledWithNoChatIdResults.length,
+      slugs: enrolledWithNoChatIdSlugs,
+      truncatedList: enrolledWithNoChatIdTruncated,
+    })
+  }
+
   return {
     ok: true,
     dryRun,
@@ -507,6 +560,9 @@ export async function runRegistrationReconcileSweep(
     deadRegistrations: deadRegistrationResults.length,
     deadRegistrationSlugs,
     deadRegistrationsTruncated,
+    enrolledWithNoChatId: enrolledWithNoChatIdResults.length,
+    enrolledWithNoChatIdSlugs,
+    enrolledWithNoChatIdTruncated,
     results,
   }
 }
