@@ -129,7 +129,19 @@ async function runProductGeneration(
     }
     if (!chatId) throw new Error('no chatId')
 
-    await registerApp({ slug: productSlug, chatId, name, track: 'company', idea })
+    // #2234-class gap: registerApp() APPENDS a row and resolveApp() is
+    // latest-wins (see lib/build/app-registry.ts's own doc comment) — a bare
+    // `{ slug, chatId, name, track, idea }` object silently wipes every other
+    // field this product's registry row carried (gitOrg/gitRepoUrl/
+    // gitRepoId, railwayServiceId, plan/enrolled, ownerEmail,
+    // lifecycleStatus, domain, logoUrl, …) once this background generation
+    // (reachable via a founder's real "Regenerate" click — force:true, see
+    // StandalonePreviewRegenerate.tsx) finishes and writes back. Re-read the
+    // CURRENT row right before writing (same pattern register-app/route.ts's
+    // own #2133 sticky-track fix uses) so this detached, potentially
+    // minutes-long background task never clobbers concurrent state.
+    const currentEntry = await resolveApp(productSlug).catch(() => null)
+    await registerApp({ ...(currentEntry || {}), slug: productSlug, chatId, name, track: 'company', idea })
     await markProductGenerationRegistered(productSlug, chatId)
     logBuildOutcome({
       slug: productSlug, idea, brand: name, track: 'company', chatId,
@@ -233,7 +245,9 @@ export async function POST(request: NextRequest) {
     const gen = await loadGeneration(pending.chatId).catch(() => null)
     if (gen?.generatedCode) {
       const name = String(b?.name || slug).slice(0, 120)
-      const registered = await registerApp({ slug: productSlug, chatId: pending.chatId, name, track: 'company', idea })
+      // Same #2234-class fix as runProductGeneration below: preserve the
+      // existing row's other fields instead of silently wiping them.
+      const registered = await registerApp({ ...(existing || {}), slug: productSlug, chatId: pending.chatId, name, track: 'company', idea })
       if (registered) {
         await markProductGenerationRegistered(productSlug, pending.chatId)
         return Response.json({ chatId: pending.chatId, productSlug, status: 'recovered' })

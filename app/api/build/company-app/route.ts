@@ -121,7 +121,21 @@ async function runLandingPageGeneration(
       completed ? undefined : 'Stream ended without a complete event.',
     )
 
-    const registered = await registerApp({ slug, chatId, name, tagline, color, track: 'company', idea })
+    // #2234-class gap: registerApp() APPENDS a row and resolveApp() is
+    // latest-wins (see lib/build/app-registry.ts's own doc comment on
+    // registerApp) — so a bare `{ slug, chatId, name, tagline, color, track,
+    // idea }` object silently WIPES every other field this company's
+    // registry row was carrying (gitOrg/gitRepoUrl/gitRepoId,
+    // railwayServiceId, plan/enrolled, ownerEmail, lifecycleStatus, domain,
+    // logoUrl, …) the moment this background generation (kicked off by a
+    // founder's real, reachable "Regenerate" click — force:true, see
+    // StandalonePreviewRegenerate.tsx) finishes and writes back. Re-read the
+    // CURRENT row right before writing (same pattern register-app/route.ts's
+    // own #2133 sticky-track fix uses) and spread it in, so this detached,
+    // potentially minutes-long background task never clobbers state a
+    // concurrent request may have legitimately changed in the meantime.
+    const currentEntry = await resolveApp(slug).catch(() => null)
+    const registered = await registerApp({ ...(currentEntry || {}), slug, chatId, name, tagline, color, track: 'company', idea })
     await reportDeploymentHealthStage('builder_app_generation', slug, 'register', registered ? 'ok' : 'failed')
     await markProductGenerationRegistered(slug, chatId)
     // #270: capture the IDEA → generated app for the recursive learning loop, with
@@ -235,7 +249,9 @@ export async function POST(request: NextRequest) {
       const name = String(b?.name || slug).slice(0, 120)
       const tagline = String(b?.tagline || '').slice(0, 200)
       const color = /^#[0-9a-fA-F]{6}$/.test(String(b?.color || '')) ? String(b.color) : '#2f6d86'
-      const registered = await registerApp({ slug, chatId: pending.chatId, name, tagline, color, track: 'company', idea })
+      // Same #2234-class fix as runLandingPageGeneration below: preserve the
+      // existing row's other fields instead of silently wiping them.
+      const registered = await registerApp({ ...(existing || {}), slug, chatId: pending.chatId, name, tagline, color, track: 'company', idea })
       if (registered) {
         await markProductGenerationRegistered(slug, pending.chatId)
         return Response.json({ chatId: pending.chatId, status: 'recovered' })
