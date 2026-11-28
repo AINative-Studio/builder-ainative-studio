@@ -251,7 +251,18 @@ export async function openIssueForNewTask(
   slug: string,
   task: BuildTask,
 ): Promise<BuildTask> {
-  if (!gitOrg || !task || task.giteaIssueNumber != null) return task
+  if (!task || task.giteaIssueNumber != null) return task
+  if (!gitOrg) {
+    // #2234: this used to return silently here, with no signal anywhere —
+    // every one of a company's backlog tasks could go permanently
+    // issue-less (no founder-visible Gitea issue, ever) with nothing in any
+    // log to explain why. Expected and harmless for a company that simply
+    // isn't git-provisioned yet (the doc comment above), but also the exact
+    // shape a company whose registry row lost its `gitOrg` produces — so at
+    // least leave a trace a future audit can grep for.
+    console.warn(`[task-resolver] openIssueForNewTask: no gitOrg for "${slug}" (scopeKey=${scopeKey}) — task ${task.id} will have no Gitea issue`)
+    return task
+  }
   try {
     const result = await createIssue(gitOrg, slug, task.title, buildTaskIssueBody(task))
     if (result.ok && result.issueNumber) {

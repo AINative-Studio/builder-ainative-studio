@@ -899,6 +899,16 @@ describe('openIssueForNewTask (#1928)', () => {
     expect(result).toBe(freshTask)
   })
 
+  it('#2234: leaves a console.warn trace when gitOrg is missing, instead of a silent no-op', async () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    try {
+      await openIssueForNewTask('owner::slug', null, 'slug', freshTask)
+      expect(warnSpy).toHaveBeenCalledWith(expect.stringContaining('no gitOrg for "slug"'))
+    } finally {
+      warnSpy.mockRestore()
+    }
+  })
+
   it('never opens a duplicate issue for a task that already has one', async () => {
     const taskWithIssue: BuildTask = { ...TASK, id: 't_has_one', giteaIssueNumber: 55 }
     const result = await openIssueForNewTask('owner::slug', 'ws-1', 'slug', taskWithIssue)
