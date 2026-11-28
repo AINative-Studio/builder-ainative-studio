@@ -13,7 +13,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
  */
 
 const h = vi.hoisted(() => ({
-  resolveApp: vi.fn(async (): Promise<{ chatId: string } | null> => null),
+  resolveApp: vi.fn(async (): Promise<Record<string, unknown> | null> => null),
   registerApp: vi.fn(async () => true),
   logBuildOutcome: vi.fn(async () => {}),
   recordPendingProductGeneration: vi.fn(async () => {}),
@@ -136,5 +136,48 @@ describe('POST /api/build/company-app — force regenerate (2026-09-21)', () => 
 
     expect(data.cached).not.toBe(true)
     expect(fetchMock).toHaveBeenCalled()
+  })
+
+  /**
+   * #2234-class gap: registerApp() APPENDS a row and resolveApp() is
+   * latest-wins, so a bare `{ slug, chatId, name, tagline, color, track,
+   * idea }` write silently wiped every OTHER field (gitOrg/gitRepoUrl/
+   * gitRepoId, railwayServiceId, plan, ownerEmail, lifecycleStatus, …) an
+   * already-provisioned company's registry row carried, the moment a
+   * founder's real "Regenerate" click (force:true) finished and wrote back.
+   * The fix re-reads the current row and spreads it into the write.
+   */
+  it('force:true on an already-provisioned company preserves gitOrg/railwayServiceId/plan/ownerEmail instead of wiping them', async () => {
+    h.resolveApp.mockResolvedValue({
+      chatId: 'broken-chat-id',
+      gitOrg: 'ws-abc123',
+      gitRepoUrl: 'https://gitea.internal/ws-abc123/meridian-force4.git',
+      gitRepoId: '42',
+      railwayServiceId: 'railway-svc-9',
+      plan: 'business',
+      enrolled: true,
+      ownerEmail: 'founder@example.com',
+      lifecycleStatus: 'active',
+    })
+    const fetchMock = vi.fn(async () => new Response(sseBody('fresh-chat-id'), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+
+    await POST(req({ idea: 'x', slug: 'meridian-force4', name: 'Meridian', force: true }))
+    await flush()
+
+    expect(h.registerApp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        slug: 'meridian-force4',
+        chatId: 'fresh-chat-id',
+        gitOrg: 'ws-abc123',
+        gitRepoUrl: 'https://gitea.internal/ws-abc123/meridian-force4.git',
+        gitRepoId: '42',
+        railwayServiceId: 'railway-svc-9',
+        plan: 'business',
+        enrolled: true,
+        ownerEmail: 'founder@example.com',
+        lifecycleStatus: 'active',
+      }),
+    )
   })
 })
