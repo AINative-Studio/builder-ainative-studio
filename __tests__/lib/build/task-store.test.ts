@@ -960,8 +960,40 @@ describe('listTasksForCompany (#1086)', () => {
     expect(await listTasksForCompany('acme')).toEqual([])
   })
 
-  it('returns [] when the response is not ok', async () => {
-    mockFetch(() => ({ ok: false, status: 500 }))
+  it('returns [] when the response is not ok on both the query and the fallback scan', async () => {
+    const fn = mockFetch(() => ({ ok: false, status: 500 }))
     expect(await listTasksForCompany('acme')).toEqual([])
+    // #2240 follow-up: a persistent non-ok status must now fall through to
+    // the fallback scan too (2 query attempts + 2 fallback attempts),
+    // instead of silently reporting "zero tasks" after the query alone.
+    expect(fn).toHaveBeenCalledTimes(4)
+  })
+
+  it('falls back to the single-page scan when the /query call returns a non-ok status without throwing (#2240)', async () => {
+    // zerodbRequest exhausts its retry budget on a non-ok status and
+    // returns null rather than throwing — previously that null was read as
+    // "zero rows" here, so an idempotency check (hasOpenTaskForReason() in
+    // completeness-backfill.ts/obedience-backfill.ts) saw a false "no
+    // existing task" on a transient query failure and could file a real
+    // duplicate backlog task. Confirming the fallback now actually runs,
+    // and finds this company's real existing task.
+    let call = 0
+    const fn = vi.fn(async (url: string) => {
+      call++
+      if (call <= 2) return { ok: false, status: 500, json: async () => ({}), text: async () => '' }
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          data: [{ row_data: { id: 'a', title: 'already tracked', scope_key: 'founder@x.com::acme' } }],
+        }),
+        text: async () => '',
+      }
+    })
+    vi.stubGlobal('fetch', fn)
+    const tasks = await listTasksForCompany('acme')
+    expect(tasks.map((t) => t.id)).toEqual(['a'])
+    // 2 failed /query attempts (initial + 1 retry) + 1 fallback GET that succeeds.
+    expect(fn).toHaveBeenCalledTimes(3)
   })
 })

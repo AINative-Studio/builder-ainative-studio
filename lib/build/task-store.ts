@@ -669,6 +669,19 @@ export async function listTasks(
  * confirmed in that fallback path.
  *
  * Returns [] on empty / failure — an honest empty state, never fabricated.
+ *
+ * #2240 follow-up: `zerodbRequest()` returns `null` (it does not throw) once
+ * a non-ok HTTP response (e.g. a transient 500/429) exhausts its retry
+ * budget. That `null` used to fall straight through to "zero rows" here —
+ * identical to a genuinely empty result — which skipped the fallback scan
+ * below entirely, even though the fallback exists for exactly this case.
+ * `hasOpenTaskForReason()`'s idempotency check in completeness-backfill.ts/
+ * obedience-backfill.ts calls this function immediately before filing a
+ * backlog task, so a transient query failure read as "no existing task" is
+ * a real, confirmed mechanism for the duplicate "Fix generation completeness
+ * gap" tasks #2240 found on company "luminary" — not the only possible one,
+ * but a provable one. Now treated the same as a thrown network error: falls
+ * through to the single-page scan instead of silently reporting zero.
  */
 export async function listTasksForCompany(companySlug: string): Promise<BuildTask[]> {
   const slug = String(companySlug || '').trim().toLowerCase()
@@ -680,6 +693,9 @@ export async function listTasksForCompany(companySlug: string): Promise<BuildTas
       { filters: { scope_key: { $regex: `::${slug}$` } }, limit: MAX_LOAD_TASKS },
       { retries: 1 },
     )
+    if (result === null) {
+      throw new Error('[task-store] listTasksForCompany /query returned null (request failed)')
+    }
     const rows: any[] = Array.isArray(result) ? result : result?.data || result?.rows || []
     const tasks = rows
       .filter((r) => scopeKeyBelongsToCompany(String(r?.row_data?.scope_key || ''), slug))
