@@ -5,6 +5,7 @@ import { googleFontsUrl } from '@/lib/theme-system'
 import { validateJavaScriptCode, sanitizeForSandpack } from '@/lib/code-validator'
 import { detectRootComponent, applyComponentRewrite } from '@/lib/component-detector'
 import { flattenMultiFile, flattenParsedFiles } from '@/lib/build/flatten-multifile'
+import { stubTruncatedFiles, stubMissingLocalComponents } from '@/lib/sandpack/build-files'
 import { getFiles as getFilesV2 } from '@/lib/preview-store-v2'
 import { convertTemplateLiteralAttrsToConcat } from '@/lib/build/template-literal-to-concat'
 import { dedupeProvidedComponents } from '@/lib/build/dedupe-provided-components'
@@ -311,7 +312,26 @@ export async function GET(
   // meaningful with >1 entries — a single-entry map carries no multi-file
   // boundary information the text-based path below doesn't already handle.
   if (durableFiles && Object.keys(durableFiles).length > 1) {
-    componentCode = flattenParsedFiles(durableFiles)
+    // Confirmed live (2026-11-28, a-b2b-sales-crm-for-roofing-contractors/
+    // f4k20l): this route is the exact fallback StandalonePreviewFrame/
+    // ShowcaseThumbnail/the standalone /preview/[id] page all use when
+    // shouldUseSandpack(files) is false OR the real Sandpack render times
+    // out (15s/8s watchdog, a documented real CodeSandbox/unpkg hang risk —
+    // see those components' own doc comments). Sandpack's own path always
+    // self-heals a truncated file or a missing local import before
+    // rendering (buildSandpackFiles() → stubTruncatedFiles()/
+    // stubMissingLocalComponents()) — this route didn't, so a company whose
+    // ONLY defect is one of those two self-healable shapes rendered fine in
+    // Sandpack but showed this route's fabricated "needs another pass"
+    // error page to any visitor who landed on the fallback. Apply the same
+    // two repairs (on a shallow clone — durableFiles may be a shared
+    // in-memory cache entry from getFilesV2()) so this fallback matches
+    // what the primary render path already does, instead of being a
+    // strictly worse copy of it.
+    const healedFiles = { ...durableFiles }
+    stubTruncatedFiles(healedFiles, new Set())
+    stubMissingLocalComponents(healedFiles)
+    componentCode = flattenParsedFiles(healedFiles)
     console.log(`[Preview] Using durable files map (not generatedCode) → single module (${componentCode.length} chars)`)
   }
 
