@@ -1415,7 +1415,7 @@ function defaultExportIsSuitableSingleTarget(defaultRhs: string | null, exported
  * regex-based pass below to touch first risks that pass itself producing
  * nonsense from content it was never designed to see.
  */
-function stubTruncatedFiles(sandpackFiles: Record<string, string>, builtinPaths: Set<string>): void {
+export function stubTruncatedFiles(sandpackFiles: Record<string, string>, builtinPaths: Set<string>): void {
   const candidates: Record<string, string> = {}
   for (const [path, code] of Object.entries(sandpackFiles)) {
     if (builtinPaths.has(path)) continue
@@ -1502,7 +1502,7 @@ function stubTruncatedFiles(sandpackFiles: Record<string, string>, builtinPaths:
  * injection, de-dupe) has already run — a real file at that path always
  * wins, this never overwrites one.
  */
-function stubMissingLocalComponents(sandpackFiles: Record<string, string>): void {
+export function stubMissingLocalComponents(sandpackFiles: Record<string, string>): void {
   const builtinPaths = new Set(Object.keys(getBuiltinFiles()))
   // Captures the import clause too (not just the path) — #1122's original
   // version only tracked WHICH paths were missing, not WHAT each importer
